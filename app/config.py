@@ -1,8 +1,11 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Chemin absolu vers le .env à la racine du projet (trppu/.env)
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=_env_path)
 
 # MySQL
 SKIP_MYSQL = os.getenv("SKIP_MYSQL", "false").lower() == "true"
