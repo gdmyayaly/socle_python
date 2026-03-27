@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.config import SKIP_MYSQL
 from app.db.databricks import databricks
 from app.db.mysql import db
 
@@ -13,11 +14,14 @@ def root():
 
 @router.get("/health")
 async def health():
-    try:
-        result = await db.fetch_one("SELECT 1 AS ok")
-        mysql_status = "connected" if result else "error"
-    except Exception:
-        mysql_status = "disconnected"
+    if SKIP_MYSQL:
+        mysql_status = "skipped"
+    else:
+        try:
+            result = await db.fetch_one("SELECT 1 AS ok")
+            mysql_status = "connected" if result else "error"
+        except Exception:
+            mysql_status = "disconnected"
 
     try:
         result = databricks.fetch_one("SELECT 1 AS ok")

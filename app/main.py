@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
+from app.config import SKIP_MYSQL
 from app.db.databricks import databricks
 from app.db.mysql import db
 from app.logger import setup_logging
@@ -17,14 +18,18 @@ log = logging.getLogger("trppu")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Démarrage de l'application trppu")
-    await db.connect()
+    if not SKIP_MYSQL:
+        await db.connect()
+    else:
+        log.info("MySQL ignoré (SKIP_MYSQL=true)")
     try:
         databricks.connect()
     except Exception as e:
         log.error("Impossible de se connecter à Databricks : %s", e)
     yield
     databricks.disconnect()
-    await db.disconnect()
+    if not SKIP_MYSQL:
+        await db.disconnect()
     log.info("Arrêt de l'application trppu")
 
 

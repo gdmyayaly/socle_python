@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # MySQL
+SKIP_MYSQL = os.getenv("SKIP_MYSQL", "false").lower() == "true"
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
@@ -17,3 +18,5 @@ DATABRICKS_HTTP_PATH = os.getenv("DATABRICKS_HTTP_PATH", "")
 DATABRICKS_CLIENT_ID = os.getenv("DATABRICKS_CLIENT_ID", "")
 DATABRICKS_CLIENT_SECRET = os.getenv("DATABRICKS_CLIENT_SECRET", "")
 DATABRICKS_CATALOG = os.getenv("DATABRICKS_CATALOG", "gold")
+DATABRICKS_SCHEMA = os.getenv("DATABRICKS_SCHEMA", "default")
+DATABRICKS_TIMEOUT = int(os.getenv("DATABRICKS_TIMEOUT", "120"))
