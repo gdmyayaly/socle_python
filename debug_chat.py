@@ -6,36 +6,30 @@ Objectif : exécuter une requête sur catalog.schema.table
 import os
 import time
 from pathlib import Path
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 from databricks.sdk.core import Config, oauth_service_principal
 from databricks import sql
 
 # =========================
-
 # 1. Chargement .env
-
 # =========================
 
-load_dotenv(Path(**file**).resolve().parent / ".env")
+server_hostname = ""
+http_path = ""
+client_id = ""
+client_secret = ""
 
-server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME")
-http_path = os.getenv("DATABRICKS_HTTP_PATH")
-client_id = os.getenv("DATABRICKS_CLIENT_ID")
-client_secret = os.getenv("DATABRICKS_CLIENT_SECRET")
-
-catalog = os.getenv("DATABRICKS_CATALOG", "gold")
-schema = os.getenv("DATABRICKS_SCHEMA", "default")
-table = os.getenv("DATABRICKS_TABLE", "ma_table")
+catalog = ""
+schema = ""
+table = ""
 
 # =========================
-
 # 2. Validation
-
 # =========================
 
 if not all([server_hostname, http_path, client_id, client_secret]):
-raise ValueError("Variables d'environnement manquantes")
+    raise ValueError("Variables d'environnement manquantes")
 
 print("\n[CONFIG]")
 print(f"HOST     = {server_hostname}")
@@ -44,23 +38,19 @@ print(f"SCHEMA   = {schema}")
 print(f"TABLE    = {table}")
 
 # =========================
-
 # 3. Credential provider (OFFICIEL)
-
 # =========================
 
 def credential_provider():
-config = Config(
-host=f"https://{server_hostname}",
-client_id=client_id,
-client_secret=client_secret,
-)
-return oauth_service_principal(config)
+    config = Config(
+        host=f"https://{server_hostname}",
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    return oauth_service_principal(config)
 
 # =========================
-
 # 4. Connexion Databricks
-
 # =========================
 
 print("\n[1] Connexion Databricks...")
@@ -68,39 +58,37 @@ print("\n[1] Connexion Databricks...")
 start = time.time()
 
 with sql.connect(
-server_hostname=server_hostname,
-http_path=http_path,
-credentials_provider=credential_provider,
-catalog=catalog,
-schema=schema,
-_socket_timeout=120,
+    server_hostname=server_hostname,
+    http_path=http_path,
+    credentials_provider=credential_provider,
+    catalog=catalog,
+    schema=schema,
+    _socket_timeout=120,
 ) as connection:
 
-```
-print(f"[OK] Connecté en {time.time() - start:.2f}s")
+    print(f"[OK] Connecté en {time.time() - start:.2f}s")
 
-# =========================
-# 5. Requête réelle
-# =========================
-query = f"""
-SELECT *
-FROM {catalog}.{schema}.{table}
-LIMIT 10
-"""
+    # =========================
+    # 5. Requête réelle
+    # =========================
+    query = f"""
+        SELECT *
+        FROM {catalog}.{schema}.{table}
+        LIMIT 10
+    """
 
-print("\n[2] Exécution requête...")
-print(query.strip())
+    print("\n[2] Exécution requête...")
+    print(query.strip())
 
-with connection.cursor() as cursor:
-    cursor.execute(query)
+    with connection.cursor() as cursor:
+        cursor.execute(query)
 
-    columns = [desc[0] for desc in cursor.description]
-    rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
 
-    print(f"\n[OK] {len(rows)} lignes récupérées\n")
+        print(f"\n[OK] {len(rows)} lignes récupérées\n")
 
-    for row in rows:
-        print(dict(zip(columns, row)))
-```
+        for row in rows:
+            print(dict(zip(columns, row)))
 
 print("\n TERMINÉ")
