@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+aiomysql
+python-dotenv
+databricks-sql-connector
+databricks-sdk
