@@ -51,21 +51,25 @@ class DatabricksDB:
                 f"Variables d'environnement manquantes dans .env : {', '.join(missing)}"
             )
 
-        # Créer le Config une seule fois et vérifier ce qu'il résout
-        host_url = f"https://{self.server_hostname}"
-        logger.info("Création du Config Databricks avec host=%s", host_url)
+        # Le SDK Databricks (Config) lit DATABRICKS_HOST en interne
+        # On injecte toutes les variables pour que le SDK les trouve
+        os.environ["DATABRICKS_HOST"] = f"https://{self.server_hostname}"
+        os.environ["DATABRICKS_CLIENT_ID"] = self.client_id
+        os.environ["DATABRICKS_CLIENT_SECRET"] = self.client_secret
+        os.environ["DATABRICKS_SERVER_HOSTNAME"] = self.server_hostname
+        os.environ["DATABRICKS_HTTP_PATH"] = self.http_path
 
-        config = Config(
-            host=host_url,
-            client_id=self.client_id,
-            client_secret=self.client_secret,
-        )
-        logger.info("Config résolu : host=%s, client_id=%s", config.host, config.client_id)
-
-        oauth_provider = oauth_service_principal(config)
+        server_hostname = self.server_hostname
+        client_id = self.client_id
+        client_secret = self.client_secret
 
         def credential_provider():
-            return oauth_provider
+            config = Config(
+                host=f"https://{server_hostname}",
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+            return oauth_service_principal(config)
 
         logger.info(
             "Connexion à Databricks en cours... (host=%s, catalogue=%s, schema=%s, timeout=%ds)",
