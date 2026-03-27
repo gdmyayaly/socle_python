@@ -1,14 +1,15 @@
 """
-Script de debug robuste pour Databricks (évite les blocages silencieux)
-Lancer avec : python debug_databricks.py
+Version propre inspirée de m2m_oauth.py (Databricks officiel)
+Objectif : exécuter une requête sur catalog.schema.table
 """
 
 import os
-import sys
 import time
-import socket
 from pathlib import Path
 from dotenv import load_dotenv
+
+from databricks.sdk.core import Config, oauth_service_principal
+from databricks import sql
 
 # =========================
 
@@ -16,177 +17,90 @@ from dotenv import load_dotenv
 
 # =========================
 
-env_path = Path(**file**).resolve().parent / ".env"
-print(f"\n[1] Chargement du .env depuis : {env_path}")
-print(f"    Fichier existe : {env_path.exists()}")
-
-load_dotenv(dotenv_path=env_path)
-
-# =========================
-
-# 2. Lecture variables
-
-# =========================
+load_dotenv(Path(**file**).resolve().parent / ".env")
 
 server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME")
 http_path = os.getenv("DATABRICKS_HTTP_PATH")
 client_id = os.getenv("DATABRICKS_CLIENT_ID")
 client_secret = os.getenv("DATABRICKS_CLIENT_SECRET")
+
 catalog = os.getenv("DATABRICKS_CATALOG", "gold")
 schema = os.getenv("DATABRICKS_SCHEMA", "default")
-
-print(f"\n[2] Variables d'environnement :")
-print(f"    HOST        = {repr(server_hostname)}")
-print(f"    HTTP_PATH   = {repr(http_path)}")
-print(f"    CLIENT_ID   = {repr(client_id[:8] + '...' if client_id else None)}")
-print(f"    SECRET      = {repr('***' if client_secret else None)}")
+table = os.getenv("DATABRICKS_TABLE", "ma_table")
 
 # =========================
 
-# 3. Validation
+# 2. Validation
 
 # =========================
 
-missing = []
-if not server_hostname: missing.append("DATABRICKS_SERVER_HOSTNAME")
-if not http_path: missing.append("DATABRICKS_HTTP_PATH")
-if not client_id: missing.append("DATABRICKS_CLIENT_ID")
-if not client_secret: missing.append("DATABRICKS_CLIENT_SECRET")
+if not all([server_hostname, http_path, client_id, client_secret]):
+raise ValueError("Variables d'environnement manquantes")
 
-if missing:
-print(f"\n[ERREUR] Variables manquantes : {', '.join(missing)}")
-sys.exit(1)
-
-print("\n[3] Variables OK")
+print("\n[CONFIG]")
+print(f"HOST     = {server_hostname}")
+print(f"CATALOG  = {catalog}")
+print(f"SCHEMA   = {schema}")
+print(f"TABLE    = {table}")
 
 # =========================
 
-# 4. Test réseau (IMPORTANT)
+# 3. Credential provider (OFFICIEL)
 
 # =========================
 
-print("\n[4] Test réseau vers Databricks...")
-try:
-socket.create_connection((server_hostname, 443), timeout=5)
-print("    [OK] Réseau accessible")
-except Exception as e:
-print(f"    [ERREUR] Problème réseau : {e}")
-sys.exit(1)
-
-# =========================
-
-# 5. Création Config (protégé)
-
-# =========================
-
-print("\n[5] Création Config Databricks SDK...")
-
-from databricks.sdk.core import Config, oauth_service_principal
-
-host_url = f"https://{server_hostname}"
-print(f"    host = {host_url}")
-
-def build_config():
-return Config(
-host=host_url,
+def credential_provider():
+config = Config(
+host=f"https://{server_hostname}",
 client_id=client_id,
 client_secret=client_secret,
 )
+return oauth_service_principal(config)
 
-try:
+# =========================
+
+# 4. Connexion Databricks
+
+# =========================
+
+print("\n[1] Connexion Databricks...")
+
 start = time.time()
-config = build_config()
-print(f"    Config créé en {time.time() - start:.2f}s")
-print(f"    host résolu : {config.host}")
-except Exception as e:
-print(f"    [ERREUR] Config échoué : {e}")
-print(f"    Type : {type(e).**name**}")
-sys.exit(1)
 
-# =========================
-
-# 6. Provider OAuth (timeout visuel)
-
-# =========================
-
-print("\n[6] Création credential provider...")
-
-try:
-start = time.time()
-provider = oauth_service_principal(config)
-print(f"    Provider OK ({time.time() - start:.2f}s)")
-except Exception as e:
-print(f"    [ERREUR] OAuth échoué : {e}")
-sys.exit(1)
-
-# =========================
-
-# 7. Connexion SQL
-
-# =========================
-
-print("\n[7] Connexion SQL Databricks...")
-from databricks import sql as databricks_sql
-
-def credential_provider():
-return oauth_service_principal(build_config())
-
-connection = None
-
-try:
-start = time.time()
+with sql.connect(
+server_hostname=server_hostname,
+http_path=http_path,
+credentials_provider=credential_provider,
+catalog=catalog,
+schema=schema,
+_socket_timeout=120,
+) as connection:
 
 ```
-connection = databricks_sql.connect(
-    server_hostname=server_hostname,
-    http_path=http_path,
-    credentials_provider=credential_provider,
-    catalog=catalog,
-    schema=schema,
-    _socket_timeout=120,  # IMPORTANT
-)
+print(f"[OK] Connecté en {time.time() - start:.2f}s")
 
-print(f"    [OK] Connecté en {time.time() - start:.2f}s")
+# =========================
+# 5. Requête réelle
+# =========================
+query = f"""
+SELECT *
+FROM {catalog}.{schema}.{table}
+LIMIT 10
+"""
+
+print("\n[2] Exécution requête...")
+print(query.strip())
+
+with connection.cursor() as cursor:
+    cursor.execute(query)
+
+    columns = [desc[0] for desc in cursor.description]
+    rows = cursor.fetchall()
+
+    print(f"\n[OK] {len(rows)} lignes récupérées\n")
+
+    for row in rows:
+        print(dict(zip(columns, row)))
 ```
 
-except Exception as e:
-print(f"    [ERREUR] Connexion échouée : {e}")
-print(f"    Type : {type(e).**name**}")
-import traceback
-traceback.print_exc()
-sys.exit(1)
-
-# =========================
-
-# 8. Test requête
-
-# =========================
-
-print("\n[8] Test requête SELECT 1")
-
-try:
-cursor = connection.cursor()
-cursor.execute("SELECT 1 AS ok")
-result = cursor.fetchone()
-print(f"    Résultat : {result}")
-print("    [OK] Query OK")
-cursor.close()
-except Exception as e:
-print(f"    [ERREUR] Query échouée : {e}")
-
-# =========================
-
-# 9. Fermeture propre
-
-# =========================
-
-print("\n[9] Fermeture connexion")
-
-try:
-if connection:
-connection.close()
-print("    [OK] Fermé proprement")
-except Exception as e:
-print(f"    [WARNING] Erreur fermeture : {e}")
-
-print("\n✅ DEBUG TERMINÉ")
+print("\n TERMINÉ")
