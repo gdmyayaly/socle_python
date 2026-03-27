@@ -32,14 +32,6 @@ class DatabricksDB:
         self.retry_delay = 2.0
         self._connection = None
 
-    def _credential_provider(self):
-        config = Config(
-            host=f"https://{self.server_hostname}",
-            client_id=self.client_id,
-            client_secret=self.client_secret,
-        )
-        return oauth_service_principal(config)
-
     def connect(self) -> None:
         """Ouvre la connexion à Databricks avec mécanisme de retry."""
         # Validation des variables obligatoires
@@ -56,6 +48,19 @@ class DatabricksDB:
             raise ValueError(
                 f"Variables d'environnement manquantes dans .env : {', '.join(missing)}"
             )
+
+        # Closure exactement comme l'exemple officiel Databricks
+        host = f"https://{self.server_hostname}"
+        client_id = self.client_id
+        client_secret = self.client_secret
+
+        def credential_provider():
+            config = Config(
+                host=host,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+            return oauth_service_principal(config)
 
         logger.info(
             "Connexion à Databricks en cours... (host=%s, catalogue=%s, schema=%s, timeout=%ds)",
@@ -74,7 +79,7 @@ class DatabricksDB:
                 self._connection = databricks_sql.connect(
                     server_hostname=self.server_hostname,
                     http_path=self.http_path,
-                    credentials_provider=self._credential_provider,
+                    credentials_provider=credential_provider,
                     catalog=self.catalog,
                     schema=self.schema,
                     _socket_timeout=self.timeout,
