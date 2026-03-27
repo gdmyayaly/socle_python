@@ -49,16 +49,17 @@ class DatabricksDB:
                 f"Variables d'environnement manquantes dans .env : {', '.join(missing)}"
             )
 
-        # Closure exactement comme l'exemple officiel Databricks
-        host = f"https://{self.server_hostname}"
-        client_id = self.client_id
-        client_secret = self.client_secret
+        # Le SDK Databricks lit ses propres variables d'env (DATABRICKS_HOST, etc.)
+        # On les injecte explicitement pour que Config les trouve
+        os.environ["DATABRICKS_HOST"] = f"https://{self.server_hostname}"
+        os.environ["DATABRICKS_CLIENT_ID"] = self.client_id
+        os.environ["DATABRICKS_CLIENT_SECRET"] = self.client_secret
 
         def credential_provider():
             config = Config(
-                host=host,
-                client_id=client_id,
-                client_secret=client_secret,
+                host=f"https://{self.server_hostname}",
+                client_id=self.client_id,
+                client_secret=self.client_secret,
             )
             return oauth_service_principal(config)
 
