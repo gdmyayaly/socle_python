@@ -1,47 +1,35 @@
 import logging
+import os
 import time
 from typing import Any
 
 from databricks import sql as databricks_sql
 from databricks.sdk.core import Config, oauth_service_principal
+from dotenv import load_dotenv
 
-from app.config import (
-    DATABRICKS_CATALOG,
-    DATABRICKS_CLIENT_ID,
-    DATABRICKS_CLIENT_SECRET,
-    DATABRICKS_HTTP_PATH,
-    DATABRICKS_SCHEMA,
-    DATABRICKS_SERVER_HOSTNAME,
-    DATABRICKS_TIMEOUT,
-)
+load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+def _get_env(key: str, default: str = "") -> str:
+    """Lit une variable d'environnement avec fallback."""
+    return os.getenv(key, default)
 
 
 class DatabricksDB:
     """Classe utilitaire pour la connexion à une SQL Warehouse Databricks via OAuth M2M."""
 
-    def __init__(
-        self,
-        server_hostname: str = DATABRICKS_SERVER_HOSTNAME,
-        http_path: str = DATABRICKS_HTTP_PATH,
-        client_id: str = DATABRICKS_CLIENT_ID,
-        client_secret: str = DATABRICKS_CLIENT_SECRET,
-        catalog: str = DATABRICKS_CATALOG,
-        schema: str = DATABRICKS_SCHEMA,
-        timeout: int = DATABRICKS_TIMEOUT,
-        max_retries: int = 3,
-        retry_delay: float = 2.0,
-    ):
-        self.server_hostname = server_hostname
-        self.http_path = http_path
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.catalog = catalog
-        self.schema = schema
-        self.timeout = timeout
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
+    def __init__(self):
+        self.server_hostname = _get_env("DATABRICKS_SERVER_HOSTNAME")
+        self.http_path = _get_env("DATABRICKS_HTTP_PATH")
+        self.client_id = _get_env("DATABRICKS_CLIENT_ID")
+        self.client_secret = _get_env("DATABRICKS_CLIENT_SECRET")
+        self.catalog = _get_env("DATABRICKS_CATALOG", "gold")
+        self.schema = _get_env("DATABRICKS_SCHEMA", "default")
+        self.timeout = int(_get_env("DATABRICKS_TIMEOUT", "120"))
+        self.max_retries = 3
+        self.retry_delay = 2.0
         self._connection = None
 
     def _credential_provider(self):
@@ -54,11 +42,21 @@ class DatabricksDB:
 
     def connect(self) -> None:
         """Ouvre la connexion à Databricks avec mécanisme de retry."""
+        # Validation des variables obligatoires
+        missing = []
         if not self.server_hostname:
+            missing.append("DATABRICKS_SERVER_HOSTNAME")
+        if not self.http_path:
+            missing.append("DATABRICKS_HTTP_PATH")
+        if not self.client_id:
+            missing.append("DATABRICKS_CLIENT_ID")
+        if not self.client_secret:
+            missing.append("DATABRICKS_CLIENT_SECRET")
+        if missing:
             raise ValueError(
-                "DATABRICKS_SERVER_HOSTNAME est vide. "
-                "Renseignez-le dans votre fichier .env"
+                f"Variables d'environnement manquantes dans .env : {', '.join(missing)}"
             )
+
         logger.info(
             "Connexion à Databricks en cours... (host=%s, catalogue=%s, schema=%s, timeout=%ds)",
             self.server_hostname,
@@ -68,7 +66,11 @@ class DatabricksDB:
         )
         for attempt in range(1, self.max_retries + 1):
             try:
-                logger.info("Tentative de connexion %d/%d...", attempt, self.max_retries)
+                logger.info(
+                    "Tentative de connexion %d/%d... (cold start possible, peut prendre plusieurs minutes)",
+                    attempt,
+                    self.max_retries,
+                )
                 self._connection = databricks_sql.connect(
                     server_hostname=self.server_hostname,
                     http_path=self.http_path,
@@ -123,7 +125,6 @@ class DatabricksDB:
                     logger.error("Échec définitif de la requête Databricks après %d tentatives.", self.max_retries)
                     raise
                 time.sleep(self.retry_delay * attempt)
-                # Tenter une reconnexion
                 logger.info("Reconnexion à Databricks en cours...")
                 try:
                     self.connect()
