@@ -104,9 +104,8 @@ def get_trafics(
     table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode_lower]}"
     query = (
         f"SELECT * FROM {table} "
-        f"WHERE code_regate = %s AND date_jour BETWEEN %s AND %s"
+        f"WHERE code_regate = '{code_regate}' AND date_jour BETWEEN '{date_debut}' AND '{date_fin}'"
     )
-    params = [code_regate, date_debut, date_fin]
 
     logger.info(
         "Exécution requête sur %s pour code_regate=%s entre %s et %s",
@@ -115,7 +114,7 @@ def get_trafics(
 
     start = time.perf_counter()
     try:
-        results = databricks.fetch_all(query, params=params)
+        results = databricks.fetch_all(query)
     except Exception as e:
         logger.error("Erreur lors de la requête get_trafics : %s", e)
         raise HTTPException(
