@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 TABLES_PERIODE = {
     "jours": "g_mdp_trafics_jour_actualise",
     "semaines": "g_mdp_trafics_semaine_actualise",
-    "mois": "g_mdp_trafics_moi_actualise",
+    "mois": "g_mdp_trafics_mois_actualise",
 }
 
 PARAMETRES_RAPPEL = (
@@ -112,6 +113,7 @@ def get_trafics(
         table, code_regate, date_debut, date_fin,
     )
 
+    start = time.perf_counter()
     try:
         results = databricks.fetch_all(query, params=params)
     except Exception as e:
@@ -120,6 +122,15 @@ def get_trafics(
             status_code=500,
             detail="Erreur lors de la récupération des trafics.",
         )
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
-    logger.info("get_trafics : %d résultats retournés", len(results))
-    return {"count": len(results), "data": results}
+    logger.info("get_trafics : %d résultats retournés en %.2fms", len(results), duration_ms)
+    return {
+        "count": len(results),
+        "execution_time_ms": duration_ms,
+        "periode": periode_lower,
+        "code_regate": code_regate,
+        "date_debut": date_debut,
+        "date_fin": date_fin,
+        "data": results,
+    }
