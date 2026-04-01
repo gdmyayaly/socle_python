@@ -23,8 +23,8 @@ def databricks_test():
             status_code=500,
             detail="Erreur lors du test de connexion à Databricks.",
         )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"test": "ok", "execution_time_ms": duration_ms, "result": result}
+    duration_s = round(time.perf_counter() - start, 3)
+    return {"test": "ok", "execution_time_s": duration_s, "result": result}
 
 
 @router.get("/catalogs")
@@ -39,8 +39,8 @@ def databricks_catalogs():
             status_code=500,
             detail="Erreur lors de la récupération des catalogues.",
         )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"execution_time_ms": duration_ms, "data": result}
+    duration_s = round(time.perf_counter() - start, 3)
+    return {"execution_time_s": duration_s, "data": result}
 
 
 @router.get("/schemas")
@@ -55,8 +55,8 @@ def databricks_schemas():
             status_code=500,
             detail="Erreur lors de la récupération des schémas.",
         )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"execution_time_ms": duration_ms, "data": result}
+    duration_s = round(time.perf_counter() - start, 3)
+    return {"execution_time_s": duration_s, "data": result}
 
 
 @router.get("/tables")
@@ -71,8 +71,8 @@ def databricks_tables():
             status_code=500,
             detail="Erreur lors de la récupération des tables.",
         )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"execution_time_ms": duration_ms, "data": result}
+    duration_s = round(time.perf_counter() - start, 3)
+    return {"execution_time_s": duration_s, "data": result}
 
 
 @router.get("/tables/{schema}")
@@ -87,8 +87,8 @@ def databricks_tables_by_schema(schema: str):
             status_code=500,
             detail=f"Erreur lors de la récupération des tables du schéma '{schema}'.",
         )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"execution_time_ms": duration_ms, "data": result}
+    duration_s = round(time.perf_counter() - start, 3)
+    return {"execution_time_s": duration_s, "data": result}
 
 
 @router.get("/columns/{table}")
@@ -103,8 +103,8 @@ def databricks_columns(table: str):
             status_code=500,
             detail=f"Erreur lors de la récupération des colonnes de la table '{table}'.",
         )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"execution_time_ms": duration_ms, "data": result}
+    duration_s = round(time.perf_counter() - start, 3)
+    return {"execution_time_s": duration_s, "data": result}
 
 
 @router.get("/columns/{schema}/{table}")
@@ -119,77 +119,6 @@ def databricks_columns_by_schema(schema: str, table: str):
             status_code=500,
             detail=f"Erreur lors de la récupération des colonnes de '{schema}.{table}'.",
         )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"execution_time_ms": duration_ms, "data": result}
+    duration_s = round(time.perf_counter() - start, 3)
+    return {"execution_time_s": duration_s, "data": result}
 
-
-@router.get("/trafics_jours")
-def trafics_jours(
-    code_regate: str | None = Query(None, description="Code régate de l'entité"),
-    limit: int = 10,
-):
-    """Récupère les données de la table trafics_jours."""
-    table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.trafics_jours"
-    if code_regate:
-        query = f"SELECT * FROM {table} WHERE co_regate = '{code_regate}' LIMIT {limit}"
-    else:
-        query = f"SELECT * FROM {table} LIMIT {limit}"
-    start = time.perf_counter()
-    try:
-        results = databricks.fetch_all(query)
-    except Exception as e:
-        logger.error("Erreur lors de la requête trafics_jours : %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Erreur lors de la récupération des trafics jours.",
-        )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"count": len(results), "execution_time_ms": duration_ms, "data": results}
-
-
-@router.get("/trafics_semaines")
-def trafics_semaines(
-    code_regate: str | None = Query(None, description="Code régate de l'entité"),
-    limit: int = 10,
-):
-    """Récupère les données de la table trafics_semaines."""
-    table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.trafics_semaines"
-    if code_regate:
-        query = f"SELECT * FROM {table} WHERE co_regate = '{code_regate}' LIMIT {limit}"
-    else:
-        query = f"SELECT * FROM {table} LIMIT {limit}"
-    start = time.perf_counter()
-    try:
-        results = databricks.fetch_all(query)
-    except Exception as e:
-        logger.error("Erreur lors de la requête trafics_semaines : %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Erreur lors de la récupération des trafics semaines.",
-        )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"count": len(results), "execution_time_ms": duration_ms, "data": results}
-
-
-@router.get("/trafics_mois")
-def trafics_mois(
-    code_regate: str | None = Query(None, description="Code régate de l'entité"),
-    limit: int = 10,
-):
-    """Récupère les données de la table trafics_mois."""
-    table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.trafics_mois"
-    if code_regate:
-        query = f"SELECT * FROM {table} WHERE co_regate = '{code_regate}' LIMIT {limit}"
-    else:
-        query = f"SELECT * FROM {table} LIMIT {limit}"
-    start = time.perf_counter()
-    try:
-        results = databricks.fetch_all(query)
-    except Exception as e:
-        logger.error("Erreur lors de la requête trafics_mois : %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Erreur lors de la récupération des trafics mois.",
-        )
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    return {"count": len(results), "execution_time_ms": duration_ms, "data": results}
