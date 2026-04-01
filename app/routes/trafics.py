@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA
+from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA, DEBUG_SHOW_QUERY
 from app.db.databricks import databricks
 
 logger = logging.getLogger(__name__)
@@ -67,12 +67,9 @@ def _decompose_semaines_jours(dt_start: datetime, dt_end: datetime):
         last_sunday = dt_end - timedelta(days=dt_end.weekday() + 1)
 
     if first_monday + timedelta(days=6) <= last_sunday:
-        # Jours avant le premier lundi
         if dt_start < first_monday:
             parts.append(("jours", dt_start, first_monday - timedelta(days=1)))
-        # Semaines complètes
         parts.append(("semaines", first_monday, last_sunday))
-        # Jours après le dernier dimanche
         if last_sunday < dt_end:
             parts.append(("jours", last_sunday + timedelta(days=1), dt_end))
     else:
@@ -85,7 +82,6 @@ def decompose_auto(dt_debut: datetime, dt_fin: datetime):
     """Découpe un intervalle en requêtes optimales sur mois / semaines / jours."""
     segments: list[tuple[str, datetime, datetime]] = []
 
-    # --- Bornes des mois complets ---
     if dt_debut.day == 1:
         mois_start = dt_debut
     else:
@@ -101,57 +97,40 @@ def decompose_auto(dt_debut: datetime, dt_fin: datetime):
         mois_end = datetime(dt_fin.year, dt_fin.month, 1) - timedelta(days=1)
 
     if mois_start <= mois_end:
-        # Préfixe : jours/semaines avant les mois complets
         if dt_debut < mois_start:
             segments.extend(
                 _decompose_semaines_jours(dt_debut, mois_start - timedelta(days=1))
             )
-        # Mois complets
         segments.append(("mois", mois_start, mois_end))
-        # Suffixe : jours/semaines après les mois complets
         if mois_end < dt_fin:
             segments.extend(
                 _decompose_semaines_jours(mois_end + timedelta(days=1), dt_fin)
             )
     else:
-        # Pas de mois complet → découper en semaines/jours
         segments.extend(_decompose_semaines_jours(dt_debut, dt_fin))
 
     return segments
 
 
-def build_query(periode: str, co_regate: str, dt_start: datetime, dt_end: datetime) -> str:
-    """Construit une requête SELECT pour une période donnée."""
+def build_query(
+    periode: str,
+    co_regate: str,
+    dt_start: datetime,
+    dt_end: datetime,
+    count_only: bool = False,
+) -> str:
+    """Construit une requête SELECT ou COUNT pour une période donnée."""
     table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
+    select = "COUNT(*) AS total" if count_only else "*"
     return (
-        f"SELECT * FROM {table} "
+        f"SELECT {select} FROM {table} "
         f"WHERE co_regate = '{co_regate}' "
         f"AND da_comptage BETWEEN '{fmt_date(dt_start)}' AND '{fmt_date(dt_end)}'"
     )
 
 
-# ---------------------------------------------------------------------------
-# Endpoint
-# ---------------------------------------------------------------------------
-
-@router.get("/get_trafics")
-def get_trafics(
-    periode: str | None = Query(None, description="Période : jours, semaines, mois ou auto"),
-    co_regate: str | None = Query(None, description="Code régate de l'entité"),
-    date_debut: str | None = Query(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)"),
-    date_fin: str | None = Query(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)"),
-):
-    """Récupère les trafics par code régate et période de dates.
-
-    En mode **auto**, l'intervalle est découpé dynamiquement en requêtes
-    sur les tables mois, semaines et jours pour optimiser les performances.
-    """
-    logger.info(
-        "get_trafics appelé : periode=%s, co_regate=%s, date_debut=%s, date_fin=%s",
-        periode, co_regate, date_debut, date_fin,
-    )
-
-    # --- Validation des paramètres ---
+def validate_params(periode, co_regate, date_debut, date_fin):
+    """Valide les paramètres communs et retourne (periode_lower, dt_debut, dt_fin)."""
     manquants = []
     if not periode:
         manquants.append("periode")
@@ -193,18 +172,40 @@ def get_trafics(
         logger.warning(msg)
         raise HTTPException(status_code=400, detail=msg)
 
-    # --- Construction des requêtes ---
-    if periode_lower == "auto":
-        segments = decompose_auto(dt_debut, dt_fin)
-    else:
-        segments = [(periode_lower, dt_debut, dt_fin)]
+    return periode_lower, dt_debut, dt_fin
 
+
+def build_segments(periode_lower, dt_debut, dt_fin):
+    """Retourne la liste des segments selon la période."""
+    if periode_lower == "auto":
+        return decompose_auto(dt_debut, dt_fin)
+    return [(periode_lower, dt_debut, dt_fin)]
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/get_trafics")
+def get_trafics(
+    periode: str | None = Query(None, description="Période : jours, semaines, mois ou auto"),
+    co_regate: str | None = Query(None, description="Code régate de l'entité"),
+    date_debut: str | None = Query(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)"),
+    date_fin: str | None = Query(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)"),
+    count_only: bool = Query(False, description="Si true, retourne uniquement le count"),
+):
+    """Récupère les trafics par code régate et période de dates.
+
+    En mode **auto**, l'intervalle est découpé dynamiquement en requêtes
+    sur les tables mois, semaines et jours pour optimiser les performances.
+    """
+    periode_lower, dt_debut, dt_fin = validate_params(periode, co_regate, date_debut, date_fin)
+
+    segments = build_segments(periode_lower, dt_debut, dt_fin)
     queries = [
-        {"periode": seg[0], "query": build_query(seg[0], co_regate, seg[1], seg[2])}
+        {"periode": seg[0], "query": build_query(seg[0], co_regate, seg[1], seg[2], count_only)}
         for seg in segments
     ]
-
-    logger.info("Exécution de %d requête(s) pour co_regate=%s", len(queries), co_regate)
 
     # --- Mode auto : aperçu des requêtes sans exécution ---
     if periode_lower == "auto":
@@ -217,30 +218,104 @@ def get_trafics(
             "date_fin": fmt_date(dt_fin),
             "nb_queries": len(queries),
             "queries": [
-                {
-                    "index": i + 1,
-                    "periode": q["periode"],
-                    "query": q["query"],
-                }
+                {"index": i + 1, "periode": q["periode"], "query": q["query"]}
                 for i, q in enumerate(queries)
             ],
         }
 
-    # --- Exécution (jours, semaines, mois) ---
+    # --- Exécution ---
     start = time.perf_counter()
+    query_str = queries[0]["query"]
     try:
-        results = databricks.fetch_all(queries[0]["query"])
+        if count_only:
+            row = databricks.fetch_one(query_str)
+            total = row["total"] if row else 0
+        else:
+            results = databricks.fetch_all(query_str)
     except Exception as e:
-        logger.error("Erreur requête (%s) : %s", queries[0]["periode"], e)
+        logger.error("Erreur requête (%s) : %s", periode_lower, e)
         raise HTTPException(
             status_code=500,
-            detail=f"Erreur lors de la récupération des trafics ({queries[0]['periode']}).",
+            detail=f"Erreur lors de la récupération des trafics ({periode_lower}).",
         )
     duration_s = round(time.perf_counter() - start, 3)
 
-    logger.info("get_trafics : %d résultats en %.3fs", len(results), duration_s)
-    return {
+    response = {
+        "execution_time_s": duration_s,
+        "periode": periode_lower,
+        "co_regate": co_regate,
+        "date_debut": fmt_date(dt_debut),
+        "date_fin": fmt_date(dt_fin),
+    }
+    if count_only:
+        response["count"] = total
+    else:
+        response["count"] = len(results)
+        response["data"] = results
+    if DEBUG_SHOW_QUERY:
+        response["query"] = query_str
+    return response
+
+
+@router.get("/get_trafics_paginated")
+def get_trafics_paginated(
+    periode: str | None = Query(None, description="Période : jours, semaines, mois ou auto"),
+    co_regate: str | None = Query(None, description="Code régate de l'entité"),
+    date_debut: str | None = Query(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)"),
+    date_fin: str | None = Query(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)"),
+    page: int = Query(1, ge=1, description="Numéro de page (à partir de 1)"),
+    page_size: int = Query(50, ge=1, le=1000, description="Nombre de résultats par page"),
+):
+    """Récupère les trafics avec pagination."""
+    periode_lower, dt_debut, dt_fin = validate_params(periode, co_regate, date_debut, date_fin)
+
+    segments = build_segments(periode_lower, dt_debut, dt_fin)
+    queries = [
+        {"periode": seg[0], "query": build_query(seg[0], co_regate, seg[1], seg[2])}
+        for seg in segments
+    ]
+
+    # --- Mode auto : aperçu ---
+    if periode_lower == "auto":
+        paginated_queries = [
+            {
+                "index": i + 1,
+                "periode": q["periode"],
+                "query": f"{q['query']} LIMIT {page_size} OFFSET {(page - 1) * page_size}",
+            }
+            for i, q in enumerate(queries)
+        ]
+        return {
+            "mode": "preview",
+            "periode": "auto",
+            "co_regate": co_regate,
+            "date_debut": fmt_date(dt_debut),
+            "date_fin": fmt_date(dt_fin),
+            "page": page,
+            "page_size": page_size,
+            "nb_queries": len(paginated_queries),
+            "queries": paginated_queries,
+        }
+
+    # --- Exécution avec pagination ---
+    offset = (page - 1) * page_size
+    query_str = f"{queries[0]['query']} LIMIT {page_size} OFFSET {offset}"
+
+    start = time.perf_counter()
+    try:
+        results = databricks.fetch_all(query_str)
+    except Exception as e:
+        logger.error("Erreur requête paginée (%s) : %s", periode_lower, e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la récupération des trafics ({periode_lower}).",
+        )
+    duration_s = round(time.perf_counter() - start, 3)
+
+    response = {
         "count": len(results),
+        "page": page,
+        "page_size": page_size,
         "execution_time_s": duration_s,
         "periode": periode_lower,
         "co_regate": co_regate,
@@ -248,3 +323,6 @@ def get_trafics(
         "date_fin": fmt_date(dt_fin),
         "data": results,
     }
+    if DEBUG_SHOW_QUERY:
+        response["query"] = query_str
+    return response

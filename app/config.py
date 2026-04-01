@@ -23,3 +23,6 @@ DATABRICKS_CLIENT_SECRET = os.getenv("DATABRICKS_CLIENT_SECRET", "")
 DATABRICKS_CATALOG = os.getenv("DATABRICKS_CATALOG", "gold")
 DATABRICKS_SCHEMA = os.getenv("DATABRICKS_SCHEMA", "default")
 DATABRICKS_TIMEOUT = int(os.getenv("DATABRICKS_TIMEOUT", "120"))
+
+# Debug
+DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"
