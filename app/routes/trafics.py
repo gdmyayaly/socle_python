@@ -3,7 +3,8 @@ import time
 from calendar import monthrange
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA, DEBUG_SHOW_QUERY
 from app.db.databricks import databricks
@@ -36,6 +37,23 @@ PARAMETRES_RAPPEL = (
 )
 
 router = APIRouter(prefix="/trafics", tags=["Trafics"])
+
+
+class TraficsRequest(BaseModel):
+    periode: str | None = Field(None, description="Période : jours, semaines, mois, auto ou debug")
+    co_regate: str | None = Field(None, description="Code régate de l'entité")
+    date_debut: str | None = Field(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)")
+    date_fin: str | None = Field(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)")
+    count_only: bool = Field(False, description="Si true, retourne uniquement le count")
+
+
+class TraficsPaginatedRequest(BaseModel):
+    periode: str | None = Field(None, description="Période : jours, semaines, mois, auto ou debug")
+    co_regate: str | None = Field(None, description="Code régate de l'entité")
+    date_debut: str | None = Field(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)")
+    date_fin: str | None = Field(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)")
+    page: int = Field(1, ge=1, description="Numéro de page (à partir de 1)")
+    page_size: int = Field(50, ge=1, le=1000, description="Nombre de résultats par page")
 
 
 # ---------------------------------------------------------------------------
@@ -203,14 +221,8 @@ def build_segments(periode_lower, dt_debut, dt_fin):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.get("/get_trafics")
-def get_trafics(
-    periode: str | None = Query(None, description="Période : jours, semaines, mois, auto ou debug"),
-    co_regate: str | None = Query(None, description="Code régate de l'entité"),
-    date_debut: str | None = Query(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)"),
-    date_fin: str | None = Query(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)"),
-    count_only: bool = Query(False, description="Si true, retourne uniquement le count"),
-):
+@router.post("/get_trafics")
+def get_trafics(body: TraficsRequest):
     """Récupère les trafics par code régate et période de dates.
 
     En mode **auto** (par défaut), l'intervalle est découpé dynamiquement en requêtes
@@ -218,6 +230,12 @@ def get_trafics(
 
     En mode **debug**, les requêtes sont générées mais pas exécutées (aperçu).
     """
+    periode = body.periode
+    co_regate = body.co_regate
+    date_debut = body.date_debut
+    date_fin = body.date_fin
+    count_only = body.count_only
+
     if not periode:
         periode = "auto"
     periode_lower, dt_debut, dt_fin = validate_params(periode, co_regate, date_debut, date_fin)
@@ -281,16 +299,16 @@ def get_trafics(
     return response
 
 
-@router.get("/get_trafics_paginated")
-def get_trafics_paginated(
-    periode: str | None = Query(None, description="Période : jours, semaines, mois, auto ou debug"),
-    co_regate: str | None = Query(None, description="Code régate de l'entité"),
-    date_debut: str | None = Query(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)"),
-    date_fin: str | None = Query(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)"),
-    page: int = Query(1, ge=1, description="Numéro de page (à partir de 1)"),
-    page_size: int = Query(50, ge=1, le=1000, description="Nombre de résultats par page"),
-):
+@router.post("/get_trafics_paginated")
+def get_trafics_paginated(body: TraficsPaginatedRequest):
     """Récupère les trafics avec pagination."""
+    periode = body.periode
+    co_regate = body.co_regate
+    date_debut = body.date_debut
+    date_fin = body.date_fin
+    page = body.page
+    page_size = body.page_size
+
     if not periode:
         periode = "auto"
     periode_lower, dt_debut, dt_fin = validate_params(periode, co_regate, date_debut, date_fin)

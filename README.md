@@ -2,11 +2,24 @@
 
 Application FastAPI avec connexion MySQL et Databricks SQL Warehouse, mécanismes de retry et gestion des transactions.
 
-## Prérequis
+## Demarrage rapide
 
-- Python 3.10 ou supérieur
+```bash
+git clone https://github.com/gdmyayaly/socle_python.git
+cd socle_python
+python -m venv venv
+source venv/bin/activate        # Linux / macOS
+# venv\Scripts\activate         # Windows
+pip install -r requirements.txt
+cp .env.example .env            # puis renseigner vos identifiants
+python -m uvicorn app.main:app --reload
+```
+
+## Prerequis
+
+- Python 3.10 ou superieur
 - Serveur MySQL accessible
-- Accès à une SQL Warehouse Databricks (avec un service principal OAuth M2M)
+- Acces a une SQL Warehouse Databricks (avec un service principal OAuth M2M)
 
 ## Installation
 
@@ -47,7 +60,7 @@ Variables disponibles dans `.env` :
 **En dev (sans Docker) :**
 
 ```bash
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
 **Avec Docker :**
@@ -72,8 +85,8 @@ Le serveur démarre sur `http://localhost:8000`.
 | GET     | `/databricks/trafics_jours?limit=10` | Données de `gold.trafics_jours` |
 | GET     | `/databricks/trafics_semaines?limit=10` | Données de `gold.trafics_semaines` |
 | GET     | `/databricks/trafics_mois?limit=10` | Données de `gold.trafics_mois`    |
-| GET     | `/trafics/get_trafics` | Récupère les trafics par code régate et période |
-| GET     | `/trafics/get_trafics_paginated` | Idem avec pagination |
+| POST    | `/trafics/get_trafics` | Récupère les trafics par code régate et période |
+| POST    | `/trafics/get_trafics_paginated` | Idem avec pagination |
 
 ### Endpoint `/trafics/get_trafics`
 
@@ -90,6 +103,19 @@ Modes de période :
 - **`auto`** (par défaut) — découpe l'intervalle en requêtes optimales sur les tables mois, semaines et jours, puis exécute et agrège les résultats.
 - **`debug`** — même découpage qu'`auto` mais retourne uniquement un aperçu des requêtes générées sans les exécuter.
 - **`jours`**, **`semaines`**, **`mois`** — interroge directement la table correspondante.
+
+Exemple d'appel :
+
+```bash
+curl -X POST http://localhost:8000/trafics/get_trafics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "periode": "auto",
+    "co_regate": "12345",
+    "date_debut": "20250101",
+    "date_fin": "20250331"
+  }'
+```
 
 ### Constantes configurables (`app/routes/trafics.py`)
 
