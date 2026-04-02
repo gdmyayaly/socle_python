@@ -18,7 +18,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     """
     os.makedirs(LOGS_DIR, exist_ok=True)
 
-    formatter = JsonFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+    formatter = JsonFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT, json_ensure_ascii=False)
 
     # Handler fichier nommé par la date du jour
     today = datetime.now().strftime("%Y-%m-%d")
