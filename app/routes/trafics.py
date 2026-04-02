@@ -16,9 +16,20 @@ TABLES_PERIODE = {
     "mois": "g_mdp_trafics_mois_actualise",
 }
 
+TRAFICS_SELECT_COLUMNS = "*"
+# TRAFICS_SELECT_COLUMNS = "co_regate, da_comptage, li_site, nb_entrants, nb_sortants"
+
+TRAFICS_GROUP_BY = ""
+# TRAFICS_GROUP_BY = "co_regate, da_comptage"
+
+TRAFICS_IN_COLUMN = ""
+# TRAFICS_IN_COLUMN = "li_site"
+TRAFICS_IN_VALUES: list[str] = []
+# TRAFICS_IN_VALUES = ["Valeur1", "Valeur2", "Valeur3"]
+
 PARAMETRES_RAPPEL = (
     "Paramètres attendus : "
-    "periode (jours, semaines, mois, auto), "
+    "periode (jours, semaines, mois, auto, debug), "
     "co_regate (code régate du site), "
     "date_debut (format AAAAMMJJ ou AAAA-MM-JJ), "
     "date_fin (format AAAAMMJJ ou AAAA-MM-JJ)."
@@ -121,12 +132,18 @@ def build_query(
 ) -> str:
     """Construit une requête SELECT ou COUNT pour une période donnée."""
     table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
-    select = "COUNT(*) AS total" if count_only else "*"
-    return (
+    select = "COUNT(*) AS total" if count_only else TRAFICS_SELECT_COLUMNS
+    sql = (
         f"SELECT {select} FROM {table} "
         f"WHERE co_regate = '{co_regate}' "
         f"AND da_comptage BETWEEN '{fmt_date(dt_start)}' AND '{fmt_date(dt_end)}'"
     )
+    if TRAFICS_IN_COLUMN and TRAFICS_IN_VALUES:
+        in_list = ", ".join(f"'{v}'" for v in TRAFICS_IN_VALUES)
+        sql += f" AND {TRAFICS_IN_COLUMN} IN ({in_list})"
+    if TRAFICS_GROUP_BY and not count_only:
+        sql += f" GROUP BY {TRAFICS_GROUP_BY}"
+    return sql
 
 
 def validate_params(periode, co_regate, date_debut, date_fin):
@@ -146,7 +163,7 @@ def validate_params(periode, co_regate, date_debut, date_fin):
         raise HTTPException(status_code=400, detail=msg)
 
     periode_lower = periode.lower()
-    periodes_valides = (*TABLES_PERIODE, "auto")
+    periodes_valides = (*TABLES_PERIODE, "auto", "debug")
     if periode_lower not in periodes_valides:
         msg = (
             f"Période invalide '{periode}'. "
@@ -177,7 +194,7 @@ def validate_params(periode, co_regate, date_debut, date_fin):
 
 def build_segments(periode_lower, dt_debut, dt_fin):
     """Retourne la liste des segments selon la période."""
-    if periode_lower == "auto":
+    if periode_lower in ("auto", "debug"):
         return decompose_auto(dt_debut, dt_fin)
     return [(periode_lower, dt_debut, dt_fin)]
 
@@ -188,7 +205,7 @@ def build_segments(periode_lower, dt_debut, dt_fin):
 
 @router.get("/get_trafics")
 def get_trafics(
-    periode: str | None = Query(None, description="Période : jours, semaines, mois ou auto"),
+    periode: str | None = Query(None, description="Période : jours, semaines, mois, auto ou debug"),
     co_regate: str | None = Query(None, description="Code régate de l'entité"),
     date_debut: str | None = Query(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)"),
     date_fin: str | None = Query(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)"),
@@ -196,9 +213,13 @@ def get_trafics(
 ):
     """Récupère les trafics par code régate et période de dates.
 
-    En mode **auto**, l'intervalle est découpé dynamiquement en requêtes
+    En mode **auto** (par défaut), l'intervalle est découpé dynamiquement en requêtes
     sur les tables mois, semaines et jours pour optimiser les performances.
+
+    En mode **debug**, les requêtes sont générées mais pas exécutées (aperçu).
     """
+    if not periode:
+        periode = "auto"
     periode_lower, dt_debut, dt_fin = validate_params(periode, co_regate, date_debut, date_fin)
 
     segments = build_segments(periode_lower, dt_debut, dt_fin)
@@ -207,12 +228,12 @@ def get_trafics(
         for seg in segments
     ]
 
-    # --- Mode auto : aperçu des requêtes sans exécution ---
-    if periode_lower == "auto":
-        logger.info("Mode auto (preview) : %d requête(s) générées", len(queries))
+    # --- Mode debug : aperçu des requêtes sans exécution ---
+    if periode_lower == "debug":
+        logger.info("Mode debug (preview) : %d requête(s) générées", len(queries))
         return {
             "mode": "preview",
-            "periode": "auto",
+            "periode": "debug",
             "co_regate": co_regate,
             "date_debut": fmt_date(dt_debut),
             "date_fin": fmt_date(dt_fin),
@@ -223,15 +244,18 @@ def get_trafics(
             ],
         }
 
-    # --- Exécution ---
+    # --- Exécution (auto ou période fixe) ---
     start = time.perf_counter()
-    query_str = queries[0]["query"]
     try:
         if count_only:
-            row = databricks.fetch_one(query_str)
-            total = row["total"] if row else 0
+            total = 0
+            for q in queries:
+                row = databricks.fetch_one(q["query"])
+                total += row["total"] if row else 0
         else:
-            results = databricks.fetch_all(query_str)
+            results = []
+            for q in queries:
+                results.extend(databricks.fetch_all(q["query"]))
     except Exception as e:
         logger.error("Erreur requête (%s) : %s", periode_lower, e)
         raise HTTPException(
@@ -253,13 +277,13 @@ def get_trafics(
         response["count"] = len(results)
         response["data"] = results
     if DEBUG_SHOW_QUERY:
-        response["query"] = query_str
+        response["queries"] = [q["query"] for q in queries]
     return response
 
 
 @router.get("/get_trafics_paginated")
 def get_trafics_paginated(
-    periode: str | None = Query(None, description="Période : jours, semaines, mois ou auto"),
+    periode: str | None = Query(None, description="Période : jours, semaines, mois, auto ou debug"),
     co_regate: str | None = Query(None, description="Code régate de l'entité"),
     date_debut: str | None = Query(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)"),
     date_fin: str | None = Query(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)"),
@@ -267,6 +291,8 @@ def get_trafics_paginated(
     page_size: int = Query(50, ge=1, le=1000, description="Nombre de résultats par page"),
 ):
     """Récupère les trafics avec pagination."""
+    if not periode:
+        periode = "auto"
     periode_lower, dt_debut, dt_fin = validate_params(periode, co_regate, date_debut, date_fin)
 
     segments = build_segments(periode_lower, dt_debut, dt_fin)
@@ -275,8 +301,8 @@ def get_trafics_paginated(
         for seg in segments
     ]
 
-    # --- Mode auto : aperçu ---
-    if periode_lower == "auto":
+    # --- Mode debug : aperçu ---
+    if periode_lower == "debug":
         paginated_queries = [
             {
                 "index": i + 1,
@@ -287,7 +313,7 @@ def get_trafics_paginated(
         ]
         return {
             "mode": "preview",
-            "periode": "auto",
+            "periode": "debug",
             "co_regate": co_regate,
             "date_debut": fmt_date(dt_debut),
             "date_fin": fmt_date(dt_fin),
@@ -297,13 +323,14 @@ def get_trafics_paginated(
             "queries": paginated_queries,
         }
 
-    # --- Exécution avec pagination ---
+    # --- Exécution avec pagination (auto ou période fixe) ---
     offset = (page - 1) * page_size
-    query_str = f"{queries[0]['query']} LIMIT {page_size} OFFSET {offset}"
-
     start = time.perf_counter()
     try:
-        results = databricks.fetch_all(query_str)
+        results = []
+        for q in queries:
+            query_str = f"{q['query']} LIMIT {page_size} OFFSET {offset}"
+            results.extend(databricks.fetch_all(query_str))
     except Exception as e:
         logger.error("Erreur requête paginée (%s) : %s", periode_lower, e)
         raise HTTPException(
@@ -324,5 +351,5 @@ def get_trafics_paginated(
         "data": results,
     }
     if DEBUG_SHOW_QUERY:
-        response["query"] = query_str
+        response["queries"] = [f"{q['query']} LIMIT {page_size} OFFSET {offset}" for q in queries]
     return response

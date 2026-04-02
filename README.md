@@ -72,6 +72,33 @@ Le serveur démarre sur `http://localhost:8000`.
 | GET     | `/databricks/trafics_jours?limit=10` | Données de `gold.trafics_jours` |
 | GET     | `/databricks/trafics_semaines?limit=10` | Données de `gold.trafics_semaines` |
 | GET     | `/databricks/trafics_mois?limit=10` | Données de `gold.trafics_mois`    |
+| GET     | `/trafics/get_trafics` | Récupère les trafics par code régate et période |
+| GET     | `/trafics/get_trafics_paginated` | Idem avec pagination |
+
+### Endpoint `/trafics/get_trafics`
+
+| Paramètre    | Défaut  | Description                                      |
+|--------------|---------|--------------------------------------------------|
+| `periode`    | `auto`  | `jours`, `semaines`, `mois`, `auto` ou `debug`  |
+| `co_regate`  | —       | Code régate du site                               |
+| `date_debut` | —       | Date de début (AAAAMMJJ ou AAAA-MM-JJ)           |
+| `date_fin`   | —       | Date de fin (AAAAMMJJ ou AAAA-MM-JJ)             |
+| `count_only` | `false` | Si `true`, retourne uniquement le count           |
+
+Modes de période :
+
+- **`auto`** (par défaut) — découpe l'intervalle en requêtes optimales sur les tables mois, semaines et jours, puis exécute et agrège les résultats.
+- **`debug`** — même découpage qu'`auto` mais retourne uniquement un aperçu des requêtes générées sans les exécuter.
+- **`jours`**, **`semaines`**, **`mois`** — interroge directement la table correspondante.
+
+### Constantes configurables (`app/routes/trafics.py`)
+
+| Constante               | Défaut | Description                                          |
+|--------------------------|--------|------------------------------------------------------|
+| `TRAFICS_SELECT_COLUMNS` | `*`    | Colonnes du SELECT (ex : `"co_regate, da_comptage"`) |
+| `TRAFICS_GROUP_BY`       | `""`   | Clause GROUP BY (vide = désactivé)                   |
+| `TRAFICS_IN_COLUMN`      | `""`   | Colonne pour la clause IN (vide = désactivé)         |
+| `TRAFICS_IN_VALUES`      | `[]`   | Valeurs pour la clause IN                            |
 
 ## Classe utilitaire `Database`
 
@@ -151,24 +178,20 @@ databricks.columns(schema="default", table="trafics_jours")  # colonnes d'une ta
 
 ## Logging
 
-L'application logge automatiquement toute son activité (requêtes HTTP, connexions base de données, erreurs) dans des fichiers journaliers.
+L'application logge automatiquement toute son activité (requêtes HTTP, connexions base de données, erreurs) dans des fichiers journaliers au format **JSON** (via `python-json-logger`).
 
 ### Fonctionnement
 
 - Les logs sont écrits dans le dossier `logs/`
-- Un fichier par jour avec rotation automatique à minuit :
-  - `logs/app.log` — fichier du jour en cours
-  - `logs/app.log.2026-03-27` — archive du 27 mars 2026
-- Les 30 derniers jours sont conservés, les plus anciens sont supprimés automatiquement
+- Un fichier par jour : `logs/2026-04-02.log`
 - Les logs s'affichent aussi dans la console
 
-### Format des logs
+### Format des logs (JSON)
 
-```
-2026-03-27 14:30:12 | INFO     | trppu | >>> GET /health
-2026-03-27 14:30:12 | INFO     | trppu | <<< GET /health 200 (3.2ms)
-2026-03-27 14:30:12 | INFO     | database | Connexion au pool MySQL réussie.
-2026-03-27 14:30:15 | WARNING  | database | Tentative 1/3 de connexion MySQL échouée : ...
+```json
+{"asctime": "2026-04-02 14:30:12", "levelname": "INFO", "name": "trppu", "message": ">>> GET /health"}
+{"asctime": "2026-04-02 14:30:12", "levelname": "INFO", "name": "trppu", "message": "<<< GET /health 200 (3.2ms)"}
+{"asctime": "2026-04-02 14:30:15", "levelname": "WARNING", "name": "database", "message": "Tentative 1/3 de connexion MySQL échouée : ..."}
 ```
 
 ### Ce qui est loggé
