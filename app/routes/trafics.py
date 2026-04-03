@@ -113,8 +113,17 @@ def parse_date(value: str, nom_param: str) -> datetime:
     )
 
 
-def fmt_date(dt: datetime) -> str:
-    """Formate une date en AAAA-MM-JJ pour les requêtes SQL."""
+def fmt_date(dt: datetime, periode: str = "jours") -> str:
+    """Formate une date selon la période pour les requêtes SQL.
+
+    jours    -> AAAA-MM-JJ
+    semaines -> AAAA-NS  (numéro de semaine ISO)
+    mois     -> AAAAMM
+    """
+    if periode == "semaines":
+        return f"{dt.isocalendar()[0]}-{dt.isocalendar()[1]:02d}"
+    if periode == "mois":
+        return dt.strftime("%Y%m")
     return dt.strftime("%Y-%m-%d")
 
 
@@ -193,7 +202,7 @@ def build_query(
         f"SELECT {select} FROM {table} "
         f"WHERE co_regate = '{co_regate}' "
         f"AND co_niveau_regroupement_operationnel = 'SITE' "
-        f"AND {date_col} BETWEEN '{fmt_date(dt_start)}' AND '{fmt_date(dt_end)}'"
+        f"AND {date_col} BETWEEN '{fmt_date(dt_start, periode)}' AND '{fmt_date(dt_end, periode)}'"
     )
     if TRAFICS_IN_COLUMN and TRAFICS_IN_VALUES:
         in_list = ", ".join(f"'{v}'" for v in TRAFICS_IN_VALUES)
