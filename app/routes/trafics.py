@@ -17,16 +17,46 @@ TABLES_PERIODE = {
     "mois": "g_mdp_trafics_mois_actualise",
 }
 
-TRAFICS_SELECT_COLUMNS = "*"
-# TRAFICS_SELECT_COLUMNS = "co_regate, da_comptage, li_site, nb_entrants, nb_sortants"
+# TRAFICS_SELECT_COLUMNS = "*"
+TRAFICS_SELECT_COLUMNS = (
+    "da_comptage, "
+    "co_niveau_regroupement_operationnel, "
+    "co_regate, "
+    "lb_entite, "
+    "co_comptage, "
+    "lb_comptage, "
+    "co_objet, "
+    "lb_objet, "
+    "co_type_objet, "
+    "lb_type_objet, "
+    "SUM(nb_objet_retenu) AS nb_objet_trafic_reel"
+)
 
-TRAFICS_GROUP_BY = ""
-# TRAFICS_GROUP_BY = "co_regate, da_comptage"
+# TRAFICS_GROUP_BY = ""
+TRAFICS_GROUP_BY = (
+    "da_comptage, "
+    "co_niveau_regroupement_operationnel, "
+    "co_regate, "
+    "lb_entite, "
+    "co_comptage, "
+    "lb_comptage, "
+    "co_objet, "
+    "lb_objet, "
+    "co_type_objet, "
+    "lb_type_objet"
+)
 
-TRAFICS_IN_COLUMN = ""
-# TRAFICS_IN_COLUMN = "li_site"
-TRAFICS_IN_VALUES: list[str] = []
-# TRAFICS_IN_VALUES = ["Valeur1", "Valeur2", "Valeur3"]
+# TRAFICS_IN_COLUMN = ""
+# TRAFICS_IN_VALUES: list[str] = []
+TRAFICS_IN_COLUMN = "co_comptage"
+TRAFICS_IN_VALUES = [
+    "TLOP1", "ULOAD",                    # Colis
+    "TRSP1",                              # Objets suivis
+    "OR4PM", "OR4PX",                     # Courrier
+    "TI_COL_MENAGE", "TI_COL_CEDEX",
+    "IMPJ",                               # IP
+    "VQQP0",                              # EPACK
+]
 
 PARAMETRES_RAPPEL = (
     "Paramètres attendus : "
@@ -67,12 +97,13 @@ def parse_date(value: str, nom_param: str) -> datetime:
             return datetime.strptime(value, fmt)
         except ValueError:
             continue
+    msg = (
+        f"Format de {nom_param} invalide '{value}'. "
+        f"Attendu : AAAAMMJJ ou AAAA-MM-JJ. {PARAMETRES_RAPPEL}"
+    )
     raise HTTPException(
         status_code=400,
-        detail=(
-            f"Format de {nom_param} invalide '{value}'. "
-            f"Attendu : AAAAMMJJ ou AAAA-MM-JJ. {PARAMETRES_RAPPEL}"
-        ),
+        detail={"error": True, "message": msg, "code": 400},
     )
 
 
@@ -154,6 +185,7 @@ def build_query(
     sql = (
         f"SELECT {select} FROM {table} "
         f"WHERE co_regate = '{co_regate}' "
+        f"AND co_niveau_regroupement_operationnel = 'SITE' "
         f"AND da_comptage BETWEEN '{fmt_date(dt_start)}' AND '{fmt_date(dt_end)}'"
     )
     if TRAFICS_IN_COLUMN and TRAFICS_IN_VALUES:
@@ -178,7 +210,10 @@ def validate_params(periode, co_regate, date_debut, date_fin):
     if manquants:
         msg = f"Paramètre(s) manquant(s) : {', '.join(manquants)}. {PARAMETRES_RAPPEL}"
         logger.warning(msg)
-        raise HTTPException(status_code=400, detail=msg)
+        raise HTTPException(
+            status_code=400,
+            detail={"error": True, "message": msg, "code": 400},
+        )
 
     periode_lower = periode.lower()
     periodes_valides = (*TABLES_PERIODE, "auto", "debug")
@@ -188,7 +223,10 @@ def validate_params(periode, co_regate, date_debut, date_fin):
             f"Valeurs acceptées : {', '.join(periodes_valides)}. {PARAMETRES_RAPPEL}"
         )
         logger.warning(msg)
-        raise HTTPException(status_code=400, detail=msg)
+        raise HTTPException(
+            status_code=400,
+            detail={"error": True, "message": msg, "code": 400},
+        )
 
     dt_debut = parse_date(date_debut, "date_debut")
     dt_fin = parse_date(date_fin, "date_fin")
@@ -196,7 +234,10 @@ def validate_params(periode, co_regate, date_debut, date_fin):
     if dt_debut > dt_fin:
         msg = f"date_debut doit être antérieure ou égale à date_fin. {PARAMETRES_RAPPEL}"
         logger.warning(msg)
-        raise HTTPException(status_code=400, detail=msg)
+        raise HTTPException(
+            status_code=400,
+            detail={"error": True, "message": msg, "code": 400},
+        )
 
     ecart = (dt_fin - dt_debut).days
     if ecart > 730:
@@ -205,7 +246,10 @@ def validate_params(periode, co_regate, date_debut, date_fin):
             f"Écart actuel : {ecart} jours. {PARAMETRES_RAPPEL}"
         )
         logger.warning(msg)
-        raise HTTPException(status_code=400, detail=msg)
+        raise HTTPException(
+            status_code=400,
+            detail={"error": True, "message": msg, "code": 400},
+        )
 
     return periode_lower, dt_debut, dt_fin
 
@@ -278,7 +322,11 @@ def get_trafics(body: TraficsRequest):
         logger.error("Erreur requête (%s) : %s", periode_lower, e)
         raise HTTPException(
             status_code=500,
-            detail=f"Erreur lors de la récupération des trafics ({periode_lower}).",
+            detail={
+                "error": True,
+                "message": f"Erreur lors de la récupération des trafics ({periode_lower}).",
+                "code": 500,
+            },
         )
     duration_s = round(time.perf_counter() - start, 3)
 
@@ -353,7 +401,11 @@ def get_trafics_paginated(body: TraficsPaginatedRequest):
         logger.error("Erreur requête paginée (%s) : %s", periode_lower, e)
         raise HTTPException(
             status_code=500,
-            detail=f"Erreur lors de la récupération des trafics ({periode_lower}).",
+            detail={
+                "error": True,
+                "message": f"Erreur lors de la récupération des trafics ({periode_lower}).",
+                "code": 500,
+            },
         )
     duration_s = round(time.perf_counter() - start, 3)
 
