@@ -17,6 +17,12 @@ TABLES_PERIODE = {
     "mois": "g_mdp_trafics_mois_actualise",
 }
 
+DATE_COLUMN_PERIODE = {
+    "jours": "da_comptage",
+    "semaines": "co_semaine_comptage",
+    "mois": "co_mois_comptage",
+}
+
 # TRAFICS_SELECT_COLUMNS = "*"
 TRAFICS_SELECT_COLUMNS = (
     "da_comptage, "
@@ -181,18 +187,20 @@ def build_query(
 ) -> str:
     """Construit une requête SELECT ou COUNT pour une période donnée."""
     table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
-    select = "COUNT(*) AS total" if count_only else TRAFICS_SELECT_COLUMNS
+    date_col = DATE_COLUMN_PERIODE[periode]
+    select = "COUNT(*) AS total" if count_only else TRAFICS_SELECT_COLUMNS.replace("da_comptage", date_col)
     sql = (
         f"SELECT {select} FROM {table} "
         f"WHERE co_regate = '{co_regate}' "
         f"AND co_niveau_regroupement_operationnel = 'SITE' "
-        f"AND da_comptage BETWEEN '{fmt_date(dt_start)}' AND '{fmt_date(dt_end)}'"
+        f"AND {date_col} BETWEEN '{fmt_date(dt_start)}' AND '{fmt_date(dt_end)}'"
     )
     if TRAFICS_IN_COLUMN and TRAFICS_IN_VALUES:
         in_list = ", ".join(f"'{v}'" for v in TRAFICS_IN_VALUES)
         sql += f" AND {TRAFICS_IN_COLUMN} IN ({in_list})"
     if TRAFICS_GROUP_BY and not count_only:
-        sql += f" GROUP BY {TRAFICS_GROUP_BY}"
+        group_by = TRAFICS_GROUP_BY.replace("da_comptage", date_col)
+        sql += f" GROUP BY {group_by}"
     return sql
 
 
