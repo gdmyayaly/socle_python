@@ -58,3 +58,7 @@ app.include_router(health_routes.router)
 app.include_router(databricks_routes.router)
 app.include_router(trafics_routes.router)
 app.include_router(calcl_nbr_jours_routes.router)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
