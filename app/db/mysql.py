@@ -5,7 +5,15 @@ from typing import Any
 
 import aiomysql
 
-from app.config import MYSQL_DATABASE, MYSQL_HOST, MYSQL_PASSWORD, MYSQL_PORT, MYSQL_USER
+from app.config import (
+    MYSQL_DATABASE,
+    MYSQL_HOST,
+    MYSQL_MAX_RETRIES,
+    MYSQL_PASSWORD,
+    MYSQL_PORT,
+    MYSQL_RETRY_DELAY,
+    MYSQL_USER,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +30,8 @@ class Database:
         database: str = MYSQL_DATABASE,
         min_connections: int = 1,
         max_connections: int = 10,
-        max_retries: int = 3,
-        retry_delay: float = 1.0,
+        max_retries: int = MYSQL_MAX_RETRIES,
+        retry_delay: float = MYSQL_RETRY_DELAY,
     ):
         self.host = host
         self.port = port

@@ -11,6 +11,8 @@ from app.config import (
     DATABRICKS_CLIENT_ID,
     DATABRICKS_CLIENT_SECRET,
     DATABRICKS_HTTP_PATH,
+    DATABRICKS_MAX_RETRIES,
+    DATABRICKS_RETRY_DELAY,
     DATABRICKS_SCHEMA,
     DATABRICKS_SERVER_HOSTNAME,
     DATABRICKS_TIMEOUT,
@@ -30,8 +32,8 @@ class DatabricksDB:
         self.catalog = DATABRICKS_CATALOG
         self.schema = DATABRICKS_SCHEMA
         self.timeout = DATABRICKS_TIMEOUT
-        self.max_retries = 3
-        self.retry_delay = 2.0
+        self.max_retries = DATABRICKS_MAX_RETRIES
+        self.retry_delay = DATABRICKS_RETRY_DELAY
         self._connection = None
 
     def connect(self) -> None:

@@ -14,6 +14,8 @@ MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "trppu")
+MYSQL_MAX_RETRIES = int(os.getenv("MYSQL_MAX_RETRIES", "3"))
+MYSQL_RETRY_DELAY = float(os.getenv("MYSQL_RETRY_DELAY", "1.0"))
 
 # Databricks
 DATABRICKS_SERVER_HOSTNAME = os.getenv("DATABRICKS_SERVER_HOSTNAME", "")
@@ -23,6 +25,8 @@ DATABRICKS_CLIENT_SECRET = os.getenv("DATABRICKS_CLIENT_SECRET", "")
 DATABRICKS_CATALOG = os.getenv("DATABRICKS_CATALOG", "gold")
 DATABRICKS_SCHEMA = os.getenv("DATABRICKS_SCHEMA", "default")
 DATABRICKS_TIMEOUT = int(os.getenv("DATABRICKS_TIMEOUT", "120"))
+DATABRICKS_MAX_RETRIES = int(os.getenv("DATABRICKS_MAX_RETRIES", "3"))
+DATABRICKS_RETRY_DELAY = float(os.getenv("DATABRICKS_RETRY_DELAY", "2.0"))
 
 # Debug
 DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"
