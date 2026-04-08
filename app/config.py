@@ -1,3 +1,5 @@
+"""Configuration centralisée de l'application, chargée depuis les variables d'environnement."""
+
 import os
 from pathlib import Path
 
@@ -34,6 +36,9 @@ APP_ENV = os.getenv("APP_ENV", "sdev")
 MODULE = os.getenv("MODULE", "yb02")
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 LOGS_DIR = os.getenv("LOGS_DIR", "")
+
+# Validation
+MAX_DATE_RANGE_DAYS = 730
 
 # Debug
 DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"

@@ -1,3 +1,5 @@
+"""Connexion asynchrone à MySQL avec pool de connexions et retry."""
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -108,7 +110,6 @@ class Database:
                 if attempt == max_retries:
                     raise
                 await asyncio.sleep(self.retry_delay * attempt)
-        return 0
 
     async def fetch_one(
         self, query: str, params: tuple | None = None

@@ -1,3 +1,5 @@
+"""Routes de récupération des données de trafics depuis Databricks."""
+
 import logging
 import time
 from calendar import monthrange
@@ -6,7 +8,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA, DEBUG_SHOW_QUERY
+from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA, DEBUG_SHOW_QUERY, MAX_DATE_RANGE_DAYS
 from app.db.databricks import databricks
 
 logger = logging.getLogger(__name__)
@@ -23,7 +25,6 @@ DATE_COLUMN_PERIODE = {
     "mois": "co_mois_comptage",
 }
 
-# TRAFICS_SELECT_COLUMNS = "*"
 TRAFICS_SELECT_COLUMNS = (
     "da_comptage, "
     "co_niveau_regroupement_operationnel, "
@@ -38,7 +39,6 @@ TRAFICS_SELECT_COLUMNS = (
     "SUM(nb_objet_retenu) AS nb_objet_trafic_reel"
 )
 
-# TRAFICS_GROUP_BY = ""
 TRAFICS_GROUP_BY = (
     "da_comptage, "
     "co_niveau_regroupement_operationnel, "
@@ -52,8 +52,6 @@ TRAFICS_GROUP_BY = (
     "lb_type_objet"
 )
 
-# TRAFICS_IN_COLUMN = ""
-# TRAFICS_IN_VALUES: list[str] = []
 TRAFICS_IN_COLUMN = "co_comptage"
 TRAFICS_IN_VALUES = [
     "TLOP1", "ULOAD",                    # Colis
@@ -259,9 +257,9 @@ def validate_params(periode, co_regate, date_debut, date_fin):
         )
 
     ecart = (dt_fin - dt_debut).days
-    if ecart > 730:
+    if ecart > MAX_DATE_RANGE_DAYS:
         msg = (
-            f"L'écart entre les dates ne doit pas dépasser 2 ans (730 jours). "
+            f"L'écart entre les dates ne doit pas dépasser 2 ans ({MAX_DATE_RANGE_DAYS} jours). "
             f"Écart actuel : {ecart} jours. {PARAMETRES_RAPPEL}"
         )
         logger.warning(msg)
@@ -328,7 +326,7 @@ def get_trafics(body: TraficsRequest):
                 "message": f"Erreur lors de la récupération des trafics ({periode_lower}).",
                 "code": 500,
             },
-        )
+        ) from e
     duration_s = round(time.perf_counter() - start, 3)
 
     response = {

@@ -1,3 +1,5 @@
+"""Routes d'exploration des métadonnées Databricks (catalogues, schémas, tables, colonnes)."""
+
 import logging
 import time
 
@@ -20,7 +22,7 @@ def databricks_test():
         raise HTTPException(
             status_code=500,
             detail="Erreur lors du test de connexion à Databricks.",
-        )
+        ) from e
     duration_s = round(time.perf_counter() - start, 3)
     return {"test": "ok", "execution_time_s": duration_s, "result": result}
 
@@ -36,7 +38,7 @@ def databricks_catalogs():
         raise HTTPException(
             status_code=500,
             detail="Erreur lors de la récupération des catalogues.",
-        )
+        ) from e
     duration_s = round(time.perf_counter() - start, 3)
     return {"execution_time_s": duration_s, "data": result}
 
@@ -52,7 +54,7 @@ def databricks_schemas():
         raise HTTPException(
             status_code=500,
             detail="Erreur lors de la récupération des schémas.",
-        )
+        ) from e
     duration_s = round(time.perf_counter() - start, 3)
     return {"execution_time_s": duration_s, "data": result}
 
@@ -68,7 +70,7 @@ def databricks_tables():
         raise HTTPException(
             status_code=500,
             detail="Erreur lors de la récupération des tables.",
-        )
+        ) from e
     duration_s = round(time.perf_counter() - start, 3)
     return {"execution_time_s": duration_s, "data": result}
 
@@ -84,7 +86,7 @@ def databricks_tables_by_schema(schema: str):
         raise HTTPException(
             status_code=500,
             detail=f"Erreur lors de la récupération des tables du schéma '{schema}'.",
-        )
+        ) from e
     duration_s = round(time.perf_counter() - start, 3)
     return {"execution_time_s": duration_s, "data": result}
 
@@ -100,7 +102,7 @@ def databricks_columns(table: str):
         raise HTTPException(
             status_code=500,
             detail=f"Erreur lors de la récupération des colonnes de la table '{table}'.",
-        )
+        ) from e
     duration_s = round(time.perf_counter() - start, 3)
     return {"execution_time_s": duration_s, "data": result}
 
@@ -116,7 +118,7 @@ def databricks_columns_by_schema(schema: str, table: str):
         raise HTTPException(
             status_code=500,
             detail=f"Erreur lors de la récupération des colonnes de '{schema}.{table}'.",
-        )
+        ) from e
     duration_s = round(time.perf_counter() - start, 3)
     return {"execution_time_s": duration_s, "data": result}
 

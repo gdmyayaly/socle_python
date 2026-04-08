@@ -1,3 +1,5 @@
+"""Connexion à Databricks SQL Warehouse via OAuth M2M avec retry automatique."""
+
 import logging
 import os
 import time

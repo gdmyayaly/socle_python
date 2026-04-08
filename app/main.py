@@ -1,3 +1,5 @@
+"""Point d'entrée de l'application FastAPI trppu."""
+
 import logging
 import time
 from contextlib import asynccontextmanager

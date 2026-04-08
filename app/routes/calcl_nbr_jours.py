@@ -1,8 +1,12 @@
+"""Route de calcul du nombre de jours ouvrés par semaine entre deux dates."""
+
 import logging
 import time
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
+
+from app.config import MAX_DATE_RANGE_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -46,17 +50,17 @@ def get_nbr_jours(
     # Validation du format des dates
     try:
         dt_debut = datetime.strptime(date_debut, "%Y%m%d")
-    except ValueError:
+    except ValueError as e:
         msg = f"Format de date_debut invalide '{date_debut}'. Attendu : AAAAMMJJ (ex: 20240101). {PARAMETRES_RAPPEL}"
         logger.warning(msg)
-        raise HTTPException(status_code=400, detail=msg)
+        raise HTTPException(status_code=400, detail=msg) from e
 
     try:
         dt_fin = datetime.strptime(date_fin, "%Y%m%d")
-    except ValueError:
+    except ValueError as e:
         msg = f"Format de date_fin invalide '{date_fin}'. Attendu : AAAAMMJJ (ex: 20241231). {PARAMETRES_RAPPEL}"
         logger.warning(msg)
-        raise HTTPException(status_code=400, detail=msg)
+        raise HTTPException(status_code=400, detail=msg) from e
 
     # Vérification cohérence des dates
     if dt_debut > dt_fin:
@@ -66,9 +70,9 @@ def get_nbr_jours(
 
     # Vérification écart max 2 ans (730 jours)
     ecart = (dt_fin - dt_debut).days
-    if ecart > 730:
+    if ecart > MAX_DATE_RANGE_DAYS:
         msg = (
-            f"L'écart entre les dates ne doit pas dépasser 2 ans (730 jours). "
+            f"L'écart entre les dates ne doit pas dépasser 2 ans ({MAX_DATE_RANGE_DAYS} jours). "
             f"Écart actuel : {ecart} jours. {PARAMETRES_RAPPEL}"
         )
         logger.warning(msg)
