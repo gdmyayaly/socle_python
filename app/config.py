@@ -33,12 +33,12 @@ DATABRICKS_RETRY_DELAY = float(os.getenv("DATABRICKS_RETRY_DELAY", "2.0"))
 # Application / Logging
 APP = os.getenv("APP", "dsr")
 APP_ENV = os.getenv("APP_ENV", "sdev")
-MODULE = os.getenv("MODULE", "yb02")
+MODULE = os.getenv("MODULE", "ys04")
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 LOGS_DIR = os.getenv("LOGS_DIR", "")
 
 # Validation
-MAX_DATE_RANGE_DAYS = 730
+MAX_DATE_RANGE_DAYS = 730 # SOIT 365 * 2
 
 # Debug
 DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"

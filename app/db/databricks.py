@@ -1,5 +1,5 @@
 """Connexion à Databricks SQL Warehouse via OAuth M2M avec retry automatique."""
-
+# Url help: https://learn.microsoft.com/en-us/azure/databricks/dev-tools/python-sql-connector#auth-m2m
 import logging
 import os
 import time

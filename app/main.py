@@ -1,4 +1,4 @@
-"""Point d'entrée de l'application FastAPI trppu."""
+"""Point d'entrée de l'application FastAPI trppu (ys04)."""
 
 import logging
 import time
@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     log.info("Arrêt de l'application trppu")
 
 
-app = FastAPI(title="trppu API", description="API de test trppu", lifespan=lifespan)
+app = FastAPI(title="trppu API YS04", description="API de test trppu YS04", lifespan=lifespan)
 
 
 @app.middleware("http")

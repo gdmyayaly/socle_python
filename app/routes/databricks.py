@@ -1,4 +1,4 @@
-"""Routes d'exploration des métadonnées Databricks (catalogues, schémas, tables, colonnes)."""
+"""Routes d'exploration des métadonnées Databricks (catalogues, schémas, tables, colonnes) pour faciliter la visualisation des tables. """
 
 import logging
 import time
