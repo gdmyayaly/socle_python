@@ -4,10 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
-from app.config import SKIP_MYSQL
-from app.db.databricks import databricks
-from app.db.mysql import db
-from app.logger import setup_logging
+from app.json_formatter import setup_logging
 from app.routes import databricks as databricks_routes
 from app.routes import health as health_routes
 from app.routes import calcl_nbr_jours as calcl_nbr_jours_routes
@@ -20,18 +17,7 @@ log = logging.getLogger("trppu")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Démarrage de l'application trppu")
-    if not SKIP_MYSQL:
-        await db.connect()
-    else:
-        log.info("MySQL ignoré (SKIP_MYSQL=true)")
-    try:
-        databricks.connect()
-    except Exception as e:
-        log.error("Impossible de se connecter à Databricks : %s", e)
     yield
-    databricks.disconnect()
-    if not SKIP_MYSQL:
-        await db.disconnect()
     log.info("Arrêt de l'application trppu")
 
 
@@ -61,4 +47,5 @@ app.include_router(calcl_nbr_jours_routes.router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    from app.config import APP_ENV
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=(APP_ENV == "local"))

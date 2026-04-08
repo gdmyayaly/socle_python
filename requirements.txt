@@ -6,3 +6,8 @@ databricks-sql-connector
 databricks-sdk
 pyarrow
 python-json-logger
+
+# Audit securite
+bandit
+pip-audit
+safety

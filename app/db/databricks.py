@@ -120,9 +120,8 @@ class DatabricksDB:
 
     def _ensure_connection(self):
         if self._connection is None:
-            raise RuntimeError(
-                "La connexion Databricks n'est pas initialisée. Appelez connect() d'abord."
-            )
+            logger.info("Connexion lazy à Databricks (premier appel)...")
+            self.connect()
         return self._connection
 
     def _execute_with_retry(self, operation, *args, **kwargs):

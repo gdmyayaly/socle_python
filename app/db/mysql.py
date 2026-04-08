@@ -79,11 +79,10 @@ class Database:
             self._pool = None
             logger.info("Pool MySQL fermé.")
 
-    def _ensure_pool(self) -> aiomysql.Pool:
+    async def _ensure_pool(self) -> aiomysql.Pool:
         if self._pool is None:
-            raise RuntimeError(
-                "Le pool de connexions n'est pas initialisé. Appelez connect() d'abord."
-            )
+            logger.info("Connexion lazy à MySQL (premier appel)...")
+            await self.connect()
         return self._pool
 
     async def execute(
@@ -91,7 +90,7 @@ class Database:
     ) -> int:
         """Exécute une requête INSERT/UPDATE/DELETE et retourne le nombre de lignes affectées."""
         max_retries = retries if retries is not None else self.max_retries
-        pool = self._ensure_pool()
+        pool = await self._ensure_pool()
 
         for attempt in range(1, max_retries + 1):
             try:
@@ -115,7 +114,7 @@ class Database:
         self, query: str, params: tuple | None = None
     ) -> dict[str, Any] | None:
         """Exécute une requête SELECT et retourne une seule ligne sous forme de dict."""
-        pool = self._ensure_pool()
+        pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(query, params)
@@ -125,7 +124,7 @@ class Database:
         self, query: str, params: tuple | None = None
     ) -> list[dict[str, Any]]:
         """Exécute une requête SELECT et retourne toutes les lignes sous forme de list[dict]."""
-        pool = self._ensure_pool()
+        pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(query, params)
@@ -141,7 +140,7 @@ class Database:
                 await tx.execute("UPDATE ...", (...))
             # commit automatique à la sortie, rollback en cas d'exception
         """
-        pool = self._ensure_pool()
+        pool = await self._ensure_pool()
         conn = await pool.acquire()
         try:
             await conn.begin()

@@ -66,7 +66,7 @@ TRAFICS_IN_VALUES = [
 
 PARAMETRES_RAPPEL = (
     "Paramètres attendus : "
-    "periode (jours, semaines, mois, auto, debug), "
+    "periode (jours, semaines, mois, auto), "
     "co_regate (code régate du site), "
     "date_debut (format AAAAMMJJ ou AAAA-MM-JJ), "
     "date_fin (format AAAAMMJJ ou AAAA-MM-JJ)."
@@ -76,20 +76,11 @@ router = APIRouter(prefix="/trafics", tags=["Trafics"])
 
 
 class TraficsRequest(BaseModel):
-    periode: str | None = Field(None, description="Période : jours, semaines, mois, auto ou debug")
+    periode: str | None = Field(None, description="Période : jours, semaines, mois ou auto (défaut: auto)")
     co_regate: str | None = Field(None, description="Code régate de l'entité")
     date_debut: str | None = Field(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)")
     date_fin: str | None = Field(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)")
     count_only: bool = Field(False, description="Si true, retourne uniquement le count")
-
-
-class TraficsPaginatedRequest(BaseModel):
-    periode: str | None = Field(None, description="Période : jours, semaines, mois, auto ou debug")
-    co_regate: str | None = Field(None, description="Code régate de l'entité")
-    date_debut: str | None = Field(None, description="Date de début (AAAAMMJJ ou AAAA-MM-JJ)")
-    date_fin: str | None = Field(None, description="Date de fin (AAAAMMJJ ou AAAA-MM-JJ)")
-    page: int = Field(1, ge=1, description="Numéro de page (à partir de 1)")
-    page_size: int = Field(50, ge=1, le=1000, description="Nombre de résultats par page")
 
 
 # ---------------------------------------------------------------------------
@@ -193,24 +184,35 @@ def build_query(
     dt_start: datetime,
     dt_end: datetime,
     count_only: bool = False,
-) -> str:
-    """Construit une requête SELECT ou COUNT pour une période donnée."""
+) -> tuple[str, dict]:
+    """Construit une requête SELECT ou COUNT pour une période donnée.
+
+    Retourne un tuple (sql, params) avec des placeholders nommés
+    pour éviter les injections SQL.
+    """
     table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
     date_col = DATE_COLUMN_PERIODE[periode]
     select = "COUNT(*) AS total" if count_only else TRAFICS_SELECT_COLUMNS.replace("da_comptage", date_col)
+    params = {
+        "co_regate": co_regate,
+        "dt_start": fmt_date(dt_start, periode),
+        "dt_end": fmt_date(dt_end, periode),
+    }
     sql = (
         f"SELECT {select} FROM {table} "
-        f"WHERE co_regate = '{co_regate}' "
+        f"WHERE co_regate = :co_regate "
         f"AND co_niveau_regroupement_operationnel = 'SITE' "
-        f"AND {date_col} BETWEEN '{fmt_date(dt_start, periode)}' AND '{fmt_date(dt_end, periode)}'"
+        f"AND {date_col} BETWEEN :dt_start AND :dt_end"
     )
     if TRAFICS_IN_COLUMN and TRAFICS_IN_VALUES:
-        in_list = ", ".join(f"'{v}'" for v in TRAFICS_IN_VALUES)
-        sql += f" AND {TRAFICS_IN_COLUMN} IN ({in_list})"
+        in_placeholders = ", ".join(f":in_{i}" for i in range(len(TRAFICS_IN_VALUES)))
+        for i, v in enumerate(TRAFICS_IN_VALUES):
+            params[f"in_{i}"] = v
+        sql += f" AND {TRAFICS_IN_COLUMN} IN ({in_placeholders})"
     if TRAFICS_GROUP_BY and not count_only:
         group_by = TRAFICS_GROUP_BY.replace("da_comptage", date_col)
         sql += f" GROUP BY {group_by}"
-    return sql
+    return sql, params
 
 
 def validate_params(periode, co_regate, date_debut, date_fin):
@@ -233,7 +235,7 @@ def validate_params(periode, co_regate, date_debut, date_fin):
         )
 
     periode_lower = periode.lower()
-    periodes_valides = (*TABLES_PERIODE, "auto", "debug")
+    periodes_valides = (*TABLES_PERIODE, "auto")
     if periode_lower not in periodes_valides:
         msg = (
             f"Période invalide '{periode}'. "
@@ -273,7 +275,7 @@ def validate_params(periode, co_regate, date_debut, date_fin):
 
 def build_segments(periode_lower, dt_debut, dt_fin):
     """Retourne la liste des segments selon la période."""
-    if periode_lower in ("auto", "debug"):
+    if periode_lower == "auto":
         return decompose_auto(dt_debut, dt_fin)
     return [(periode_lower, dt_debut, dt_fin)]
 
@@ -288,17 +290,13 @@ def get_trafics(body: TraficsRequest):
 
     En mode **auto** (par défaut), l'intervalle est découpé dynamiquement en requêtes
     sur les tables mois, semaines et jours pour optimiser les performances.
-
-    En mode **debug**, les requêtes sont générées mais pas exécutées (aperçu).
     """
-    periode = body.periode
+    periode = body.periode or "auto"
     co_regate = body.co_regate
     date_debut = body.date_debut
     date_fin = body.date_fin
     count_only = body.count_only
 
-    if not periode:
-        periode = "auto"
     periode_lower, dt_debut, dt_fin = validate_params(periode, co_regate, date_debut, date_fin)
 
     segments = build_segments(periode_lower, dt_debut, dt_fin)
@@ -307,34 +305,20 @@ def get_trafics(body: TraficsRequest):
         for seg in segments
     ]
 
-    # --- Mode debug : aperçu des requêtes sans exécution ---
-    if periode_lower == "debug":
-        logger.info("Mode debug (preview) : %d requête(s) générées", len(queries))
-        return {
-            "mode": "preview",
-            "periode": "debug",
-            "co_regate": co_regate,
-            "date_debut": fmt_date(dt_debut),
-            "date_fin": fmt_date(dt_fin),
-            "nb_queries": len(queries),
-            "queries": [
-                {"index": i + 1, "periode": q["periode"], "query": q["query"]}
-                for i, q in enumerate(queries)
-            ],
-        }
-
     # --- Exécution (auto ou période fixe) ---
     start = time.perf_counter()
     try:
         if count_only:
             total = 0
             for q in queries:
-                row = databricks.fetch_one(q["query"])
+                sql, params = q["query"]
+                row = databricks.fetch_one(sql, params)
                 total += row["total"] if row else 0
         else:
             results = []
             for q in queries:
-                results.extend(databricks.fetch_all(q["query"]))
+                sql, params = q["query"]
+                results.extend(databricks.fetch_all(sql, params))
     except Exception as e:
         logger.error("Erreur requête (%s) : %s", periode_lower, e)
         raise HTTPException(
@@ -360,83 +344,7 @@ def get_trafics(body: TraficsRequest):
         response["count"] = len(results)
         response["data"] = results
     if DEBUG_SHOW_QUERY:
-        response["queries"] = [q["query"] for q in queries]
+        response["queries"] = [q["query"][0] for q in queries]
     return response
 
 
-@router.post("/get_trafics_paginated")
-def get_trafics_paginated(body: TraficsPaginatedRequest):
-    """Récupère les trafics avec pagination."""
-    periode = body.periode
-    co_regate = body.co_regate
-    date_debut = body.date_debut
-    date_fin = body.date_fin
-    page = body.page
-    page_size = body.page_size
-
-    if not periode:
-        periode = "auto"
-    periode_lower, dt_debut, dt_fin = validate_params(periode, co_regate, date_debut, date_fin)
-
-    segments = build_segments(periode_lower, dt_debut, dt_fin)
-    queries = [
-        {"periode": seg[0], "query": build_query(seg[0], co_regate, seg[1], seg[2])}
-        for seg in segments
-    ]
-
-    # --- Mode debug : aperçu ---
-    if periode_lower == "debug":
-        paginated_queries = [
-            {
-                "index": i + 1,
-                "periode": q["periode"],
-                "query": f"{q['query']} LIMIT {page_size} OFFSET {(page - 1) * page_size}",
-            }
-            for i, q in enumerate(queries)
-        ]
-        return {
-            "mode": "preview",
-            "periode": "debug",
-            "co_regate": co_regate,
-            "date_debut": fmt_date(dt_debut),
-            "date_fin": fmt_date(dt_fin),
-            "page": page,
-            "page_size": page_size,
-            "nb_queries": len(paginated_queries),
-            "queries": paginated_queries,
-        }
-
-    # --- Exécution avec pagination (auto ou période fixe) ---
-    offset = (page - 1) * page_size
-    start = time.perf_counter()
-    try:
-        results = []
-        for q in queries:
-            query_str = f"{q['query']} LIMIT {page_size} OFFSET {offset}"
-            results.extend(databricks.fetch_all(query_str))
-    except Exception as e:
-        logger.error("Erreur requête paginée (%s) : %s", periode_lower, e)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": True,
-                "message": f"Erreur lors de la récupération des trafics ({periode_lower}).",
-                "code": 500,
-            },
-        )
-    duration_s = round(time.perf_counter() - start, 3)
-
-    response = {
-        "count": len(results),
-        "page": page,
-        "page_size": page_size,
-        "execution_time_s": duration_s,
-        "periode": periode_lower,
-        "co_regate": co_regate,
-        "date_debut": fmt_date(dt_debut),
-        "date_fin": fmt_date(dt_fin),
-        "data": results,
-    }
-    if DEBUG_SHOW_QUERY:
-        response["queries"] = [f"{q['query']} LIMIT {page_size} OFFSET {offset}" for q in queries]
-    return response

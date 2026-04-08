@@ -3,7 +3,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Chemin absolu vers le .env à la racine du projet (trppu/.env)
+# Chemin absolu vers le .env à la racine du projet (ys04/.env)
 _env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=_env_path)
 
@@ -27,6 +27,13 @@ DATABRICKS_SCHEMA = os.getenv("DATABRICKS_SCHEMA", "default")
 DATABRICKS_TIMEOUT = int(os.getenv("DATABRICKS_TIMEOUT", "120"))
 DATABRICKS_MAX_RETRIES = int(os.getenv("DATABRICKS_MAX_RETRIES", "3"))
 DATABRICKS_RETRY_DELAY = float(os.getenv("DATABRICKS_RETRY_DELAY", "2.0"))
+
+# Application / Logging
+APP = os.getenv("APP", "dsr")
+APP_ENV = os.getenv("APP_ENV", "sdev")
+MODULE = os.getenv("MODULE", "yb02")
+APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
+LOGS_DIR = os.getenv("LOGS_DIR", "")
 
 # Debug
 DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"
