@@ -50,4 +50,4 @@ app.include_router(calcl_nbr_jours_routes.router)
 if __name__ == "__main__":
     import uvicorn
     from app.config import APP_ENV
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=(APP_ENV == "local"))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8080, reload=(APP_ENV == "local"))

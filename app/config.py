@@ -5,9 +5,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Chemin absolu vers le .env à la racine du projet (ys04/.env)
-_env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(dotenv_path=_env_path)
+# Charge .env.local en priorité, sinon .env
+_project_root = Path(__file__).resolve().parent.parent
+_env_local = _project_root / ".env.local"
+_env_default = _project_root / ".env"
+load_dotenv(dotenv_path=_env_local if _env_local.exists() else _env_default)
 
 # MySQL
 SKIP_MYSQL = os.getenv("SKIP_MYSQL", "false").lower() == "true"

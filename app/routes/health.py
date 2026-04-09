@@ -19,7 +19,30 @@ def root():
 
 
 @router.get("/health")
-async def health():
+def health():
+    """Vérifie que les configurations nécessaires sont présentes."""
+    from app.config import (
+        MYSQL_HOST, MYSQL_USER, MYSQL_DATABASE,
+        DATABRICKS_SERVER_HOSTNAME, DATABRICKS_HTTP_PATH,
+        DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET,
+    )
+
+    mysql_config = bool(MYSQL_HOST and MYSQL_USER and MYSQL_DATABASE)
+    databricks_config = bool(
+        DATABRICKS_SERVER_HOSTNAME and DATABRICKS_HTTP_PATH
+        and DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET
+    )
+
+    return {
+        "status": "ok" if mysql_config and databricks_config else "missing_config",
+        "mysql_config": mysql_config,
+        "databricks_config": databricks_config,
+    }
+
+
+@router.get("/health/resources")
+async def health_resources():
+    """Vérification de la connectivité aux ressources (MySQL, Databricks)."""
     if SKIP_MYSQL:
         mysql_status = "skipped"
     else:
