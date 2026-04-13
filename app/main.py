@@ -1,31 +1,31 @@
 """Point d'entrée de l'application FastAPI trppu (ys04)."""
-
+ 
 import logging
 import time
 from contextlib import asynccontextmanager
-
+ 
 from fastapi import FastAPI, Request
-
+ 
 from app.json_formatter import setup_logging
 from app.routes import databricks as databricks_routes
 from app.routes import health as health_routes
 from app.routes import calcl_nbr_jours as calcl_nbr_jours_routes
 from app.routes import trafics as trafics_routes
-
+ 
 setup_logging()
 log = logging.getLogger("trppu")
-
-
+ 
+ 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Démarrage de l'application trppu")
     yield
     log.info("Arrêt de l'application trppu")
-
-
+ 
+ 
 app = FastAPI(title="trppu API YS04", description="API de test trppu YS04", lifespan=lifespan)
-
-
+ 
+ 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
@@ -40,13 +40,13 @@ async def log_requests(request: Request, call_next):
         duration_ms,
     )
     return response
-
-
+ 
+ 
 app.include_router(health_routes.router)
 app.include_router(databricks_routes.router)
 app.include_router(trafics_routes.router)
 app.include_router(calcl_nbr_jours_routes.router)
-
+ 
 if __name__ == "__main__":
     import uvicorn
     from app.config import APP_ENV

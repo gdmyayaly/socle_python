@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter
 
-from app.config import SKIP_MYSQL
+from app.config import HEALTH_CHECK_QUERY
 from app.db.databricks import databricks
 from app.db.mysql import db
 
@@ -43,18 +43,15 @@ def health():
 @router.get("/health/resources")
 async def health_resources():
     """Vérification de la connectivité aux ressources (MySQL, Databricks)."""
-    if SKIP_MYSQL:
-        mysql_status = "skipped"
-    else:
-        try:
-            result = await db.fetch_one("SELECT 1 AS ok")
-            mysql_status = "connected" if result else "error"
-        except Exception as e:
-            logger.warning("Health check MySQL échoué : %s", e)
-            mysql_status = "disconnected"
+    try:
+        result = await db.fetch_one(HEALTH_CHECK_QUERY)
+        mysql_status = "connected" if result else "error"
+    except Exception as e:
+        logger.warning("Health check MySQL échoué : %s", e)
+        mysql_status = "disconnected"
 
     try:
-        result = databricks.fetch_one("SELECT 1 AS ok")
+        result = databricks.fetch_one(HEALTH_CHECK_QUERY)
         databricks_status = "connected" if result else "error"
     except Exception as e:
         logger.warning("Health check Databricks échoué : %s", e)
