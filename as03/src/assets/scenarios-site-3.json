@@ -1,0 +1,29 @@
+[
+  {
+    "id": 6,
+    "nom": "Scénario Initial",
+    "dateCreation": "2025-06-01",
+    "statut": "En production",
+    "dateValidation": "2025-06-15",
+    "dateMo": "2025-07-01",
+    "dateProduction": "2025-07-10"
+  },
+  {
+    "id": 7,
+    "nom": "Scénario Révision",
+    "dateCreation": "2025-08-03",
+    "statut": "Validé",
+    "dateValidation": "2025-08-20",
+    "dateMo": null,
+    "dateProduction": null
+  },
+  {
+    "id": 8,
+    "nom": "Scénario Pilote",
+    "dateCreation": "2025-09-14",
+    "statut": "Brouillon",
+    "dateValidation": null,
+    "dateMo": null,
+    "dateProduction": null
+  }
+]

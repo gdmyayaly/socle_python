@@ -1,0 +1,136 @@
+<div class="periode-container">
+
+  <!-- Header -->
+  <div class="header">
+    <mat-icon class="header-icon">date_range</mat-icon>
+    <h3>Période du scénario</h3>
+    <span class="badge" [class.badge-new]="!periode" [class.badge-edit]="periode">
+      {{ periode ? 'Modification' : 'Nouvelle période' }}
+    </span>
+  </div>
+
+  <!-- Bornes extrêmes -->
+  <div class="extremes">
+    <div class="extreme-chip">
+      <mat-icon>first_page</mat-icon>
+      <span>{{ formatDateFr(dateMin) }}</span>
+    </div>
+    <div class="extreme-chip">
+      <span>{{ formatDateFr(dateMax) }}</span>
+      <mat-icon>last_page</mat-icon>
+    </div>
+  </div>
+
+  <!-- Slider avec tooltips flottants -->
+  <div class="slider-wrapper">
+
+    <!-- Tooltip flottant début -->
+    <div class="floating-tooltip tooltip-start" [style.left.%]="startPercent">
+      <div class="tooltip-content" *ngIf="!editingStart" (click)="editingStart = true">
+        <mat-icon>edit_calendar</mat-icon>
+        <span>{{ formatDateFr(startDateStr) }}</span>
+      </div>
+      <div class="tooltip-edit" *ngIf="editingStart">
+        <input type="date"
+               [value]="startDateStr"
+               [min]="dateMin"
+               [max]="endDateStr"
+               (change)="onStartDateEdit($any($event.target).value)"
+               (blur)="editingStart = false"
+               autofocus />
+      </div>
+      <div class="tooltip-arrow"></div>
+    </div>
+
+    <!-- Tooltip flottant fin -->
+    <div class="floating-tooltip tooltip-end" [style.left.%]="endPercent">
+      <div class="tooltip-content" *ngIf="!editingEnd" (click)="editingEnd = true">
+        <span>{{ formatDateFr(endDateStr) }}</span>
+        <mat-icon>edit_calendar</mat-icon>
+      </div>
+      <div class="tooltip-edit" *ngIf="editingEnd">
+        <input type="date"
+               [value]="endDateStr"
+               [min]="startDateStr"
+               [max]="dateMax"
+               (change)="onEndDateEdit($any($event.target).value)"
+               (blur)="editingEnd = false"
+               autofocus />
+      </div>
+      <div class="tooltip-arrow"></div>
+    </div>
+
+    <!-- Track -->
+    <div class="track" #track>
+
+      <!-- Marqueur Aujourd'hui -->
+      <div class="today-marker" *ngIf="todayPercent >= 0" [style.left.%]="todayPercent">
+        <div class="today-line"></div>
+        <div class="today-label">Aujourd'hui ({{ formatDateFr(todayStr) }})</div>
+      </div>
+
+      <!-- Zone active (fourchette) -->
+      <div class="track-active"
+           [style.left.%]="startPercent"
+           [style.width.%]="rangePercent">
+        <div class="track-active-glow"></div>
+      </div>
+
+      <!-- Thumb début -->
+      <div class="thumb"
+           [class.thumb-dragging]="dragging === 'start'"
+           [style.left.%]="startPercent"
+           (mousedown)="onThumbMouseDown($event, 'start')"
+           (touchstart)="onThumbTouchStart($event, 'start')">
+        <div class="thumb-ring"></div>
+        <div class="thumb-pulse"></div>
+      </div>
+
+      <!-- Thumb fin -->
+      <div class="thumb"
+           [class.thumb-dragging]="dragging === 'end'"
+           [style.left.%]="endPercent"
+           (mousedown)="onThumbMouseDown($event, 'end')"
+           (touchstart)="onThumbTouchStart($event, 'end')">
+        <div class="thumb-ring"></div>
+        <div class="thumb-pulse"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Résumé durée -->
+  <div class="range-summary">
+    <mat-icon>swap_horiz</mat-icon>
+    <span class="range-days">{{ selectedDays }} jours</span>
+    <span class="range-equiv">( {{ durationLabel }} )</span>
+  </div>
+
+  <!-- Notifications -->
+  <div class="notifications" *ngIf="notifications.length > 0">
+    <div *ngFor="let n of notifications"
+         class="notif"
+         [class.notif-info]="n.type === 'info'"
+         [class.notif-warn]="n.type === 'warn'"
+         [class.notif-success]="n.type === 'success'">
+      <mat-icon *ngIf="n.type === 'info'">info</mat-icon>
+      <mat-icon *ngIf="n.type === 'warn'">warning</mat-icon>
+      <mat-icon *ngIf="n.type === 'success'">check_circle</mat-icon>
+      <span>{{ n.message }}</span>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="actions">
+    <button mat-raised-button
+            color="primary"
+            [disabled]="!isDirty"
+            (click)="onValidate()">
+      <mat-icon>check</mat-icon>
+      {{ periode ? 'Mettre à jour la période' : 'Valider la période' }}
+    </button>
+    <span class="validated-badge" *ngIf="isValidated">
+      <mat-icon>verified</mat-icon> Validé
+    </span>
+  </div>
+
+</div>

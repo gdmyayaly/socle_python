@@ -1,0 +1,11 @@
+<mat-form-field appearance="outline">
+  <mat-label>Sélectionner un site</mat-label>
+  <mat-select [value]="selectedSite" (selectionChange)="onSelectionChange($event.value)">
+    <mat-option *ngFor="let site of sites" [value]="site">
+      {{ site.nom }}
+    </mat-option>
+  </mat-select>
+</mat-form-field>
+<button *ngIf="selectedSite" mat-icon-button (click)="clear()" aria-label="Désélectionner">
+  <mat-icon>close</mat-icon>
+</button>

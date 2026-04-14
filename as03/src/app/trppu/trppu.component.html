@@ -1,0 +1,27 @@
+<app-trppu-select-site (siteSelected)="onSiteSelected($event)"></app-trppu-select-site>
+
+<p *ngIf="selectedSite">Site sélectionné : {{ selectedSite.nom }}</p>
+<p *ngIf="!selectedSite">Aucun site sélectionné</p>
+
+<app-trppu-scenario-list
+  *ngIf="selectedSite"
+  [siteId]="selectedSite.id"
+  (editScenario)="onEditScenario($event)"
+  (removeScenario)="onRemoveScenario($event)">
+</app-trppu-scenario-list>
+
+<app-trppu-recap-scenario
+  [scenario]="selectedScenario">
+</app-trppu-recap-scenario>
+
+<app-trppu-periode-scenario
+  *ngIf="selectedScenario"
+  [dateMin]="'2025-01-01'"
+  [dateMax]="'2030-12-31'"
+  [periode]="null"
+  (periodeValidated)="onPeriodeValidated($event)"
+  (refreshNeeded)="onRefreshNeeded()"
+  (dirtyChange)="periodeHasChanges = $event">
+</app-trppu-periode-scenario>
+
+<router-outlet></router-outlet>

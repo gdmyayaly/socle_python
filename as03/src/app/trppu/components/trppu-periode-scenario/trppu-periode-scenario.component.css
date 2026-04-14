@@ -1,0 +1,376 @@
+/* ── Container ── */
+.periode-container {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 24px;
+  margin: 16px 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.3s ease;
+}
+
+.periode-container:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.header-icon {
+  color: #3f51b5;
+  font-size: 28px;
+  width: 28px;
+  height: 28px;
+}
+
+.header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  color: #212121;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+
+.badge-new {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge-edit {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+/* ── Bornes extrêmes ── */
+.extremes {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.extreme-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f5f5f5;
+  padding: 4px 10px;
+  border-radius: 16px;
+  font-size: 12px;
+  color: #616161;
+}
+
+.extreme-chip mat-icon {
+  font-size: 16px;
+  width: 16px;
+  height: 16px;
+}
+
+/* ── Slider wrapper ── */
+.slider-wrapper {
+  position: relative;
+  padding: 60px 14px 16px;
+}
+
+/* ── Floating tooltips ── */
+.floating-tooltip {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  z-index: 3;
+  transition: left 0.05s linear;
+}
+
+.tooltip-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  background: #3f51b5;
+  color: #ffffff;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.tooltip-content:hover {
+  background: #303f9f;
+}
+
+.tooltip-content mat-icon {
+  font-size: 14px;
+  width: 14px;
+  height: 14px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.tooltip-edit input {
+  font-family: Roboto, sans-serif;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 2px solid #3f51b5;
+  border-radius: 6px;
+  outline: none;
+  background: #e8eaf6;
+  color: #212121;
+}
+
+.tooltip-edit input:focus {
+  border-color: #1a237e;
+}
+
+.tooltip-arrow {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid #3f51b5;
+  margin: 0 auto;
+}
+
+/* ── Track ── */
+.track {
+  position: relative;
+  height: 6px;
+  background: #e0e0e0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.track-active {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #3f51b5, #7986cb);
+  border-radius: 3px;
+  transition: background 0.3s;
+}
+
+.track-active-glow {
+  position: absolute;
+  inset: -3px 0;
+  background: linear-gradient(90deg, rgba(63, 81, 181, 0.15), rgba(121, 134, 203, 0.15));
+  border-radius: 6px;
+  filter: blur(4px);
+}
+
+/* ── Marqueur Aujourd'hui ── */
+.today-marker {
+  position: absolute;
+  top: -28px;
+  transform: translateX(-50%);
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.today-line {
+  width: 2px;
+  height: 48px;
+  background: #e53935;
+  border-radius: 1px;
+  opacity: 0.7;
+}
+
+.today-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #e53935;
+  background: #ffebee;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+/* ── Thumbs ── */
+.thumb {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  z-index: 2;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.thumb:active {
+  cursor: grabbing;
+}
+
+.thumb-ring {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 3px solid #3f51b5;
+  box-shadow: 0 2px 6px rgba(63, 81, 181, 0.35);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s;
+}
+
+.thumb:hover .thumb-ring {
+  transform: scale(1.15);
+  box-shadow: 0 3px 10px rgba(63, 81, 181, 0.45);
+}
+
+.thumb-dragging .thumb-ring {
+  transform: scale(1.25);
+  border-color: #1a237e;
+  box-shadow: 0 4px 14px rgba(26, 35, 126, 0.5);
+}
+
+.thumb-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(63, 81, 181, 0);
+  transition: background 0.2s;
+}
+
+.thumb:hover .thumb-pulse {
+  background: rgba(63, 81, 181, 0.08);
+}
+
+.thumb-dragging .thumb-pulse {
+  background: rgba(63, 81, 181, 0.14);
+}
+
+/* ── Range summary ── */
+.range-summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.range-summary mat-icon {
+  color: #3f51b5;
+  font-size: 20px;
+  width: 20px;
+  height: 20px;
+}
+
+.range-days {
+  font-size: 15px;
+  font-weight: 600;
+  color: #3f51b5;
+}
+
+.range-equiv {
+  font-size: 13px;
+  color: #757575;
+  font-style: italic;
+}
+
+/* ── Notifications ── */
+.notifications {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notif {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  animation: slideIn 0.3s ease-out;
+}
+
+.notif mat-icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.notif-info {
+  background: #e3f2fd;
+  color: #1565c0;
+  border-left: 4px solid #1565c0;
+}
+
+.notif-warn {
+  background: #fff8e1;
+  color: #f57f17;
+  border-left: 4px solid #f57f17;
+}
+
+.notif-success {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-left: 4px solid #2e7d32;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Actions ── */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.actions button mat-icon {
+  margin-right: 4px;
+  font-size: 18px;
+}
+
+.validated-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #2e7d32;
+  font-weight: 500;
+  font-size: 14px;
+  animation: fadeIn 0.4s ease;
+}
+
+.validated-badge mat-icon {
+  font-size: 20px;
+  width: 20px;
+  height: 20px;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

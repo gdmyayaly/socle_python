@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "nom": "Scénario Base",
+    "dateCreation": "2025-01-15",
+    "statut": "Validé",
+    "dateValidation": "2025-02-01",
+    "dateMo": "2025-02-15",
+    "dateProduction": "2025-03-01"
+  },
+  {
+    "id": 2,
+    "nom": "Scénario Alternatif",
+    "dateCreation": "2025-03-10",
+    "statut": "Brouillon",
+    "dateValidation": null,
+    "dateMo": null,
+    "dateProduction": null
+  },
+  {
+    "id": 3,
+    "nom": "Scénario Optimisé",
+    "dateCreation": "2025-04-05",
+    "statut": "En production",
+    "dateValidation": "2025-04-20",
+    "dateMo": "2025-05-01",
+    "dateProduction": "2025-05-15"
+  }
+]
