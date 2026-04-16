@@ -1,3 +1,5 @@
+import { Periode } from './periode.model';
+
 export interface Scenario {
   id: number;
   nom: string;
@@ -6,4 +8,5 @@ export interface Scenario {
   dateValidation: string | null;
   dateMo: string | null;
   dateProduction: string | null;
+  periode: Periode | null;
 }

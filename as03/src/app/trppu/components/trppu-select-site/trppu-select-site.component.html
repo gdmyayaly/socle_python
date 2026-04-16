@@ -1,11 +1,25 @@
-<mat-form-field appearance="outline">
-  <mat-label>Sélectionner un site</mat-label>
-  <mat-select [value]="selectedSite" (selectionChange)="onSelectionChange($event.value)">
-    <mat-option *ngFor="let site of sites" [value]="site">
-      {{ site.nom }}
-    </mat-option>
-  </mat-select>
-</mat-form-field>
-<button *ngIf="selectedSite" mat-icon-button (click)="clear()" aria-label="Désélectionner">
-  <mat-icon>close</mat-icon>
-</button>
+<!-- Mode sélection -->
+<div *ngIf="!selectedSite" class="select-container">
+  <mat-form-field appearance="outline" class="site-select">
+    <mat-label>Sélectionner un site</mat-label>
+    <mat-select (selectionChange)="onSelectionChange($event.value)">
+      <mat-option *ngFor="let site of sites" [value]="site">
+        {{ site.libelleCourt }}{{ site.denomination ? ' — ' + site.denomination : '' }}
+      </mat-option>
+    </mat-select>
+  </mat-form-field>
+</div>
+
+<!-- Mode badge récap -->
+<div *ngIf="selectedSite" class="badge-container">
+  <div class="badge-recap">
+    <div class="badge-info">
+      <span class="badge-title">{{ selectedSite.denomination || selectedSite.libelleCourt }}</span>
+      <span class="badge-detail">{{ selectedSite.codeRoc }} · {{ selectedSite.codeRegate }}</span>
+      <span class="badge-detail">{{ selectedSite.libelle }}</span>
+    </div>
+    <button mat-icon-button (click)="clear()" aria-label="Changer de site" class="badge-close">
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+</div>

@@ -1,4 +1,4 @@
-<table mat-table [dataSource]="scenarios" *ngIf="scenarios.length > 0">
+<table mat-table [dataSource]="scenarios">
 
   <ng-container matColumnDef="nom">
     <th mat-header-cell *matHeaderCellDef>Scénario</th>
@@ -32,12 +32,15 @@
 
   <ng-container matColumnDef="actions">
     <th mat-header-cell *matHeaderCellDef>Actions</th>
-    <td mat-cell *matCellDef="let row">
+    <td mat-cell *matCellDef="let row; let isLast = last">
       <button mat-icon-button (click)="onEdit(row)" aria-label="Modifier">
         <mat-icon>edit</mat-icon>
       </button>
       <button mat-icon-button color="warn" (click)="onRemove(row)" aria-label="Supprimer">
         <mat-icon>delete</mat-icon>
+      </button>
+      <button *ngIf="isLast && siteId" mat-icon-button color="primary" (click)="onAdd()" aria-label="Ajouter un scénario">
+        <mat-icon>add_circle</mat-icon>
       </button>
     </td>
   </ng-container>
@@ -46,4 +49,12 @@
   <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
 </table>
 
-<p *ngIf="siteId && scenarios.length === 0">Aucun scénario pour ce site.</p>
+<p class="empty-hint" *ngIf="!siteId">Sélectionnez un site pour afficher les scénarios.</p>
+
+<div class="empty-add" *ngIf="siteId && scenarios.length === 0">
+  <span>Aucun scénario pour ce site.</span>
+  <button mat-raised-button color="primary" (click)="onAdd()">
+    <mat-icon>add</mat-icon>
+    Ajouter
+  </button>
+</div>

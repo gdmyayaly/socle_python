@@ -1,5 +1,44 @@
-:host {
+.select-container {
   display: flex;
   align-items: center;
-  gap: 8px;
+}
+
+.site-select {
+  min-width: 350px;
+}
+
+.badge-container {
+  display: flex;
+  align-items: center;
+}
+
+.badge-recap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background-color: #e8eaf6;
+  border: 1px solid #3f51b5;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.badge-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.badge-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1a237e;
+}
+
+.badge-detail {
+  font-size: 12px;
+  color: #5c6bc0;
+}
+
+.badge-close {
+  color: #3f51b5;
 }

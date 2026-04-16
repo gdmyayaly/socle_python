@@ -9,10 +9,11 @@ import { ScenarioService } from '../../services/scenario.service';
 })
 export class TrppuScenarioListComponent implements OnChanges {
 
-  @Input() siteId: number | null = null;
+  @Input() siteId: string | null = null;
 
   @Output() editScenario = new EventEmitter<Scenario>();
   @Output() removeScenario = new EventEmitter<Scenario>();
+  @Output() addScenario = new EventEmitter<void>();
 
   scenarios: Scenario[] = [];
   displayedColumns: string[] = [
@@ -48,5 +49,27 @@ export class TrppuScenarioListComponent implements OnChanges {
       this.scenarios = this.scenarios.filter(s => s.id !== scenario.id);
       this.removeScenario.emit(scenario);
     }
+  }
+
+  onAdd(): void {
+    const nom = prompt('Nom du nouveau scénario :');
+    if (!nom || !nom.trim()) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const maxId = this.scenarios.reduce((max, s) => Math.max(max, s.id), 0);
+
+    const newScenario: Scenario = {
+      id: maxId + 1,
+      nom: nom.trim(),
+      dateCreation: today,
+      statut: 'Brouillon',
+      dateValidation: null,
+      dateMo: null,
+      dateProduction: null,
+      periode: null
+    };
+
+    this.scenarios = [...this.scenarios, newScenario];
+    this.addScenario.emit();
   }
 }

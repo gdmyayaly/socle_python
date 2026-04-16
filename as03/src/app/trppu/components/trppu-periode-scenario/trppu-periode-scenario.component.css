@@ -120,19 +120,49 @@
   color: rgba(255, 255, 255, 0.8);
 }
 
+.tooltip-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: #e8eaf6;
+  border-radius: 6px;
+  padding: 2px 4px;
+  border: 2px solid #3f51b5;
+}
+
 .tooltip-edit input {
   font-family: Roboto, sans-serif;
   font-size: 12px;
-  padding: 4px 8px;
-  border: 2px solid #3f51b5;
-  border-radius: 6px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
   outline: none;
-  background: #e8eaf6;
+  background: transparent;
   color: #212121;
 }
 
 .tooltip-edit input:focus {
-  border-color: #1a237e;
+  background: #fff;
+}
+
+.edit-btn {
+  width: 24px !important;
+  height: 24px !important;
+  line-height: 24px !important;
+}
+
+.edit-btn mat-icon {
+  font-size: 16px !important;
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.edit-confirm mat-icon {
+  color: #2e7d32;
+}
+
+.edit-cancel mat-icon {
+  color: #c62828;
 }
 
 .tooltip-arrow {
@@ -201,6 +231,11 @@
   margin-top: 2px;
 }
 
+.today-label-outside {
+  background: #fce4ec;
+  border: 1px dashed #e53935;
+}
+
 /* ── Thumbs ── */
 .thumb {
   position: absolute;
@@ -265,7 +300,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 20px;
 }
 
 .range-summary mat-icon {

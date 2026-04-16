@@ -1,1 +1,54 @@
-<p>calcul works!</p>
+<div class="site-scenario-row">
+  <div class="site-col">
+    <app-trppu-select-site (siteSelected)="onSiteSelected($event)"></app-trppu-select-site>
+  </div>
+  <div class="scenario-col">
+    <app-trppu-scenario-list
+      [siteId]="selectedSite ? selectedSite.codeRoc : null"
+      (editScenario)="onEditScenario($event)"
+      (removeScenario)="onRemoveScenario($event)"
+      (addScenario)="onAddScenario()">
+    </app-trppu-scenario-list>
+  </div>
+</div>
+
+<app-trppu-recap-scenario
+  [scenario]="selectedScenario">
+</app-trppu-recap-scenario>
+
+<div class="overlay-wrapper">
+  <div class="overlay-block" *ngIf="!selectedScenario">
+    <span>Sélectionnez un scénario pour accéder à la période.</span>
+  </div>
+  <app-trppu-periode-scenario
+    [class.disabled-content]="!selectedScenario"
+    [dateMin]="'2025-01-01'"
+    [dateMax]="'2030-12-31'"
+    [periode]="selectedScenario ? selectedScenario.periode : null"
+    (periodeValidated)="onPeriodeValidated($event)"
+    (refreshNeeded)="onRefreshNeeded()"
+    (dirtyChange)="periodeHasChanges = $event">
+  </app-trppu-periode-scenario>
+</div>
+
+<div class="overlay-wrapper">
+  <div class="overlay-block" *ngIf="!selectedScenario">
+    <span>Sélectionnez un scénario pour accéder aux comptages.</span>
+  </div>
+  <app-trppu-comptage
+    [class.disabled-content]="!selectedScenario"
+    [scenarioId]="selectedScenario ? selectedScenario.id : null"
+    (comptagesChange)="onComptagesChange($event)"
+    (dirtyChange)="comptageHasChanges = $event">
+  </app-trppu-comptage>
+</div>
+
+<div class="overlay-wrapper">
+  <div class="overlay-block" *ngIf="!selectedScenario">
+    <span>Sélectionnez un scénario pour afficher les trafics calculés.</span>
+  </div>
+  <app-trppu-trafics-calculer
+    [class.disabled-content]="!selectedScenario"
+    [scenarioId]="selectedScenario ? selectedScenario.id : null">
+  </app-trppu-trafics-calculer>
+</div>

@@ -1,0 +1,4 @@
+[
+  { "id": 1, "trafic": { "id": 2, "code": "PL", "libelle": "Poids lourds" }, "valeur": 5600 },
+  { "id": 2, "trafic": { "id": 5, "code": "PIE", "libelle": "Piétons" }, "valeur": 980 }
+]

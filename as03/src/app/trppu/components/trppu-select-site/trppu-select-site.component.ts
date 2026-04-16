@@ -1,4 +1,5 @@
-import { Component, EventEmitter, Output } from '@angular/core';
+import { Component, EventEmitter, OnInit, Output } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { Site } from '../../models/site.model';
 
 @Component({
@@ -6,19 +7,22 @@ import { Site } from '../../models/site.model';
   templateUrl: './trppu-select-site.component.html',
   styleUrls: ['./trppu-select-site.component.css']
 })
-export class TrppuSelectSiteComponent {
+export class TrppuSelectSiteComponent implements OnInit {
 
-  sites: Site[] = [
-    { id: 1, nom: 'Site A' },
-    { id: 2, nom: 'Site B' },
-    { id: 3, nom: 'Site C' },
-  ];
-
+  sites: Site[] = [];
   selectedSite: Site | null = null;
 
   @Output() siteSelected = new EventEmitter<Site | null>();
 
-  onSelectionChange(site: Site | null): void {
+  constructor(private http: HttpClient) {}
+
+  ngOnInit(): void {
+    this.http.get<Site[]>('assets/sites.json').subscribe(data => {
+      this.sites = data;
+    });
+  }
+
+  onSelectionChange(site: Site): void {
     this.selectedSite = site;
     this.siteSelected.emit(site);
   }

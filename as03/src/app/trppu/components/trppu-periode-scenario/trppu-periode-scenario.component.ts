@@ -42,6 +42,10 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
 
   editingStart = false;
   editingEnd = false;
+  editStartValue = '';
+  editEndValue = '';
+  private backupStartStr = '';
+  private backupEndStr = '';
   isDirty = false;
   isValidated = false;
   notifications: Notification[] = [];
@@ -104,12 +108,20 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
     return this.endPercent - this.startPercent;
   }
 
-  /** Position du marqueur "Aujourd'hui" en % (-1 si hors plage) */
+  /** Position du marqueur "Aujourd'hui" : suit la borne début si avant la période */
   get todayPercent(): number {
     const now = new Date();
     const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    if (todayTs < this.minTs || todayTs > this.maxTs) return -1;
+    if (todayTs > this.maxTs) return -1;
+    if (todayTs < this.startTs) return this.toPercent(this.startTs);
     return this.toPercent(todayTs);
+  }
+
+  /** true si aujourd'hui est avant la période sélectionnée */
+  get todayBeforePeriode(): boolean {
+    const now = new Date();
+    const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    return todayTs < this.startTs;
   }
 
   get todayStr(): string {
@@ -217,7 +229,37 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
 
   // ── Édition directe ──
 
-  onStartDateEdit(value: string): void {
+  openEditStart(): void {
+    this.backupStartStr = this.startDateStr;
+    this.editStartValue = this.startDateStr;
+    this.editingStart = true;
+  }
+
+  openEditEnd(): void {
+    this.backupEndStr = this.endDateStr;
+    this.editEndValue = this.endDateStr;
+    this.editingEnd = true;
+  }
+
+  confirmStartEdit(): void {
+    this.applyStartDate(this.editStartValue);
+  }
+
+  cancelStartEdit(): void {
+    this.editingStart = false;
+    this.editStartValue = '';
+  }
+
+  confirmEndEdit(): void {
+    this.applyEndDate(this.editEndValue);
+  }
+
+  cancelEndEdit(): void {
+    this.editingEnd = false;
+    this.editEndValue = '';
+  }
+
+  private applyStartDate(value: string): void {
     const ts = this.toTs(value);
     if (isNaN(ts)) return;
 
@@ -237,6 +279,7 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
     this.enforceMaxRange('start');
     this.syncStrings();
     this.editingStart = false;
+    this.editStartValue = '';
     this.markDirty();
 
     if (adjusted) {
@@ -244,7 +287,7 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
     }
   }
 
-  onEndDateEdit(value: string): void {
+  private applyEndDate(value: string): void {
     const ts = this.toTs(value);
     if (isNaN(ts)) return;
 
@@ -264,6 +307,7 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
     this.enforceMaxRange('end');
     this.syncStrings();
     this.editingEnd = false;
+    this.editEndValue = '';
     this.markDirty();
 
     if (adjusted) {

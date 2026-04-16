@@ -1,0 +1,37 @@
+[
+  {
+    "codeRoc": "ROC001",
+    "codeRegate": "REG001",
+    "libelle": "Gare de Lyon Part-Dieu",
+    "libelleCourt": "Lyon PD",
+    "denomination": "Lyon Part-Dieu"
+  },
+  {
+    "codeRoc": "ROC002",
+    "codeRegate": "REG002",
+    "libelle": "Gare de Paris Montparnasse",
+    "libelleCourt": "Paris MP",
+    "denomination": "Paris Montparnasse"
+  },
+  {
+    "codeRoc": "ROC003",
+    "codeRegate": "REG003",
+    "libelle": "Gare de Marseille Saint-Charles",
+    "libelleCourt": "Marseille SC",
+    "denomination": "Marseille Saint-Charles"
+  },
+  {
+    "codeRoc": "ROC004",
+    "codeRegate": "REG004",
+    "libelle": "Gare de Bordeaux Saint-Jean",
+    "libelleCourt": "Bordeaux SJ",
+    "denomination": "Bordeaux Saint-Jean"
+  },
+  {
+    "codeRoc": "ROC005",
+    "codeRegate": "REG005",
+    "libelle": "Gare de Lille Flandres",
+    "libelleCourt": "Lille FL",
+    "denomination": "Lille Flandres"
+  }
+]

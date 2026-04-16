@@ -1,0 +1,5 @@
+[
+  { "id": 1, "trafic": { "id": 1, "code": "VL", "libelle": "Véhicules légers" }, "valeur": 8700 },
+  { "id": 2, "trafic": { "id": 3, "code": "2R", "libelle": "Deux-roues" }, "valeur": 1500 },
+  { "id": 3, "trafic": { "id": 4, "code": "BUS", "libelle": "Bus et cars" }, "valeur": 420 }
+]

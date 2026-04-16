@@ -1,3 +1,31 @@
 table {
   width: 100%;
 }
+
+.scenario-toolbar {
+  margin-bottom: 12px;
+}
+
+.empty-add {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.empty-add span {
+  color: #616161;
+  font-size: 14px;
+}
+
+.empty-add button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.empty-hint {
+  color: #9e9e9e;
+  font-style: italic;
+  margin-top: 12px;
+}

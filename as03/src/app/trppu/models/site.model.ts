@@ -1,4 +1,7 @@
 export interface Site {
-  id: number;
-  nom: string;
+  codeRoc: string;
+  codeRegate: string;
+  libelle: string;
+  libelleCourt: string;
+  denomination: string;
 }

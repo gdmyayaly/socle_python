@@ -1,0 +1,34 @@
+[
+  {
+    "id": 1,
+    "produit": "TGV INOUI",
+    "volumeBrut": 12500,
+    "constateBrut": 11800,
+    "previsionnelBrut": 13200,
+    "traficMoyenHebdo": 1785
+  },
+  {
+    "id": 2,
+    "produit": "OUIGO",
+    "volumeBrut": 8900,
+    "constateBrut": 8200,
+    "previsionnelBrut": 9500,
+    "traficMoyenHebdo": 1271
+  },
+  {
+    "id": 3,
+    "produit": "TER",
+    "volumeBrut": 22000,
+    "constateBrut": 20500,
+    "previsionnelBrut": 23000,
+    "traficMoyenHebdo": 3142
+  },
+  {
+    "id": 4,
+    "produit": "Intercités",
+    "volumeBrut": 5400,
+    "constateBrut": 5100,
+    "previsionnelBrut": 5800,
+    "traficMoyenHebdo": 771
+  }
+]

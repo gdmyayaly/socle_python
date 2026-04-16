@@ -1,0 +1,107 @@
+.comptage-container {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 24px;
+  margin: 16px 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.comptage-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.header-icon {
+  color: #3f51b5;
+  font-size: 28px;
+  width: 28px;
+  height: 28px;
+}
+
+.comptage-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  color: #212121;
+  flex: 1;
+}
+
+.dirty-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e65100;
+  background: #fff3e0;
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+
+.dirty-badge mat-icon {
+  font-size: 14px;
+  width: 14px;
+  height: 14px;
+}
+
+.btn-precharger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+/* Tableau */
+table {
+  width: 100%;
+}
+
+.trafic-code {
+  display: inline-block;
+  background: #e8eaf6;
+  color: #3f51b5;
+  font-weight: 600;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-right: 8px;
+}
+
+/* Input inline dans les cellules */
+.inline-input {
+  width: 100px;
+  font-family: Roboto, sans-serif;
+  font-size: 14px;
+  padding: 4px 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  outline: none;
+  text-align: right;
+}
+
+.inline-input:focus {
+  border-color: #3f51b5;
+}
+
+/* Select inline dans le footer */
+.inline-field {
+  width: 100%;
+  margin: 0;
+}
+
+::ng-deep .inline-field .mat-form-field-wrapper {
+  padding-bottom: 0 !important;
+  margin: 0 !important;
+}
+
+/* Ligne footer d'ajout */
+.add-footer-row {
+  background: #fafafa;
+}
+
+.add-footer-row td {
+  border-top: 2px dashed #e0e0e0;
+}

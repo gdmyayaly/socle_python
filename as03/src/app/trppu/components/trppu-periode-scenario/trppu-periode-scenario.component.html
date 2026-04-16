@@ -26,36 +26,42 @@
 
     <!-- Tooltip flottant début -->
     <div class="floating-tooltip tooltip-start" [style.left.%]="startPercent">
-      <div class="tooltip-content" *ngIf="!editingStart" (click)="editingStart = true">
+      <div class="tooltip-content" *ngIf="!editingStart" (click)="openEditStart()">
         <mat-icon>edit_calendar</mat-icon>
         <span>{{ formatDateFr(startDateStr) }}</span>
       </div>
       <div class="tooltip-edit" *ngIf="editingStart">
         <input type="date"
-               [value]="startDateStr"
+               [(ngModel)]="editStartValue"
                [min]="dateMin"
-               [max]="endDateStr"
-               (change)="onStartDateEdit($any($event.target).value)"
-               (blur)="editingStart = false"
-               autofocus />
+               [max]="endDateStr" />
+        <button mat-icon-button class="edit-btn edit-confirm" (click)="confirmStartEdit()" aria-label="Valider">
+          <mat-icon>check</mat-icon>
+        </button>
+        <button mat-icon-button class="edit-btn edit-cancel" (click)="cancelStartEdit()" aria-label="Annuler">
+          <mat-icon>undo</mat-icon>
+        </button>
       </div>
       <div class="tooltip-arrow"></div>
     </div>
 
     <!-- Tooltip flottant fin -->
     <div class="floating-tooltip tooltip-end" [style.left.%]="endPercent">
-      <div class="tooltip-content" *ngIf="!editingEnd" (click)="editingEnd = true">
+      <div class="tooltip-content" *ngIf="!editingEnd" (click)="openEditEnd()">
         <span>{{ formatDateFr(endDateStr) }}</span>
         <mat-icon>edit_calendar</mat-icon>
       </div>
       <div class="tooltip-edit" *ngIf="editingEnd">
         <input type="date"
-               [value]="endDateStr"
+               [(ngModel)]="editEndValue"
                [min]="startDateStr"
-               [max]="dateMax"
-               (change)="onEndDateEdit($any($event.target).value)"
-               (blur)="editingEnd = false"
-               autofocus />
+               [max]="dateMax" />
+        <button mat-icon-button class="edit-btn edit-confirm" (click)="confirmEndEdit()" aria-label="Valider">
+          <mat-icon>check</mat-icon>
+        </button>
+        <button mat-icon-button class="edit-btn edit-cancel" (click)="cancelEndEdit()" aria-label="Annuler">
+          <mat-icon>undo</mat-icon>
+        </button>
       </div>
       <div class="tooltip-arrow"></div>
     </div>
@@ -66,7 +72,8 @@
       <!-- Marqueur Aujourd'hui -->
       <div class="today-marker" *ngIf="todayPercent >= 0" [style.left.%]="todayPercent">
         <div class="today-line"></div>
-        <div class="today-label">Aujourd'hui ({{ formatDateFr(todayStr) }})</div>
+        <div class="today-label" *ngIf="!todayBeforePeriode">Aujourd'hui ({{ formatDateFr(todayStr) }})</div>
+        <div class="today-label today-label-outside" *ngIf="todayBeforePeriode">{{ formatDateFr(startDateStr) }} (auj. {{ formatDateFr(todayStr) }})</div>
       </div>
 
       <!-- Zone active (fourchette) -->
