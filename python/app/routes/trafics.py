@@ -1,29 +1,27 @@
-"""Routes de récupération des données de trafics depuis Databricks la base du YS04. """
+"""Routes de récupération des données de trafics depuis Databricks la base du YS04."""
 
 import logging
 import time
-from calendar import monthrange
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA, DEBUG_SHOW_QUERY, MAX_DATE_RANGE_DAYS
+from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA, DEBUG_SHOW_QUERY
 from app.db.databricks import databricks
+from app.routes.trafics_helpers import (
+    DATE_COLUMN_PERIODE,
+    TABLES_PERIODE,
+    build_segments,
+    fmt_date,
+    validate_params,
+)
 
 logger = logging.getLogger(__name__)
 
-TABLES_PERIODE = {
-    "jours": "g_mdp_trafics_jour_actualise",
-    "semaines": "g_mdp_trafics_semaine_actualise",
-    "mois": "g_mdp_trafics_mois_actualise",
-}
-
-DATE_COLUMN_PERIODE = {
-    "jours": "da_comptage",
-    "semaines": "co_semaine_comptage",
-    "mois": "co_mois_comptage",
-}
+# ---------------------------------------------------------------------------
+# Constantes spécifiques get_trafics
+# ---------------------------------------------------------------------------
 
 TRAFICS_SELECT_COLUMNS = (
     "da_comptage, "
@@ -62,32 +60,6 @@ TRAFICS_IN_VALUES = [
     "VQQP0",                              # EPACK
 ]
 
-# ---------------------------------------------------------------------------
-# Constantes TRPPU
-# ---------------------------------------------------------------------------
-
-TRPPU_SITES_DISTRIBUTEURS = ("PDC1", "PDC2", "PPDC")
-TRPPU_SITES_PIC_CTC = ("PIC", "CTC")
-
-TRPPU_WHERE_CO_PROCESS = ["VT", "DT"]
-TRPPU_WHERE_CO_COMPTAGE = [
-    "TI_COL_MENAGE", "TI_COL_CEDEX",
-    "OR4PM", "OR4PX",
-    "TRSP1",
-    "IMPJ",
-    "TLOP1",
-    "VQQP0", "2QNP1", "2QQP1",
-    "PPLP0", "1POP0", "VPIP0",
-]
-
-PARAMETRES_RAPPEL = (
-    "Paramètres attendus : "
-    "periode (jours, semaines, mois, auto), "
-    "co_regate (code régate du site), "
-    "date_debut (format AAAAMMJJ ou AAAA-MM-JJ), "
-    "date_fin (format AAAAMMJJ ou AAAA-MM-JJ)."
-)
-
 router = APIRouter(prefix="/trafics", tags=["Trafics"])
 
 
@@ -100,99 +72,8 @@ class TraficsRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Query builder
 # ---------------------------------------------------------------------------
-
-def parse_date(value: str, nom_param: str) -> datetime:
-    """Parse une date au format AAAAMMJJ ou AAAA-MM-JJ."""
-    for fmt in ("%Y%m%d", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(value, fmt)
-        except ValueError:
-            continue
-    msg = (
-        f"Format de {nom_param} invalide '{value}'. "
-        f"Attendu : AAAAMMJJ ou AAAA-MM-JJ. {PARAMETRES_RAPPEL}"
-    )
-    raise HTTPException(
-        status_code=400,
-        detail={"error": True, "message": msg, "code": 400},
-    )
-
-
-def fmt_date(dt: datetime, periode: str = "jours") -> str:
-    """Formate une date selon la période pour les requêtes SQL.
-
-    jours    -> AAAA-MM-JJ
-    semaines -> AAAA-NS  (numéro de semaine ISO)
-    mois     -> AAAAMM
-    """
-    if periode == "semaines":
-        return f"{dt.isocalendar()[0]}-{dt.isocalendar()[1]:02d}"
-    if periode == "mois":
-        return dt.strftime("%Y%m")
-    return dt.strftime("%Y-%m-%d")
-
-
-def _decompose_semaines_jours(dt_start: datetime, dt_end: datetime):
-    """Découpe un intervalle en semaines complètes (lun-dim) et jours restants."""
-    parts: list[tuple[str, datetime, datetime]] = []
-
-    # Premier lundi >= dt_start
-    days_to_monday = (7 - dt_start.weekday()) % 7
-    first_monday = dt_start + timedelta(days=days_to_monday)
-
-    # Dernier dimanche <= dt_end
-    if dt_end.weekday() == 6:
-        last_sunday = dt_end
-    else:
-        last_sunday = dt_end - timedelta(days=dt_end.weekday() + 1)
-
-    if first_monday + timedelta(days=6) <= last_sunday:
-        if dt_start < first_monday:
-            parts.append(("jours", dt_start, first_monday - timedelta(days=1)))
-        parts.append(("semaines", first_monday, last_sunday))
-        if last_sunday < dt_end:
-            parts.append(("jours", last_sunday + timedelta(days=1), dt_end))
-    else:
-        parts.append(("jours", dt_start, dt_end))
-
-    return parts
-
-
-def decompose_auto(dt_debut: datetime, dt_fin: datetime):
-    """Découpe un intervalle en requêtes optimales sur mois / semaines / jours."""
-    segments: list[tuple[str, datetime, datetime]] = []
-
-    if dt_debut.day == 1:
-        mois_start = dt_debut
-    else:
-        if dt_debut.month == 12:
-            mois_start = datetime(dt_debut.year + 1, 1, 1)
-        else:
-            mois_start = datetime(dt_debut.year, dt_debut.month + 1, 1)
-
-    last_day = monthrange(dt_fin.year, dt_fin.month)[1]
-    if dt_fin.day == last_day:
-        mois_end = dt_fin
-    else:
-        mois_end = datetime(dt_fin.year, dt_fin.month, 1) - timedelta(days=1)
-
-    if mois_start <= mois_end:
-        if dt_debut < mois_start:
-            segments.extend(
-                _decompose_semaines_jours(dt_debut, mois_start - timedelta(days=1))
-            )
-        segments.append(("mois", mois_start, mois_end))
-        if mois_end < dt_fin:
-            segments.extend(
-                _decompose_semaines_jours(mois_end + timedelta(days=1), dt_fin)
-            )
-    else:
-        segments.extend(_decompose_semaines_jours(dt_debut, dt_fin))
-
-    return segments
-
 
 def build_query(
     periode: str,
@@ -231,191 +112,8 @@ def build_query(
     return sql, params
 
 
-def build_trppu_query(
-    periode: str,
-    co_regate: str,
-    dt_start: datetime,
-    dt_end: datetime,
-) -> tuple[str, dict]:
-    """Construit la requête TRPPU avec agrégations CASE/WHEN par type de produit.
-
-    Retourne un tuple (sql, params) avec des placeholders nommés.
-    """
-    table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
-    date_col = DATE_COLUMN_PERIODE[periode]
-
-    params: dict = {
-        "co_regate": co_regate,
-        "dt_start": fmt_date(dt_start, periode),
-        "dt_end": fmt_date(dt_end, periode),
-    }
-
-    # --- Placeholders pour les listes IN du WHERE ---
-    proc_placeholders = ", ".join(f":proc_{i}" for i in range(len(TRPPU_WHERE_CO_PROCESS)))
-    for i, v in enumerate(TRPPU_WHERE_CO_PROCESS):
-        params[f"proc_{i}"] = v
-
-    cpt_placeholders = ", ".join(f":cpt_{i}" for i in range(len(TRPPU_WHERE_CO_COMPTAGE)))
-    for i, v in enumerate(TRPPU_WHERE_CO_COMPTAGE):
-        params[f"cpt_{i}"] = v
-
-    # --- Littéraux pour les types de site dans les CASE (non injectables) ---
-    dist = ", ".join(f"'{s}'" for s in TRPPU_SITES_DISTRIBUTEURS)
-    pic_ctc = ", ".join(f"'{s}'" for s in TRPPU_SITES_PIC_CTC)
-
-    select = f"""{date_col},
-    j.co_regate,
-    j.lb_type_entite_regate_court AS type_site,
-
-    SUM(CASE
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage IN ('TI_COL_MENAGE', 'TI_COL_CEDEX')
-            THEN j.trafic_reel
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage IN ('OR4PM', 'OR4PX')
-         AND j.co_type_objet = 'R'
-            THEN j.trafic_reel
-        WHEN j.lb_type_entite_regate_court IN ({pic_ctc})
-         AND j.co_process IN ('VT', 'DT')
-         AND j.co_type_objet = 'R'
-            THEN j.trafic_reel
-        ELSE 0
-    END) AS trafic_oo,
-
-    SUM(CASE
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage IN ('OR4PM', 'OR4PX')
-         AND j.co_type_objet = 'P'
-            THEN j.trafic_reel
-        WHEN j.lb_type_entite_regate_court IN ({pic_ctc})
-         AND j.co_process IN ('VT', 'DT')
-         AND j.co_type_objet = 'P'
-            THEN j.trafic_reel
-        ELSE 0
-    END) AS presse_mecanisee,
-
-    SUM(CASE
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage = 'PPLP0'
-            THEN j.trafic_reel
-        ELSE 0
-    END) AS presse_locale_declarative,
-
-    SUM(CASE
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage IN ('1POP0', 'VPIP0')
-            THEN j.trafic_reel
-        ELSE 0
-    END) AS presse_viapost_hors_meca,
-
-    SUM(CASE
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage = 'TRSP1'
-            THEN j.trafic_reel
-        ELSE 0
-    END) AS trafic_os,
-
-    SUM(CASE
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage = 'IMPJ'
-            THEN j.trafic_reel
-        ELSE 0
-    END) AS trafic_ip,
-
-    SUM(CASE
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage = 'TLOP1'
-            THEN j.trafic_reel
-        ELSE 0
-    END) AS trafic_colis,
-
-    SUM(CASE
-        WHEN j.lb_type_entite_regate_court IN ({dist})
-         AND j.co_comptage IN ('VQQP0', '2QNP1', '2QQP1')
-            THEN j.trafic_reel
-        ELSE 0
-    END) AS trafic_ppi"""
-
-    sql = (
-        f"SELECT {select} "
-        f"FROM {table} j "
-        f"WHERE j.co_regate = :co_regate "
-        f"AND j.{date_col} BETWEEN :dt_start AND :dt_end "
-        f"AND (j.co_process IN ({proc_placeholders}) "
-        f"OR j.co_comptage IN ({cpt_placeholders})) "
-        f"GROUP BY j.{date_col}, j.co_regate, j.lb_type_entite_regate_court"
-    )
-
-    return sql, params
-
-
-def validate_params(periode, co_regate, date_debut, date_fin):
-    """Valide les paramètres communs et retourne (periode_lower, dt_debut, dt_fin)."""
-    manquants = []
-    if not periode:
-        manquants.append("periode")
-    if not co_regate:
-        manquants.append("co_regate")
-    if not date_debut:
-        manquants.append("date_debut")
-    if not date_fin:
-        manquants.append("date_fin")
-    if manquants:
-        msg = f"Paramètre(s) manquant(s) : {', '.join(manquants)}. {PARAMETRES_RAPPEL}"
-        logger.warning(msg)
-        raise HTTPException(
-            status_code=400,
-            detail={"error": True, "message": msg, "code": 400},
-        )
-
-    periode_lower = periode.lower()
-    periodes_valides = (*TABLES_PERIODE, "auto")
-    if periode_lower not in periodes_valides:
-        msg = (
-            f"Période invalide '{periode}'. "
-            f"Valeurs acceptées : {', '.join(periodes_valides)}. {PARAMETRES_RAPPEL}"
-        )
-        logger.warning(msg)
-        raise HTTPException(
-            status_code=400,
-            detail={"error": True, "message": msg, "code": 400},
-        )
-
-    dt_debut = parse_date(date_debut, "date_debut")
-    dt_fin = parse_date(date_fin, "date_fin")
-
-    if dt_debut > dt_fin:
-        msg = f"date_debut doit être antérieure ou égale à date_fin. {PARAMETRES_RAPPEL}"
-        logger.warning(msg)
-        raise HTTPException(
-            status_code=400,
-            detail={"error": True, "message": msg, "code": 400},
-        )
-
-    ecart = (dt_fin - dt_debut).days
-    if ecart > MAX_DATE_RANGE_DAYS:
-        msg = (
-            f"L'écart entre les dates ne doit pas dépasser 2 ans ({MAX_DATE_RANGE_DAYS} jours). "
-            f"Écart actuel : {ecart} jours. {PARAMETRES_RAPPEL}"
-        )
-        logger.warning(msg)
-        raise HTTPException(
-            status_code=400,
-            detail={"error": True, "message": msg, "code": 400},
-        )
-
-    return periode_lower, dt_debut, dt_fin
-
-
-def build_segments(periode_lower, dt_debut, dt_fin):
-    """Retourne la liste des segments selon la période."""
-    if periode_lower == "auto":
-        return decompose_auto(dt_debut, dt_fin)
-    return [(periode_lower, dt_debut, dt_fin)]
-
-
 # ---------------------------------------------------------------------------
-# Endpoints
+# Endpoint
 # ---------------------------------------------------------------------------
 
 @router.post("/get_trafics")
@@ -480,58 +178,3 @@ def get_trafics(body: TraficsRequest):
     if DEBUG_SHOW_QUERY:
         response["queries"] = [q["query"][0] for q in queries]
     return response
-
-
-@router.get("/get_trppu_trafics")
-def get_trppu_trafics(
-    co_regate: str,
-    date_debut: str,
-    date_fin: str,
-):
-    """Récupère les trafics TRPPU agrégés par type de produit.
-
-    Utilise le mode **auto** : l'intervalle est découpé dynamiquement en requêtes
-    sur les tables mois, semaines et jours pour optimiser les performances.
-    Retourne pour chaque (date, site) les trafics ventilés : courrier OO,
-    presse mécanisée, presse locale, presse Viapost, OS, IP, colis, PPI.
-    """
-    periode_lower, dt_debut, dt_fin = validate_params("auto", co_regate, date_debut, date_fin)
-
-    segments = build_segments(periode_lower, dt_debut, dt_fin)
-    queries = [
-        {"periode": seg[0], "query": build_trppu_query(seg[0], co_regate, seg[1], seg[2])}
-        for seg in segments
-    ]
-
-    start = time.perf_counter()
-    try:
-        results = []
-        for q in queries:
-            sql, params = q["query"]
-            results.extend(databricks.fetch_all(sql, params))
-    except Exception as e:
-        logger.error("Erreur requête TRPPU (%s) : %s", periode_lower, e)
-        detail = {
-            "error": True,
-            "message": f"Erreur lors de la récupération des trafics TRPPU ({periode_lower}).",
-            "code": 500,
-        }
-        if DEBUG_SHOW_QUERY:
-            detail["queries"] = [q["query"][0] for q in queries]
-        raise HTTPException(status_code=500, detail=detail) from e
-    duration_s = round(time.perf_counter() - start, 3)
-
-    response = {
-        "execution_time_s": duration_s,
-        "periode": periode_lower,
-        "co_regate": co_regate,
-        "date_debut": fmt_date(dt_debut),
-        "date_fin": fmt_date(dt_fin),
-        "count": len(results),
-        "data": results,
-    }
-    if DEBUG_SHOW_QUERY:
-        response["queries"] = [q["query"][0] for q in queries]
-    return response
-
-

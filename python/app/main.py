@@ -12,6 +12,7 @@ from app.routes import health as health_routes
 from app.routes import calcl_nbr_jours as calcl_nbr_jours_routes
 from app.routes import mysql_debug as mysql_debug_routes
 from app.routes import trafics as trafics_routes
+from app.routes import trppu_trafics as trppu_trafics_routes
  
 setup_logging()
 log = logging.getLogger("trppu")
@@ -47,6 +48,7 @@ app.include_router(health_routes.router)
 app.include_router(databricks_routes.router)
 app.include_router(mysql_debug_routes.router)
 app.include_router(trafics_routes.router)
+app.include_router(trppu_trafics_routes.router)
 app.include_router(calcl_nbr_jours_routes.router)
  
 if __name__ == "__main__":

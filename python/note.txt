@@ -1,1 +1,14 @@
 /trafics/get_trppu_trafics?co_regate=245840&date_debut=20250101&date_fin=20251231
+Le problème est que le mode auto décompose en requêtes sur les tables mois/semaines/jours, mais la table mensuelle
+  (g_mdp_trafics_mois_actualise) n'a probablement pas les mêmes colonnes que la table jour (trafic_reel, co_process, co_type_objet,
+  lb_type_entite_regate_court). Ta requête exemple était uniquement sur la table jour.
+
+
+D'accord, maintenant j'ai les 3 requêtes. Les différences clés entre les tables :
+
+  ┌────────────┬─────────────┬─────────────────────────────────────────────────────────────────┬────────────────────────────────────┐
+  │            │    Jours    │                            Semaines                             │                Mois                │     ├────────────┼─────────────┼─────────────────────────────────────────────────────────────────┼────────────────────────────────────┤
+  │ Valeur     │ trafic_reel │ nb_objet_retenu                                                 │ nb_objet_retenu                    │     ├────────────┼─────────────┼─────────────────────────────────────────────────────────────────┼────────────────────────────────────┤   
+  │ SELECT     │ da_comptage │ co_annee_comptage, co_semaine_comptage,                         │ co_annee_comptage,                 │     │ date       │             │ da_lundi_semaine_comptage                                       │ co_mois_comptage                   │     ├────────────┼─────────────┼─────────────────────────────────────────────────────────────────┼────────────────────────────────────┤   
+  │ GROUP BY   │ idem        │ idem + regate + type_site                                       │ idem + regate + type_site          │
+  └────────────┴─────────────┴─────────────────────────────────────────────────────────────────┴────────────────────────────────────┘
