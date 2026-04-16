@@ -160,6 +160,7 @@ def get_trafics(body: TraficsRequest):
         }
         if DEBUG_SHOW_QUERY:
             detail["queries"] = [q["query"][0] for q in queries]
+            detail["databricks_error"] = str(e)
         raise HTTPException(status_code=500, detail=detail) from e
     duration_s = round(time.perf_counter() - start, 3)
 

@@ -57,12 +57,12 @@ def fmt_date(dt: datetime, periode: str = "jours") -> str:
 
     jours    -> AAAA-MM-JJ
     semaines -> AAAA-NS  (numéro de semaine ISO)
-    mois     -> AAAAMM
+    mois     -> AAAA-MM
     """
     if periode == "semaines":
         return f"{dt.isocalendar()[0]}-{dt.isocalendar()[1]:02d}"
     if periode == "mois":
-        return dt.strftime("%Y%m")
+        return dt.strftime("%Y-%m")
     return dt.strftime("%Y-%m-%d")
 
 
