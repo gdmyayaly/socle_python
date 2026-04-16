@@ -9,12 +9,14 @@ import aiomysql
 
 from app.config import (
     MYSQL_DATABASE,
-    MYSQL_HOST,
+    MYSQL_HOST_WRITE,
+    MYSQL_HOST_READ,
     MYSQL_MAX_RETRIES,
     MYSQL_PASSWORD,
     MYSQL_PORT,
     MYSQL_RETRY_DELAY,
-    MYSQL_USER,
+    MYSQL_USER_WRITE,
+    MYSQL_USER_READ,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,9 +27,9 @@ class Database:
 
     def __init__(
         self,
-        host: str = MYSQL_HOST,
+        host: str = MYSQL_HOST_WRITE,
         port: int = MYSQL_PORT,
-        user: str = MYSQL_USER,
+        user: str = MYSQL_USER_WRITE,
         password: str = MYSQL_PASSWORD,
         database: str = MYSQL_DATABASE,
         min_connections: int = 1,
@@ -180,5 +182,12 @@ class _TransactionCursor:
             return await cur.fetchall()
 
 
-# Instance globale
-db = Database()
+# Instances globales : écriture et lecture
+db_write = Database(
+    host=MYSQL_HOST_WRITE,
+    user=MYSQL_USER_WRITE,
+)
+db_read = Database(
+    host=MYSQL_HOST_READ,
+    user=MYSQL_USER_READ,
+)

@@ -10,9 +10,12 @@ _env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=_env_path)
 # MySQL
 SKIP_MYSQL = os.getenv("SKIP_MYSQL", "false").lower() == "true"
-MYSQL_HOST = os.getenv("SGBD_SERVER_WRITE", "localhost")
+_SGBD_APP_USER_DEFAULT = os.getenv("SGBD_APP_USER", "root")
+MYSQL_HOST_WRITE = os.getenv("SGBD_SERVER_WRITE", "localhost")
+MYSQL_HOST_READ = os.getenv("SGBD_SERVER_READ", MYSQL_HOST_WRITE)
 MYSQL_PORT = int(os.getenv("SGBD_PORT", "3306"))
-MYSQL_USER = os.getenv("SGBD_APP_USER", "root")
+MYSQL_USER_WRITE = os.getenv("SGBD_APP_USER_WRITE", _SGBD_APP_USER_DEFAULT)
+MYSQL_USER_READ = os.getenv("SGBD_APP_USER_READ", _SGBD_APP_USER_DEFAULT)
 MYSQL_PASSWORD = os.getenv("SGBD_APP_PWD", "")
 MYSQL_DATABASE = os.getenv("SGBD_DB_NAME", "trppu")
 MYSQL_MAX_RETRIES = int(os.getenv("SGBD_MAX_RETRIES", "3"))

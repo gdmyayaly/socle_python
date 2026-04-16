@@ -10,6 +10,7 @@ from app.json_formatter import setup_logging
 from app.routes import databricks as databricks_routes
 from app.routes import health as health_routes
 from app.routes import calcl_nbr_jours as calcl_nbr_jours_routes
+from app.routes import mysql_debug as mysql_debug_routes
 from app.routes import trafics as trafics_routes
  
 setup_logging()
@@ -44,6 +45,7 @@ async def log_requests(request: Request, call_next):
  
 app.include_router(health_routes.router)
 app.include_router(databricks_routes.router)
+app.include_router(mysql_debug_routes.router)
 app.include_router(trafics_routes.router)
 app.include_router(calcl_nbr_jours_routes.router)
  
