@@ -1,15 +1,16 @@
-import { Component, OnInit } from '@angular/core';
+import { Component } from '@angular/core';
+import { Site } from '../models/site.model';
 
 @Component({
   selector: 'app-param',
   templateUrl: './param.component.html',
   styleUrls: ['./param.component.css']
 })
-export class ParamComponent implements OnInit {
+export class ParamComponent {
 
-  constructor() { }
+  selectedSite: Site | null = null;
 
-  ngOnInit(): void {
+  onSiteSelected(site: Site | null): void {
+    this.selectedSite = site;
   }
-
 }

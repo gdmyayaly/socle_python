@@ -1,0 +1,16 @@
+<div class="section-container">
+  <div class="section-header">
+    <mat-icon class="header-icon">remove_shopping_cart</mat-icon>
+    <h3>Produits à exclure</h3>
+  </div>
+
+  <div class="produits-list">
+    <mat-checkbox
+      *ngFor="let p of produits"
+      [(ngModel)]="p.exclu"
+      (ngModelChange)="onToggle(p)"
+      class="produit-item">
+      <span class="produit-code">{{ p.code }}</span> — {{ p.libelle }}
+    </mat-checkbox>
+  </div>
+</div>

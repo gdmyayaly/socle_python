@@ -1,1 +1,31 @@
-<p>param works!</p>
+<div class="param-site">
+  <app-trppu-select-site (siteSelected)="onSiteSelected($event)"></app-trppu-select-site>
+</div>
+
+<div class="overlay-wrapper">
+  <div class="overlay-block" *ngIf="!selectedSite">
+    <span>Sélectionnez un site pour accéder aux paramètres.</span>
+  </div>
+
+  <div class="param-sections" [class.disabled-content]="!selectedSite">
+    <app-trppu-periode-neutraliser
+      [siteId]="selectedSite ? selectedSite.codeRoc : null">
+    </app-trppu-periode-neutraliser>
+
+    <app-trppu-variation-trafic
+      [siteId]="selectedSite ? selectedSite.codeRoc : null">
+    </app-trppu-variation-trafic>
+
+    <app-trppu-neutralisation-peak
+      [siteId]="selectedSite ? selectedSite.codeRoc : null">
+    </app-trppu-neutralisation-peak>
+
+    <app-trppu-neutralisation-secondaire
+      [siteId]="selectedSite ? selectedSite.codeRoc : null">
+    </app-trppu-neutralisation-secondaire>
+
+    <app-trppu-produit-a-exclure
+      [siteId]="selectedSite ? selectedSite.codeRoc : null">
+    </app-trppu-produit-a-exclure>
+  </div>
+</div>

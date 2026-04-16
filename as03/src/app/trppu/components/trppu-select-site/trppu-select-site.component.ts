@@ -17,7 +17,7 @@ export class TrppuSelectSiteComponent implements OnInit {
   constructor(private http: HttpClient) {}
 
   ngOnInit(): void {
-    this.http.get<Site[]>('assets/sites.json').subscribe(data => {
+    this.http.get<Site[]>('assets/trppu/sites.json').subscribe(data => {
       this.sites = data;
     });
   }

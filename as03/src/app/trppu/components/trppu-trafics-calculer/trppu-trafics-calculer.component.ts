@@ -29,7 +29,7 @@ export class TrppuTraficsCalculerComponent implements OnChanges {
       this.trafics = [];
       return;
     }
-    this.http.get<TraficCalcule[]>('assets/trafics-calcules.json').subscribe({
+    this.http.get<TraficCalcule[]>('assets/trppu/trafics-calcules.json').subscribe({
       next: (data) => this.trafics = data,
       error: () => this.trafics = []
     });

@@ -9,6 +9,6 @@ export class ScenarioService {
   constructor(private http: HttpClient) {}
 
   getScenariosBySiteId(siteId: string): Observable<Scenario[]> {
-    return this.http.get<Scenario[]>(`assets/scenarios-site-${siteId}.json`);
+    return this.http.get<Scenario[]>(`assets/trppu/scenarios-site-${siteId}.json`);
   }
 }
