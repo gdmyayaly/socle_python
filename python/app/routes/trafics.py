@@ -455,14 +455,14 @@ def get_trafics(body: TraficsRequest):
                 results.extend(databricks.fetch_all(sql, params))
     except Exception as e:
         logger.error("Erreur requête (%s) : %s", periode_lower, e)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": True,
-                "message": f"Erreur lors de la récupération des trafics ({periode_lower}).",
-                "code": 500,
-            },
-        ) from e
+        detail = {
+            "error": True,
+            "message": f"Erreur lors de la récupération des trafics ({periode_lower}).",
+            "code": 500,
+        }
+        if DEBUG_SHOW_QUERY:
+            detail["queries"] = [q["query"][0] for q in queries]
+        raise HTTPException(status_code=500, detail=detail) from e
     duration_s = round(time.perf_counter() - start, 3)
 
     response = {
@@ -511,14 +511,14 @@ def get_trppu_trafics(
             results.extend(databricks.fetch_all(sql, params))
     except Exception as e:
         logger.error("Erreur requête TRPPU (%s) : %s", periode_lower, e)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": True,
-                "message": f"Erreur lors de la récupération des trafics TRPPU ({periode_lower}).",
-                "code": 500,
-            },
-        ) from e
+        detail = {
+            "error": True,
+            "message": f"Erreur lors de la récupération des trafics TRPPU ({periode_lower}).",
+            "code": 500,
+        }
+        if DEBUG_SHOW_QUERY:
+            detail["queries"] = [q["query"][0] for q in queries]
+        raise HTTPException(status_code=500, detail=detail) from e
     duration_s = round(time.perf_counter() - start, 3)
 
     response = {
