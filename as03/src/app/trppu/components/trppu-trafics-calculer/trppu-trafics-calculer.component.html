@@ -14,22 +14,22 @@
 
     <ng-container matColumnDef="volumeBrut">
       <th mat-header-cell *matHeaderCellDef>Volume brut</th>
-      <td mat-cell *matCellDef="let row">{{ row.volumeBrut | number }}</td>
+      <td mat-cell *matCellDef="let row">{{ row.volumeBrut | number:'':'fr' }}</td>
     </ng-container>
 
     <ng-container matColumnDef="constateBrut">
       <th mat-header-cell *matHeaderCellDef>Constaté brut</th>
-      <td mat-cell *matCellDef="let row">{{ row.constateBrut | number }}</td>
+      <td mat-cell *matCellDef="let row">{{ row.constateBrut | number:'':'fr' }}</td>
     </ng-container>
 
     <ng-container matColumnDef="previsionnelBrut">
       <th mat-header-cell *matHeaderCellDef>Prévisionnel brut</th>
-      <td mat-cell *matCellDef="let row">{{ row.previsionnelBrut | number }}</td>
+      <td mat-cell *matCellDef="let row">{{ row.previsionnelBrut | number:'':'fr' }}</td>
     </ng-container>
 
     <ng-container matColumnDef="traficMoyenHebdo">
       <th mat-header-cell *matHeaderCellDef>Trafic moyen hebdo</th>
-      <td mat-cell *matCellDef="let row" class="computed-cell">{{ row.traficMoyenHebdo | number }}</td>
+      <td mat-cell *matCellDef="let row" class="computed-cell">{{ row.traficMoyenHebdo | number:'':'fr' }}</td>
     </ng-container>
 
     <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>

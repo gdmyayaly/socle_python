@@ -22,8 +22,8 @@
   </div>
   <app-trppu-periode-scenario
     [class.disabled-content]="!selectedScenario"
-    [dateMin]="'2025-01-01'"
-    [dateMax]="'2030-12-31'"
+    [dateMin]="'2015-01-01'"
+    [dateMax]="'2031-12-31'"
     [periode]="selectedScenario ? selectedScenario.periode : null"
     (periodeValidated)="onPeriodeValidated($event)"
     (refreshNeeded)="onRefreshNeeded()"

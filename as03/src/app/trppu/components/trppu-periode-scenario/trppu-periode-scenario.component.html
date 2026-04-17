@@ -72,8 +72,9 @@
       <!-- Marqueur Aujourd'hui -->
       <div class="today-marker" *ngIf="todayPercent >= 0" [style.left.%]="todayPercent">
         <div class="today-line"></div>
-        <div class="today-label" *ngIf="!todayBeforePeriode">Aujourd'hui ({{ formatDateFr(todayStr) }})</div>
+        <div class="today-label" *ngIf="!todayBeforePeriode && !todayAfterPeriode">Aujourd'hui ({{ formatDateFr(todayStr) }})</div>
         <div class="today-label today-label-outside" *ngIf="todayBeforePeriode">{{ formatDateFr(startDateStr) }} (auj. {{ formatDateFr(todayStr) }})</div>
+        <div class="today-label today-label-outside" *ngIf="todayAfterPeriode">{{ formatDateFr(endDateStr) }} (auj. {{ formatDateFr(todayStr) }})</div>
       </div>
 
       <!-- Zone active (fourchette) -->

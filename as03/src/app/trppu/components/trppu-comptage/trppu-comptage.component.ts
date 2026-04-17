@@ -3,6 +3,15 @@ import { Trafic } from '../../models/trafic.model';
 import { Comptage } from '../../models/comptage.model';
 import { ComptageService } from '../../services/comptage.service';
 
+const DEFAULT_TRAFICS: Trafic[] = [
+  { id: 1, code: 'VL',   libelle: 'Véhicules légers' },
+  { id: 2, code: 'PL',   libelle: 'Poids lourds' },
+  { id: 3, code: '2RM',  libelle: 'Deux-roues motorisés' },
+  { id: 4, code: 'TC',   libelle: 'Transports en commun' },
+  { id: 5, code: 'VELO', libelle: 'Vélos' },
+  { id: 6, code: 'PIET', libelle: 'Piétons' }
+];
+
 @Component({
   selector: 'app-trppu-comptage',
   templateUrl: './trppu-comptage.component.html',
@@ -11,14 +20,15 @@ import { ComptageService } from '../../services/comptage.service';
 export class TrppuComptageComponent implements OnChanges {
 
   @Input() scenarioId: number | null = null;
+  @Input() trafics: Trafic[] | null = null;
+
   @Output() comptagesChange = new EventEmitter<Comptage[]>();
   @Output() dirtyChange = new EventEmitter<boolean>();
 
-  trafics: Trafic[] = [];
+  resolvedTrafics: Trafic[] = [];
   comptages: Comptage[] = [];
   displayedColumns: string[] = ['trafic', 'valeur', 'actions'];
 
-  /** Champs de la ligne d'ajout inline */
   newTraficId: number | null = null;
   newValeur: number | null = null;
 
@@ -28,15 +38,22 @@ export class TrppuComptageComponent implements OnChanges {
   private originalSnapshot = '';
 
   constructor(private comptageService: ComptageService) {
-    this.comptageService.getTrafics().subscribe({
-      next: (data) => this.trafics = data
-    });
+    this.resolveTrafics();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
+    if (changes['trafics']) {
+      this.resolveTrafics();
+    }
     if (changes['scenarioId']) {
       this.loadComptages();
     }
+  }
+
+  private resolveTrafics(): void {
+    this.resolvedTrafics = this.trafics && this.trafics.length > 0
+      ? this.trafics
+      : DEFAULT_TRAFICS;
   }
 
   private loadComptages(): void {
@@ -57,7 +74,7 @@ export class TrppuComptageComponent implements OnChanges {
 
   get availableTrafics(): Trafic[] {
     const usedIds = new Set(this.comptages.map(c => c.trafic.id));
-    return this.trafics.filter(t => !usedIds.has(t.id));
+    return this.resolvedTrafics.filter(t => !usedIds.has(t.id));
   }
 
   get canAdd(): boolean {
@@ -67,7 +84,7 @@ export class TrppuComptageComponent implements OnChanges {
   onAdd(): void {
     if (!this.canAdd) return;
 
-    const trafic = this.trafics.find(t => t.id === this.newTraficId);
+    const trafic = this.resolvedTrafics.find(t => t.id === this.newTraficId);
     if (!trafic) return;
 
     const comptage: Comptage = {
@@ -87,8 +104,15 @@ export class TrppuComptageComponent implements OnChanges {
     this.emitChange();
   }
 
-  onValeurChange(comptage: Comptage, value: number): void {
+  onValeurInput(comptage: Comptage, value: number): void {
     comptage.valeur = value;
+  }
+
+  onValeurBlur(): void {
+    this.emitChange();
+  }
+
+  onDraftChange(): void {
     this.emitChange();
   }
 

@@ -88,13 +88,28 @@ table {
 
 /* Select inline dans le footer */
 .inline-field {
-  width: 100%;
+  width: 240px;
+  max-width: 100%;
   margin: 0;
+  font-size: 13px;
+}
+
+.inline-field.compact-select {
+  width: 220px;
 }
 
 ::ng-deep .inline-field .mat-form-field-wrapper {
   padding-bottom: 0 !important;
   margin: 0 !important;
+}
+
+::ng-deep .inline-field.compact-select .mat-form-field-infix {
+  padding: 4px 0 6px 0 !important;
+  border-top: 4px solid transparent !important;
+}
+
+::ng-deep .inline-field.compact-select .mat-select-value {
+  font-size: 13px;
 }
 
 /* Ligne footer d'ajout */

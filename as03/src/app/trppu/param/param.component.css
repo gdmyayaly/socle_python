@@ -32,3 +32,45 @@
   pointer-events: none;
   opacity: 0.5;
 }
+
+.param-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+  padding: 20px 24px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.btn-validate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.btn-validate mat-icon {
+  margin-right: 4px;
+}
+
+.validated-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #2e7d32;
+  background: #e8f5e9;
+  padding: 6px 14px;
+  border-radius: 16px;
+}
+
+.validated-info mat-icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+}

@@ -18,8 +18,10 @@
         {{ row.trafic.libelle }}
       </td>
       <td mat-footer-cell *matFooterCellDef>
-        <mat-form-field appearance="outline" class="inline-field">
-          <mat-select [(ngModel)]="newTraficId" placeholder="Choisir un trafic">
+        <mat-form-field appearance="outline" class="inline-field compact-select">
+          <mat-select [(ngModel)]="newTraficId"
+                      placeholder="Choisir un trafic"
+                      (selectionChange)="onDraftChange()">
             <mat-option *ngFor="let t of availableTrafics" [value]="t.id">
               {{ t.code }} — {{ t.libelle }}
             </mat-option>
@@ -33,12 +35,14 @@
       <td mat-cell *matCellDef="let row">
         <input type="number" class="inline-input"
                [ngModel]="row.valeur"
-               (ngModelChange)="onValeurChange(row, $event)"
+               (ngModelChange)="onValeurInput(row, $event)"
+               (blur)="onValeurBlur()"
                min="0" />
       </td>
       <td mat-footer-cell *matFooterCellDef>
         <input type="number" class="inline-input"
                [(ngModel)]="newValeur"
+               (blur)="onDraftChange()"
                min="0"
                placeholder="0" />
       </td>

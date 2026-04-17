@@ -81,11 +81,13 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
       this.endTs = this.clamp(this.toTs(this.periode.dateFin));
       this.enforceMaxRange('end');
     } else {
-      // Défaut : début au min, fin à min + MAX_RANGE_YEARS
-      this.startTs = this.minTs;
-      const defaultEnd = new Date(new Date(this.minTs).getFullYear() + MAX_RANGE_YEARS,
-        new Date(this.minTs).getMonth(), new Date(this.minTs).getDate());
+      // Défaut : intervalle incluant aujourd'hui (début = aujourd'hui, fin = aujourd'hui + MAX_RANGE_YEARS)
+      const now = new Date();
+      const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      this.startTs = this.snap(this.clamp(todayTs));
+      const defaultEnd = new Date(now.getFullYear() + MAX_RANGE_YEARS, now.getMonth(), now.getDate());
       this.endTs = this.snap(this.clamp(defaultEnd.getTime()));
+      this.enforceMaxRange('end');
     }
 
     this.syncStrings();
@@ -108,20 +110,27 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
     return this.endPercent - this.startPercent;
   }
 
-  /** Position du marqueur "Aujourd'hui" : suit la borne début si avant la période */
+  /** Position du marqueur "Aujourd'hui" : suit la borne début si avant, ou la borne fin si après */
   get todayPercent(): number {
-    const now = new Date();
-    const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    if (todayTs > this.maxTs) return -1;
+    const todayTs = this.getTodayTs();
     if (todayTs < this.startTs) return this.toPercent(this.startTs);
+    if (todayTs > this.endTs) return this.toPercent(this.endTs);
     return this.toPercent(todayTs);
   }
 
   /** true si aujourd'hui est avant la période sélectionnée */
   get todayBeforePeriode(): boolean {
+    return this.getTodayTs() < this.startTs;
+  }
+
+  /** true si aujourd'hui est après la période sélectionnée */
+  get todayAfterPeriode(): boolean {
+    return this.getTodayTs() > this.endTs;
+  }
+
+  private getTodayTs(): number {
     const now = new Date();
-    const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    return todayTs < this.startTs;
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   }
 
   get todayStr(): string {

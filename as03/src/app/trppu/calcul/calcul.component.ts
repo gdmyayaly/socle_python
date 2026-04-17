@@ -60,6 +60,7 @@ export class CalculComponent {
 
   onComptagesChange(comptages: Comptage[]): void {
     this.currentComptages = comptages;
+    console.log('[CalculComponent] comptages reçus du fils:', comptages);
   }
 
   onRefreshNeeded(): void {

@@ -6,7 +6,7 @@
 
   <div class="produits-list">
     <mat-checkbox
-      *ngFor="let p of produits"
+      *ngFor="let p of resolvedProduits"
       [(ngModel)]="p.exclu"
       (ngModelChange)="onToggle(p)"
       class="produit-item">
