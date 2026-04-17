@@ -3,6 +3,14 @@
   <div class="trafics-header">
     <mat-icon class="header-icon">calculate</mat-icon>
     <h3>Trafics calculés</h3>
+
+    <mat-form-field appearance="outline" class="jours-field">
+      <mat-label>Jours / semaine</mat-label>
+      <mat-select [ngModel]="joursParSemaine"
+                  (selectionChange)="onJoursParSemaineChange($event.value)">
+        <mat-option *ngFor="let j of joursOptions" [value]="j">{{ j }}</mat-option>
+      </mat-select>
+    </mat-form-field>
   </div>
 
   <table mat-table [dataSource]="trafics">

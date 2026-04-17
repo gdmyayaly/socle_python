@@ -26,6 +26,22 @@
   font-size: 18px;
   font-weight: 500;
   color: #212121;
+  flex: 1;
+}
+
+.jours-field {
+  width: 140px;
+  font-size: 13px;
+}
+
+::ng-deep .jours-field .mat-form-field-wrapper {
+  padding-bottom: 0 !important;
+  margin: 0 !important;
+}
+
+::ng-deep .jours-field .mat-form-field-infix {
+  padding: 4px 0 6px 0 !important;
+  border-top: 4px solid transparent !important;
 }
 
 table {

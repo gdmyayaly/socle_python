@@ -49,6 +49,7 @@
   </div>
   <app-trppu-trafics-calculer
     [class.disabled-content]="!selectedScenario"
-    [scenarioId]="selectedScenario ? selectedScenario.id : null">
+    [scenarioId]="selectedScenario ? selectedScenario.id : null"
+    (joursParSemaineChange)="onJoursParSemaineChange($event)">
   </app-trppu-trafics-calculer>
 </div>

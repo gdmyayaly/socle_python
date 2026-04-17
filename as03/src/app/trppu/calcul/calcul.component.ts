@@ -3,6 +3,7 @@ import { Site } from '../models/site.model';
 import { Scenario } from '../models/scenario.model';
 import { Periode } from '../models/periode.model';
 import { Comptage } from '../models/comptage.model';
+import { JoursParSemaine } from '../components/trppu-trafics-calculer/trppu-trafics-calculer.component';
 
 @Component({
   selector: 'app-calcul',
@@ -18,6 +19,7 @@ export class CalculComponent {
   comptageHasChanges = false;
   currentComptages: Comptage[] = [];
   currentPeriode: Periode | null = null;
+  currentJoursParSemaine: JoursParSemaine = 7;
 
   onSiteSelected(site: Site | null): void {
     if (this.periodeHasChanges) {
@@ -65,5 +67,10 @@ export class CalculComponent {
 
   onRefreshNeeded(): void {
     this.needsRefresh = true;
+  }
+
+  onJoursParSemaineChange(jours: JoursParSemaine): void {
+    this.currentJoursParSemaine = jours;
+    console.log('[CalculComponent] jours/semaine reçus du fils:', jours);
   }
 }
