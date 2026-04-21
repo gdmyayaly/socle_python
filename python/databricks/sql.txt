@@ -1,0 +1,80 @@
+CREATE OR REPLACE TABLE ppd_dd_kairos_int.03_gold.g_mdp_trafics_agrege_jour AS
+SELECT
+    CAST(da_comptage AS STRING)                        AS da_comptage,
+    co_regate,
+    lb_type_entite_regate_court                        AS type_site,
+
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage IN ('TI_COL_MENAGE','TI_COL_CEDEX')      THEN trafic_reel
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage IN ('OR4PM','OR4PX')
+         AND co_type_objet = 'R'                                   THEN trafic_reel
+        WHEN lb_type_entite_regate_court IN ('PIC','CTC')
+         AND co_process IN ('VT','DT')
+         AND co_type_objet = 'R'                                   THEN trafic_reel
+        ELSE 0 END)                                    AS trafic_oo,
+
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage IN ('OR4PM','OR4PX')
+         AND co_type_objet = 'P'                                   THEN trafic_reel
+        WHEN lb_type_entite_regate_court IN ('PIC','CTC')
+         AND co_process IN ('VT','DT')
+         AND co_type_objet = 'P'                                   THEN trafic_reel
+        ELSE 0 END)                                    AS presse_mecanisee,
+
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage = 'PPLP0'                                 THEN trafic_reel
+        ELSE 0 END)                                    AS presse_locale_declarative,
+
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage IN ('1POP0','VPIP0')                      THEN trafic_reel
+        ELSE 0 END)                                    AS presse_viapost_hors_meca,
+
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage = 'TRSP1'                                 THEN trafic_reel
+        ELSE 0 END)                                    AS trafic_os,
+
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage = 'IMPJ'                                  THEN trafic_reel
+        ELSE 0 END)                                    AS trafic_ip,
+
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage = 'TLOP1'                                 THEN trafic_reel
+        ELSE 0 END)                                    AS trafic_colis,
+
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage IN ('VQQP0','2QNP1','2QQP1')              THEN trafic_reel
+        ELSE 0 END)                                    AS trafic_ppi,
+
+    /* trafic_total = somme des 8 colonnes ci-dessus */
+    SUM(CASE
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage IN ('TI_COL_MENAGE','TI_COL_CEDEX','OR4PM','OR4PX',
+                             'PPLP0','1POP0','VPIP0','TRSP1','IMPJ','TLOP1',
+                             'VQQP0','2QNP1','2QQP1')              THEN trafic_reel
+        WHEN lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC')
+         AND co_comptage IN ('OR4PM','OR4PX')
+         AND co_type_objet IN ('R','P')                            THEN trafic_reel
+        WHEN lb_type_entite_regate_court IN ('PIC','CTC')
+         AND co_process IN ('VT','DT')
+         AND co_type_objet IN ('R','P')                            THEN trafic_reel
+        ELSE 0 END)                                    AS trafic_total
+
+FROM ppd_dd_kairos_int.03_gold.SRC_JOUR
+WHERE lb_type_entite_regate_court IN ('PDC1','PDC2','PPDC','PIC','CTC')
+  AND (
+      co_process IN ('VT','DT')
+      OR co_comptage IN ('TI_COL_MENAGE','TI_COL_CEDEX','OR4PM','OR4PX',
+                         'TRSP1','IMPJ','TLOP1',
+                         'VQQP0','2QNP1','2QQP1',
+                         'PPLP0','1POP0','VPIP0')
+  )
+GROUP BY da_comptage, co_regate, lb_type_entite_regate_court;
