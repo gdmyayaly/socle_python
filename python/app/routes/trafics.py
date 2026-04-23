@@ -25,23 +25,25 @@ router = APIRouter(prefix="/trafics", tags=["Trafics"])
 def build_query(
     periode: str,
     co_regate: str,
-    dt_start: datetime,
-    dt_end: datetime,
+    ranges: list[tuple[datetime, datetime]],
     limit: int | None = None,
 ) -> tuple[str, dict]:
-    """Construit un SELECT * sur la table correspondant à la période."""
+    """Construit un SELECT * sur la table de la période, couvrant toutes les plages."""
     table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
     date_col = DATE_COLUMN_PERIODE[periode]
 
-    params: dict = {
-        "co_regate": co_regate,
-        "dt_start": fmt_date(dt_start, periode),
-        "dt_end": fmt_date(dt_end, periode),
-    }
+    params: dict = {"co_regate": co_regate}
+    conditions: list[str] = []
+    for i, (dt_start, dt_end) in enumerate(ranges):
+        s_key, e_key = f"dt_start_{i}", f"dt_end_{i}"
+        params[s_key] = fmt_date(dt_start, periode)
+        params[e_key] = fmt_date(dt_end, periode)
+        conditions.append(f"{date_col} BETWEEN :{s_key} AND :{e_key}")
+
     sql = (
         f"SELECT * FROM {table} "
         f"WHERE co_regate = :co_regate "
-        f"AND {date_col} BETWEEN :dt_start AND :dt_end"
+        f"AND ({' OR '.join(conditions)})"
     )
     if limit is not None:
         sql += f" LIMIT {int(limit)}"
@@ -58,12 +60,16 @@ def get_trafics(
     """Récupère les trafics bruts par code régate sur un intervalle de dates.
 
     L'intervalle est découpé dynamiquement (mode auto) en segments mois /
-    semaines / jours pour interroger la table la plus agrégée disponible.
-    `limit` est appliqué par segment.
+    semaines / jours, puis les segments d'une même période sont regroupés en
+    une seule requête (max 1 requête par table). `limit` est appliqué par table.
     """
     dt_debut, dt_fin = validate_params(co_regate, date_debut, date_fin)
     segments = decompose_auto(dt_debut, dt_fin)
-    queries = [build_query(p, co_regate, s, e, limit) for p, s, e in segments]
+
+    grouped: dict[str, list[tuple[datetime, datetime]]] = {}
+    for periode, s, e in segments:
+        grouped.setdefault(periode, []).append((s, e))
+    queries = [build_query(p, co_regate, ranges, limit) for p, ranges in grouped.items()]
 
     start = time.perf_counter()
     try:
