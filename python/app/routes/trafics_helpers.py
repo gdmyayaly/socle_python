@@ -1,4 +1,4 @@
-"""Constantes et helpers partagés pour les routes trafics et trppu_trafics."""
+"""Constantes et helpers partagés pour la route trafics (mode auto)."""
 
 import logging
 from calendar import monthrange
@@ -24,16 +24,11 @@ DATE_COLUMN_PERIODE = {
 
 PARAMETRES_RAPPEL = (
     "Paramètres attendus : "
-    "periode (jours, semaines, mois, auto), "
     "co_regate (code régate du site), "
     "date_debut (format AAAAMMJJ ou AAAA-MM-JJ), "
     "date_fin (format AAAAMMJJ ou AAAA-MM-JJ)."
 )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def parse_date(value: str, nom_param: str) -> datetime:
     """Parse une date au format AAAAMMJJ ou AAAA-MM-JJ."""
@@ -70,11 +65,9 @@ def _decompose_semaines_jours(dt_start: datetime, dt_end: datetime):
     """Découpe un intervalle en semaines complètes (lun-dim) et jours restants."""
     parts: list[tuple[str, datetime, datetime]] = []
 
-    # Premier lundi >= dt_start
     days_to_monday = (7 - dt_start.weekday()) % 7
     first_monday = dt_start + timedelta(days=days_to_monday)
 
-    # Dernier dimanche <= dt_end
     if dt_end.weekday() == 6:
         last_sunday = dt_end
     else:
@@ -126,11 +119,9 @@ def decompose_auto(dt_debut: datetime, dt_fin: datetime):
     return segments
 
 
-def validate_params(periode, co_regate, date_debut, date_fin):
-    """Valide les paramètres communs et retourne (periode_lower, dt_debut, dt_fin)."""
+def validate_params(co_regate, date_debut, date_fin):
+    """Valide les paramètres communs et retourne (dt_debut, dt_fin)."""
     manquants = []
-    if not periode:
-        manquants.append("periode")
     if not co_regate:
         manquants.append("co_regate")
     if not date_debut:
@@ -139,19 +130,6 @@ def validate_params(periode, co_regate, date_debut, date_fin):
         manquants.append("date_fin")
     if manquants:
         msg = f"Paramètre(s) manquant(s) : {', '.join(manquants)}. {PARAMETRES_RAPPEL}"
-        logger.warning(msg)
-        raise HTTPException(
-            status_code=400,
-            detail={"error": True, "message": msg, "code": 400},
-        )
-
-    periode_lower = periode.lower()
-    periodes_valides = (*TABLES_PERIODE, "auto")
-    if periode_lower not in periodes_valides:
-        msg = (
-            f"Période invalide '{periode}'. "
-            f"Valeurs acceptées : {', '.join(periodes_valides)}. {PARAMETRES_RAPPEL}"
-        )
         logger.warning(msg)
         raise HTTPException(
             status_code=400,
@@ -181,11 +159,4 @@ def validate_params(periode, co_regate, date_debut, date_fin):
             detail={"error": True, "message": msg, "code": 400},
         )
 
-    return periode_lower, dt_debut, dt_fin
-
-
-def build_segments(periode_lower, dt_debut, dt_fin):
-    """Retourne la liste des segments selon la période."""
-    if periode_lower == "auto":
-        return decompose_auto(dt_debut, dt_fin)
-    return [(periode_lower, dt_debut, dt_fin)]
+    return dt_debut, dt_fin
