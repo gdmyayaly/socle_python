@@ -47,6 +47,15 @@ def parse_date(value: str, nom_param: str) -> datetime:
     )
 
 
+def render_sql(sql: str, params: dict) -> str:
+    """Substitue les paramètres nommés (:name) dans le SQL pour l'affichage."""
+    rendered = sql
+    for key, value in params.items():
+        literal = "NULL" if value is None else f"'{str(value).replace(chr(39), chr(39) * 2)}'"
+        rendered = rendered.replace(f":{key}", literal)
+    return rendered
+
+
 def fmt_date(dt: datetime, periode: str = "jours") -> str:
     """Formate une date selon la période pour les requêtes SQL.
 

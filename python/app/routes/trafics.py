@@ -13,6 +13,7 @@ from app.routes.trafics_helpers import (
     TABLES_PERIODE,
     decompose_auto,
     fmt_date,
+    render_sql,
     validate_params,
 )
 
@@ -77,7 +78,7 @@ def get_trafics(
             "code": 500,
         }
         if DEBUG_SHOW_QUERY:
-            detail["queries"] = [sql for sql, _ in queries]
+            detail["queries"] = [render_sql(sql, params) for sql, params in queries]
             detail["databricks_error"] = str(e)
         raise HTTPException(status_code=500, detail=detail) from e
     duration_s = round(time.perf_counter() - start, 3)
@@ -91,5 +92,5 @@ def get_trafics(
         "data": results,
     }
     if DEBUG_SHOW_QUERY:
-        response["queries"] = [sql for sql, _ in queries]
+        response["queries"] = [render_sql(sql, params) for sql, params in queries]
     return response
