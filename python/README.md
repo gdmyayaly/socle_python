@@ -42,7 +42,9 @@ Variables disponibles dans `.env` :
 | `MYSQL_HOST`     | `localhost` | Hôte du serveur MySQL    |
 | `MYSQL_PORT`     | `3306`      | Port du serveur MySQL    |
 | `MYSQL_USER`     | `root`      | Utilisateur MySQL        |
-| `MYSQL_PASSWORD` | *(vide)*    | Mot de passe MySQL       |
+| `SGBD_APP_PWD`        | *(vide)*    | Mot de passe MySQL par défaut (fallback) |
+| `SGBD_APP_PWD_READ`   | `SGBD_APP_PWD` | Mot de passe MySQL pour la lecture |
+| `SGBD_APP_PWD_WRITE`  | `SGBD_APP_PWD` | Mot de passe MySQL pour l'écriture |
 | `MYSQL_DATABASE` | `trppu`     | Nom de la base de données|
 
 **Databricks :**

@@ -12,7 +12,8 @@ from app.config import (
     MYSQL_HOST_WRITE,
     MYSQL_HOST_READ,
     MYSQL_MAX_RETRIES,
-    MYSQL_PASSWORD,
+    MYSQL_PASSWORD_READ,
+    MYSQL_PASSWORD_WRITE,
     MYSQL_PORT,
     MYSQL_RETRY_DELAY,
     MYSQL_USER_WRITE,
@@ -30,7 +31,7 @@ class Database:
         host: str = MYSQL_HOST_WRITE,
         port: int = MYSQL_PORT,
         user: str = MYSQL_USER_WRITE,
-        password: str = MYSQL_PASSWORD,
+        password: str = MYSQL_PASSWORD_WRITE,
         database: str = MYSQL_DATABASE,
         min_connections: int = 1,
         max_connections: int = 10,
@@ -186,8 +187,10 @@ class _TransactionCursor:
 db_write = Database(
     host=MYSQL_HOST_WRITE,
     user=MYSQL_USER_WRITE,
+    password=MYSQL_PASSWORD_WRITE,
 )
 db_read = Database(
     host=MYSQL_HOST_READ,
     user=MYSQL_USER_READ,
+    password=MYSQL_PASSWORD_READ,
 )
