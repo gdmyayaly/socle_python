@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 aiomysql
+pydantic>=2,<3
 python-dotenv
 databricks-sql-connector
 databricks-sdk

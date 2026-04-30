@@ -19,7 +19,7 @@ from app.routes.trafics_helpers import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/trafics", tags=["Trafics"])
+router = APIRouter(prefix="/trppu-api/trafics", tags=["Trafics"])
 
 
 def build_query(
