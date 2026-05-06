@@ -3,6 +3,8 @@ uvicorn
 aiomysql
 pydantic>=2,<3
 python-dotenv
+python-multipart
+openpyxl
 databricks-sql-connector
 databricks-sdk
 pyarrow
