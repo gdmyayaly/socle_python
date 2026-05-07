@@ -13,21 +13,18 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.datavalidation import DataValidation
 
-HEADERS = ["co_regate", "lb_regate", "lb_site", "type_site", "co_roc", "est_actif"]
+HEADERS = ["co_regate", "lb_regate", "type_site", "co_roc"]
 EXAMPLE_ROWS = [
-    ("012345", "Regate Paris Nord", "PIC Paris Nord", "PIC", "012345", 1),
-    ("067890", "Regate Lyon Centre", "PDC Lyon Centre", "PDC1", "067890", 1),
-    ("099999", "Regate Marseille",  "PPDC Marseille", "PPDC", "099999", 0),
+    ("012345", "Regate Paris Nord", "PIC", "012345"),
+    ("067890", "Regate Lyon Centre", "PDC1", "067890"),
+    ("099999", "Regate Marseille",  "PPDC", "099999"),
 ]
 COLUMN_WIDTHS = {
     "co_regate": 12,
     "lb_regate": 30,
-    "lb_site": 40,
     "type_site": 14,
     "co_roc": 12,
-    "est_actif": 12,
 }
 
 
@@ -51,30 +48,12 @@ def build_workbook() -> Workbook:
         for col_idx, value in enumerate(row, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)
 
-    # co_regate / co_roc : forcer le format texte pour préserver les zéros initiaux
-    for header in ("co_regate", "co_roc"):
+    # co_regate / co_roc / type_site : format texte pour préserver les zéros initiaux
+    # et éviter toute coercition Excel.
+    for header in ("co_regate", "co_roc", "type_site"):
         col_letter = get_column_letter(HEADERS.index(header) + 1)
         for cell in ws[col_letter][1:]:
             cell.number_format = "@"
-
-    # type_site est en format texte (CHAR(5)) : pas de liste déroulante.
-    type_site_col = get_column_letter(HEADERS.index("type_site") + 1)
-    for cell in ws[type_site_col][1:]:
-        cell.number_format = "@"
-
-    last_row = 1000  # plage des validations
-
-    actif_col = get_column_letter(HEADERS.index("est_actif") + 1)
-    dv_actif = DataValidation(
-        type="list",
-        formula1='"0,1"',
-        allow_blank=True,
-        showErrorMessage=True,
-        errorTitle="Valeur invalide",
-        error="Valeurs autorisées : 0 (inactif) ou 1 (actif)",
-    )
-    ws.add_data_validation(dv_actif)
-    dv_actif.add(f"{actif_col}2:{actif_col}{last_row}")
 
     ws.freeze_panes = "A2"
 
@@ -86,10 +65,8 @@ def build_workbook() -> Workbook:
         "Colonnes :",
         " - co_regate  : code Regate du site (6 caractères, obligatoire, clé primaire)",
         " - lb_regate  : libellé associé au code Regate (max 120 caractères, optionnel)",
-        " - lb_site    : libellé du site (max 120 caractères, obligatoire)",
         " - type_site  : type du site (max 5 caractères, ex : PIC, PDC1, PDC2, PPDC, AUTRE)",
         " - co_roc     : code ROC (6 caractères, obligatoire)",
-        " - est_actif  : 1 = actif (défaut), 0 = inactif",
         "",
         "Comportement de l'import :",
         " - Upsert sur co_regate (INSERT ... ON DUPLICATE KEY UPDATE).",

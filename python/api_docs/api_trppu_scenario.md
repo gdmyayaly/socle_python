@@ -4,266 +4,170 @@
 > Préfixe HTTP : `/trppu-api/scenarios`
 > Tag Swagger : **Scenarios**
 
-Pilotage des scénarios de calcul de trafic. Un scénario porte une période d'analyse,
-un PIC version, des coefficients dérivés, et traverse un cycle de vie strict
-(`BROUILLON → SIMULATION → VALIDE → PRODUCTION → ARCHIVE`).
+Table de scénarios TRPPU avec workflow d'état (machine à états), dates de
+validation/mise en prod, périodes principales et dérivées (réalisé/prévision),
+et flag de figeage (`est_fige`).
 
 ---
 
-## 1. Table `trppu_scenario`
+## 1. Table `trppu_scenario` (extrait)
 
-| Colonne                 | Type                                                       | Notes                                      |
-|-------------------------|------------------------------------------------------------|--------------------------------------------|
-| `id_scenario`           | BIGINT AUTO_INCREMENT — **PK**                             | Géré par MySQL                             |
-| `co_regate`             | CHAR(6) NOT NULL                                           | FK `trppu_site.co_regate` (RESTRICT)       |
-| `lb_scenario`           | VARCHAR(50) NOT NULL                                       |                                            |
-| `co_roc`                | CHAR(6) NOT NULL                                           |                                            |
-| `statut`                | ENUM(`BROUILLON,SIMULATION,VALIDE,PRODUCTION,ARCHIVE`)     | Défaut serveur : `BROUILLON`               |
-| `dt_creation`           | DATETIME DEFAULT NOW()                                     |                                            |
-| `dt_validation`         | DATETIME NULL                                              | Posé sur transition `VALIDE`               |
-| `dt_mise_en_prod`       | DATETIME NULL                                              | Posé sur transition `PRODUCTION`           |
-| `periode_debut/fin`     | DATE NOT NULL                                              | Défaut serveur : `today±1 an`              |
-| `periode_realise_*`     | DATE NULL                                                  |                                            |
-| `periode_prev_*`        | DATE NULL                                                  |                                            |
-| `nb_jours_semaine`      | TINYINT NOT NULL — CHECK IN (5, 6)                         | Défaut serveur : `5`                       |
-| `id_pic_version`        | INT NOT NULL                                               | FK `trppu_pic_version` (RESTRICT)          |
-| `version_scenario`      | INT NOT NULL DEFAULT 1                                     | Auto-incrémenté à chaque mutation          |
-| `id_scenario_parent`    | BIGINT NULL                                                | FK self (`SET NULL`) — versioning          |
-| `est_fige`              | TINYINT(1) NOT NULL DEFAULT 0                              | `1` bloque toutes les mutations métier     |
+| Colonne                 | Type                                                       | Notes                                       |
+|-------------------------|------------------------------------------------------------|---------------------------------------------|
+| `id_scenario`           | BIGINT — **PK** AUTO_INCREMENT                             | Auto-généré                                 |
+| `co_regate`             | CHAR(6) NOT NULL                                           | FK → `trppu_site`                           |
+| `lb_scenario`           | VARCHAR(50) NOT NULL                                       | Libellé                                     |
+| `co_roc`                | CHAR(6) NOT NULL                                           |                                             |
+| `statut`                | ENUM('EN COURS','SIMULATION','VALIDE','VEROUILLE','ARCHIVE') | Voir `GET /enums`                        |
+| `dt_creation`           | DATETIME — auto                                            |                                             |
+| `dt_validation`         | DATETIME NULL                                              | Posée auto au passage vers VALIDE           |
+| `dt_mise_en_prod`       | DATETIME NULL                                              | Posée auto par `POST /mise-en-prod`         |
+| `periode_debut/fin`     | DATE NOT NULL                                              | Bornes principales (saisies par l'utilisateur) |
+| `periode_realise_*`     | DATE NULL — **dérivées serveur**                           | Recalculées depuis (debut, fin, today)      |
+| `periode_prev_*`        | DATE NULL — **dérivées serveur**                           | Idem                                        |
+| `nb_jours_semaine`      | TINYINT NOT NULL CHECK IN (5,6)                            |                                             |
+| `id_pic_version`        | INT NOT NULL                                               | FK → `trppu_pic_version`                    |
+| `version_scenario`      | INT NOT NULL DEFAULT 1                                     | Incrémenté à chaque mutation                |
+| `est_fige`              | TINYINT(1) NOT NULL DEFAULT 0                              | Bloque `update_periodes`, `lb_scenario`, `nb_jours_semaine` |
+
+> Plus de colonne `id_scenario_parent` (retirée du modèle).
 
 ---
 
-## 2. Endpoints
+## 2. Machine à états
 
-| Méthode | Chemin                                              | Description                                                       |
-|---------|-----------------------------------------------------|-------------------------------------------------------------------|
-| `GET`    | `/trppu-api/scenarios`                              | Liste paginée + filtres `co_regate`, `co_roc`, `statut`, `est_fige` |
-| `GET`    | `/trppu-api/scenarios/{id_scenario}`                | Détail                                                            |
-| `POST`   | `/trppu-api/scenarios`                              | Création (BROUILLON, version 1, est_fige=0)                       |
-| `DELETE` | `/trppu-api/scenarios/{id_scenario}`                | Soft-delete (transition vers ARCHIVE)                             |
-| `PATCH`  | `/trppu-api/scenarios/{id_scenario}/periodes`       | MAJ partielle des bornes de période                               |
-| `PATCH`  | `/trppu-api/scenarios/{id_scenario}/nb-jours-semaine` | MAJ `nb_jours_semaine ∈ {5,6}`                                  |
-| `PATCH`  | `/trppu-api/scenarios/{id_scenario}/statut`         | Transition de statut (machine à états + effets de bord)           |
-| `PATCH`  | `/trppu-api/scenarios/{id_scenario}/est-fige`       | Force `est_fige` (seule porte de sortie après PRODUCTION)         |
-| `PATCH`  | `/trppu-api/scenarios/{id_scenario}/lb-scenario`    | Renommage du libellé                                              |
-| `POST`   | `/trppu-api/scenarios/{id_scenario}/duplicate`      | Clone en nouveau BROUILLON, `id_scenario_parent = source`         |
-| `GET`    | `/trppu-api/scenarios/{id_scenario}/history`        | Lignée complète (ancêtres + descendants)                          |
-
-### 2.1 `GET /trppu-api/scenarios`
-
-| Param        | Type   | Défaut | Description                |
-|--------------|--------|--------|----------------------------|
-| `co_regate`  | str(6) | —      | Filtre site                |
-| `co_roc`     | str(6) | —      | Filtre ROC                 |
-| `statut`     | str    | —      | Filtre statut (enum)       |
-| `est_fige`   | bool   | —      | Filtre figé / non figé     |
-| `limit`      | int    | 100    | 1..1000                    |
-| `offset`     | int    | 0      | ≥ 0                        |
-
-### 2.2 `POST /trppu-api/scenarios`
-
-Body minimal :
-```json
-{
-  "co_regate": "ABCDEF",
-  "lb_scenario": "Scénario Q1 2026",
-  "co_roc": "ABCDEF"
-}
+```
+EN COURS   -> {SIMULATION, ARCHIVE}
+SIMULATION -> {VALIDE, EN COURS, ARCHIVE}
+VALIDE     -> {SIMULATION, ARCHIVE}            (VEROUILLE atteignable UNIQUEMENT via /mise-en-prod)
+VEROUILLE  -> {ARCHIVE}
+ARCHIVE    -> {}                               (terminal)
 ```
 
-Body complet :
+**Effets de bord** :
+- Vers `VALIDE` : `dt_validation = COALESCE(dt_validation, NOW())`
+- Vers `VEROUILLE` (via `/mise-en-prod` uniquement) : `dt_mise_en_prod = NOW()`, `est_fige = 1`, `dt_validation = COALESCE(dt_validation, NOW())`
+
+---
+
+## 3. Endpoints
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `GET`   | `/trppu-api/scenarios` | Liste paginée + filtres `co_regate`, `co_roc`, `statut`, `est_fige` |
+| `GET`   | `/trppu-api/scenarios/enums` | Valeurs autorisées pour `statut` |
+| `GET`   | `/trppu-api/scenarios/{id_scenario}` | Récupération par PK |
+| `POST`  | `/trppu-api/scenarios` | Création (statut initial = `EN COURS`, version = 1) |
+| `DELETE`| `/trppu-api/scenarios/{id_scenario}` | Soft-delete : transition vers `ARCHIVE` |
+| `PATCH` | `/trppu-api/scenarios/{id_scenario}/periodes` | MAJ `periode_debut/fin` ; realise/prev recalculés serveur |
+| `PATCH` | `/trppu-api/scenarios/{id_scenario}/nb-jours-semaine` | MAJ 5 ou 6 |
+| `PATCH` | `/trppu-api/scenarios/{id_scenario}/statut` | Transition de statut (sauf VEROUILLE) |
+| `POST`  | `/trppu-api/scenarios/{id_scenario}/mise-en-prod` | **Seule manière d'atteindre VEROUILLE** |
+| `PATCH` | `/trppu-api/scenarios/{id_scenario}/est-fige` | Force le flag est_fige |
+| `PATCH` | `/trppu-api/scenarios/{id_scenario}/lb-scenario` | MAJ libellé |
+| `POST`  | `/trppu-api/scenarios/{id_scenario}/duplicate` | Clone en `EN COURS` v1 (sans tracking parent) |
+
+> Plus de `GET /history` (la lignée parent a été retirée du modèle).
+
+### 3.1 `POST /trppu-api/scenarios`
+
 ```json
 {
-  "co_regate": "ABCDEF",
-  "lb_scenario": "Scénario Q1 2026",
-  "co_roc": "ABCDEF",
+  "co_regate": "012345",
+  "lb_scenario": "Scénario test",
+  "co_roc": "012345",
   "nb_jours_semaine": 6,
-  "id_pic_version": 12,
+  "id_pic_version": 1,
   "periode_debut": "2026-01-01",
-  "periode_fin": "2026-12-31",
-  "periode_realise_debut": "2026-01-01",
-  "periode_realise_fin": "2026-06-30",
-  "periode_prev_debut": "2026-07-01",
-  "periode_prev_fin": "2026-12-31",
-  "id_scenario_parent": 42
+  "periode_fin": "2026-12-31"
 }
 ```
 
-Comportement par défaut côté serveur si non fournis :
-- `nb_jours_semaine` → `5`
-- `id_pic_version` → première ligne `trppu_pic_version` avec `est_par_defaut=1`, sinon `id_pic_version=1`, sinon **422**.
-- `periode_debut` / `periode_fin` → `today - 365j` / `today + 365j`
-- `statut` = `BROUILLON`, `version_scenario` = `1`, `est_fige` = `false`
+- `id_pic_version` : si null, le serveur prend la première `trppu_pic_version` avec `est_par_defaut=1` (sinon id=1, sinon 422).
+- `periode_debut`/`fin` : si null, défaut today-1an / today+1an.
+- `periode_realise_*` et `periode_prev_*` ne sont **pas acceptés** dans le body : ils sont calculés serveur en fonction de `today`.
+- Statut initial = `EN COURS`, `version_scenario = 1`, `est_fige = false`.
 
-Codes :
-- `201` créé
-- `422` site/pic_version/parent introuvable, ou validations Pydantic
-- `500` exception inattendue
-
-### 2.3 `PATCH /trppu-api/scenarios/{id}/periodes`
-
-Tous les champs optionnels — au moins un requis :
-```json
-{
-  "periode_debut": "2026-02-01",
-  "periode_fin": "2026-11-30",
-  "periode_realise_debut": "2026-02-01",
-  "periode_realise_fin": "2026-06-30",
-  "periode_prev_debut": "2026-07-01",
-  "periode_prev_fin": "2026-11-30"
-}
-```
-
-Codes :
-- `200` MAJ + `version_scenario` incrémenté
-- `400` `periode_fin < periode_debut` (ou bornes réalise/prev incohérentes)
-- `404` scénario introuvable
-- `409` scénario figé (`est_fige=1`)
-
-### 2.4 `PATCH /trppu-api/scenarios/{id}/nb-jours-semaine`
+### 3.2 `GET /trppu-api/scenarios/enums`
 
 ```json
-{ "nb_jours_semaine": 6 }
+{ "statut": ["EN COURS", "SIMULATION", "VALIDE", "VEROUILLE", "ARCHIVE"] }
 ```
 
-- `422` si valeur ∉ {5, 6}
-- `409` si figé
-
-### 2.5 `PATCH /trppu-api/scenarios/{id}/statut`
+### 3.3 `PATCH /trppu-api/scenarios/{id_scenario}/periodes`
 
 ```json
-{ "statut": "PRODUCTION" }
+{ "periode_debut": "2026-02-01", "periode_fin": "2026-11-30" }
 ```
 
-Effets de bord automatiques :
-- `→ VALIDE` : pose `dt_validation = NOW()` (si NULL)
-- `→ PRODUCTION` : pose `dt_mise_en_prod = NOW()`, `est_fige = 1` (et `dt_validation` si NULL)
-- autres : juste l'UPDATE du statut
+À chaque modification de `periode_debut` ou `periode_fin`, les bornes
+réalisé/prévision sont **recalculées** :
 
-Cette route n'est **pas** bloquée par `est_fige` — un scénario PRODUCTION reste archivable.
+```
+realise_debut = periode_debut             si periode_debut <= today, sinon NULL
+realise_fin   = min(today, periode_fin)   si periode_debut <= today, sinon NULL
+prev_debut    = max(today, periode_debut) si periode_fin >= today,   sinon NULL
+prev_fin      = periode_fin               si periode_fin >= today,   sinon NULL
+```
 
-### 2.6 `PATCH /trppu-api/scenarios/{id}/est-fige`
+- Si `today` est dans la période : `realise_fin == prev_debut == today`.
+- Si la période est entièrement passée : seules `realise_*` sont posées.
+- Si la période est entièrement future : seules `prev_*` sont posées.
+
+### 3.4 `PATCH /trppu-api/scenarios/{id_scenario}/statut`
 
 ```json
-{ "est_fige": false }
+{ "statut": "VALIDE" }
 ```
 
-Permet manuellement de défiger un scénario sorti de PRODUCTION. À utiliser avec précaution.
+- Lève **422** si la transition est interdite (cf. matrice).
+- Lève **409** si la transition demandée est `VALIDE -> VEROUILLE` (réservée à `/mise-en-prod`).
 
-### 2.7 `PATCH /trppu-api/scenarios/{id}/lb-scenario`
+### 3.5 `POST /trppu-api/scenarios/{id_scenario}/mise-en-prod`
 
-```json
-{ "lb_scenario": "Nouveau libellé" }
-```
+Aucun body. Effets :
+- `statut` devient `VEROUILLE`
+- `dt_mise_en_prod = NOW()`
+- `est_fige = 1`
+- `dt_validation = COALESCE(dt_validation, NOW())` (filet de sécurité)
+- `version_scenario += 1`
 
-### 2.8 `POST /trppu-api/scenarios/{id}/duplicate`
+Lève **422** si le statut courant n'est pas `VALIDE`.
+
+### 3.6 `POST /trppu-api/scenarios/{id_scenario}/duplicate`
 
 Body optionnel :
 ```json
-{ "lb_scenario": "Scénario Q1 2026 (variante)" }
+{ "lb_scenario": "Mon clone" }
 ```
 
-Sans body : libellé du clone = `"<source.lb_scenario> (copie)"` (tronqué à 50 caractères).
-Le clone copie : `co_regate`, `co_roc`, périodes, `nb_jours_semaine`, `id_pic_version` ;
-force `statut=BROUILLON`, `version_scenario=1`, `est_fige=0`,
-et pose `id_scenario_parent = id source`.
-
-### 2.9 `GET /trppu-api/scenarios/{id}/history`
-
-Renvoie tous les scénarios de la même lignée :
-1. Le serveur remonte de `id` jusqu'à la racine (`id_scenario_parent IS NULL`).
-2. Une CTE récursive descend depuis la racine et collecte tous les descendants.
-
-Réponse : `list[ScenarioOut]` triée par `id_scenario`.
+Le clone est créé en `EN COURS`, `version_scenario = 1`, `est_fige = 0`, copie
+toutes les colonnes métier sauf l'id, dt_*, statut, version, est_fige. Pas de
+tracking parent : aucun lien clone↔source persisté.
 
 ---
 
-## 3. Machine à états
+## 4. Manœuvres opérationnelles
 
-```
-                      ┌──────────┐
-                      │ BROUILLON│
-                      └────┬─────┘
-                           │
-           ┌───────────────┼─────────────────┐
-           ▼                                  ▼
-     ┌──────────┐                       ┌────────┐
-     │SIMULATION│ ◄──────────────┐      │ARCHIVE │
-     └────┬─────┘                │      └────────┘
-          │                       │           ▲
-          ▼                       │           │
-     ┌────────┐                   │           │
-     │ VALIDE │ ──────────────────┘           │
-     └────┬───┘                               │
-          │                                    │
-          ▼                                    │
-     ┌──────────┐                              │
-     │PRODUCTION│ ─────────────────────────────┘
-     └──────────┘
-```
-
-| Depuis      | Vers autorisé                       |
-|-------------|-------------------------------------|
-| BROUILLON   | SIMULATION, ARCHIVE                 |
-| SIMULATION  | VALIDE, BROUILLON, ARCHIVE          |
-| VALIDE      | PRODUCTION, SIMULATION, ARCHIVE     |
-| PRODUCTION  | ARCHIVE                             |
-| ARCHIVE     | (terminal, aucune transition)       |
-
-Une transition non autorisée renvoie **422** avec la liste des cibles valides.
-
----
-
-## 4. Manœuvres opérationnelles courantes
-
-### 4.1 Création + cycle complet
-
+### 4.1 Mettre un scénario en production
 ```bash
-# Création (utilise tous les défauts serveur)
-SID=$(curl -s -X POST http://localhost:8080/trppu-api/scenarios \
-  -H "Content-Type: application/json" \
-  -d '{"co_regate":"ABCDEF","lb_scenario":"Demo","co_roc":"ABCDEF"}' \
-  | jq -r '.id_scenario')
-
-# BROUILLON → SIMULATION → VALIDE → PRODUCTION
-curl -X PATCH http://localhost:8080/trppu-api/scenarios/$SID/statut \
-  -H "Content-Type: application/json" -d '{"statut":"SIMULATION"}'
-curl -X PATCH http://localhost:8080/trppu-api/scenarios/$SID/statut \
-  -H "Content-Type: application/json" -d '{"statut":"VALIDE"}'
-curl -X PATCH http://localhost:8080/trppu-api/scenarios/$SID/statut \
-  -H "Content-Type: application/json" -d '{"statut":"PRODUCTION"}'
-# → est_fige=1, dt_mise_en_prod posé
+# 1. Valider
+curl -X PATCH .../scenarios/42/statut -d '{"statut":"VALIDE"}'
+# 2. Mettre en prod
+curl -X POST .../scenarios/42/mise-en-prod
+# Le scénario est désormais VEROUILLE, est_fige=1, dt_mise_en_prod posée.
 ```
 
-### 4.2 Variante d'un scénario en production
-
+### 4.2 Modifier un scénario verrouillé
 ```bash
-# Cloner pour repartir d'un BROUILLON, garde id_scenario_parent
-NEW=$(curl -s -X POST http://localhost:8080/trppu-api/scenarios/$SID/duplicate \
-  -H "Content-Type: application/json" -d '{"lb_scenario":"Demo Q2"}' \
-  | jq -r '.id_scenario')
-
-# Modifier les périodes du clone
-curl -X PATCH http://localhost:8080/trppu-api/scenarios/$NEW/periodes \
-  -H "Content-Type: application/json" \
-  -d '{"periode_debut":"2026-04-01","periode_fin":"2026-06-30"}'
+curl -X PATCH .../scenarios/42/est-fige -d '{"est_fige": false}'
+curl -X PATCH .../scenarios/42/lb-scenario -d '{"lb_scenario":"Nouveau"}'
+curl -X PATCH .../scenarios/42/est-fige -d '{"est_fige": true}'
 ```
 
-### 4.3 Retirer un scénario PRODUCTION par erreur
-
+### 4.3 Archiver
 ```bash
-# Défiger manuellement
-curl -X PATCH http://localhost:8080/trppu-api/scenarios/$SID/est-fige \
-  -H "Content-Type: application/json" -d '{"est_fige":false}'
-# Toujours en statut PRODUCTION : seul ARCHIVE est ouvert,
-# il faut donc l'archiver puis recréer un nouveau scénario via duplicate.
-```
-
-### 4.4 Lignée d'un scénario
-
-```bash
-curl http://localhost:8080/trppu-api/scenarios/$NEW/history
-# → liste de tous les scénarios partageant la même racine
+curl -X DELETE .../scenarios/42
 ```
 
 ---
@@ -272,9 +176,15 @@ curl http://localhost:8080/trppu-api/scenarios/$NEW/history
 
 ```
 app/routes/trppu_scenario/
-├── __init__.py        # exporte router
-├── routes.py          # endpoints FastAPI
-├── schemas.py         # Pydantic v2 (Create / Out / *Update / Duplicate)
-├── helpers.py         # SQL constants, FK checks, défauts métier, version bump
-└── statuts.py         # ALLOWED_TRANSITIONS + apply_transition_side_effects
+├── __init__.py
+├── routes.py
+├── schemas.py
+├── helpers.py     # SELECT, default_periode, recompute_realise_prev, fetch_or_404, increment_version
+└── statuts.py     # STATUTS, ALLOWED_TRANSITIONS, INTERNAL_TRANSITIONS, side-effects
+```
+
+Branchement dans `app/main.py` :
+```python
+from app.routes.trppu_scenario import router as trppu_scenario_router
+app.include_router(trppu_scenario_router)
 ```

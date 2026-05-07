@@ -38,7 +38,7 @@ async def list_produits(
     """Liste paginée des produits."""
     start = time.perf_counter()
     filters = {"actif_only": actif_only, "limit": limit, "offset": offset}
-    logger.info("→ list_produits (filters=%s)", safe_preview(filters))
+    logger.info("Début listing des produits (filtres=%s)", safe_preview(filters))
 
     where: list[str] = []
     params: list = []
@@ -54,32 +54,40 @@ async def list_produits(
     try:
         rows = await db_read.fetch_all(sql, tuple(params))
     except Exception as e:
-        logger.exception("Erreur listing produits (filters=%s)", safe_preview(filters))
+        logger.exception(
+            "Erreur listing des produits (filtres=%s)", safe_preview(filters)
+        )
         raise HTTPException(status_code=500, detail="Erreur listing produits.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info("list_produits OK (count=%d, duration_ms=%.1f)", len(rows), duration_ms)
+    logger.info(
+        "Listing des produits terminé (count=%d, duration_ms=%.1f)", len(rows), duration_ms
+    )
     return rows
 
 
 @router.get("/{co_produit}", response_model=ProduitOut)
 async def get_produit(co_produit: str):
     start = time.perf_counter()
-    logger.info("→ get_produit (co_produit=%s)", co_produit)
+    logger.info("Début récupération produit (co_produit=%s)", co_produit)
 
     try:
         row = await db_read.fetch_one(
             SELECT_PRODUIT_SQL + " WHERE co_produit = %s", (co_produit,)
         )
     except Exception as e:
-        logger.exception("Erreur get produit (co_produit=%s)", co_produit)
+        logger.exception("Erreur récupération produit (co_produit=%s)", co_produit)
         raise HTTPException(status_code=500, detail="Erreur récupération produit.") from e
     if not row:
-        logger.info("get_produit 404 (co_produit=%s)", co_produit)
+        logger.info("Produit introuvable (co_produit=%s)", co_produit)
         raise HTTPException(status_code=404, detail=f"Produit {co_produit} introuvable.")
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info("get_produit OK (co_produit=%s, duration_ms=%.1f)", co_produit, duration_ms)
+    logger.info(
+        "Récupération produit terminée (co_produit=%s, duration_ms=%.1f)",
+        co_produit,
+        duration_ms,
+    )
     return row
 
 
@@ -87,7 +95,7 @@ async def get_produit(co_produit: str):
 async def create_produit(payload: ProduitCreate):
     start = time.perf_counter()
     logger.info(
-        "→ create_produit (co_produit=%s, payload=%s)",
+        "Début création produit (co_produit=%s, payload=%s)",
         payload.co_produit,
         safe_preview(payload.model_dump(mode="json")),
     )
@@ -97,13 +105,11 @@ async def create_produit(payload: ProduitCreate):
         (payload.co_produit,),
     )
     if existing:
-        logger.info(
-            "create_produit 409 (co_produit=%s already exists)", payload.co_produit
-        )
+        logger.info("Produit déjà existant (co_produit=%s)", payload.co_produit)
         raise HTTPException(
             status_code=409, detail=f"Le produit {payload.co_produit} existe déjà."
         )
-    logger.info("... create_produit duplicate-check OK (co_produit=%s)", payload.co_produit)
+    logger.info("Vérification doublon OK (co_produit=%s)", payload.co_produit)
 
     try:
         await db_write.execute(
@@ -130,7 +136,7 @@ async def create_produit(payload: ProduitCreate):
     )
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "create_produit OK (co_produit=%s, duration_ms=%.1f)",
+        "Création produit terminée (co_produit=%s, duration_ms=%.1f)",
         payload.co_produit,
         duration_ms,
     )
@@ -142,7 +148,9 @@ async def update_produit(co_produit: str, payload: ProduitUpdate):
     start = time.perf_counter()
     fields = payload.model_dump(exclude_unset=True)
     logger.info(
-        "→ update_produit (co_produit=%s, fields=%s)", co_produit, safe_preview(fields)
+        "Début mise à jour produit (co_produit=%s, champs=%s)",
+        co_produit,
+        safe_preview(fields),
     )
 
     if not fields:
@@ -152,7 +160,7 @@ async def update_produit(co_produit: str, payload: ProduitUpdate):
         "SELECT co_produit FROM trppu_produit WHERE co_produit = %s", (co_produit,)
     )
     if not existing:
-        logger.info("update_produit 404 (co_produit=%s)", co_produit)
+        logger.info("Produit introuvable pour mise à jour (co_produit=%s)", co_produit)
         raise HTTPException(status_code=404, detail=f"Produit {co_produit} introuvable.")
 
     set_parts: list[str] = []
@@ -169,7 +177,7 @@ async def update_produit(co_produit: str, payload: ProduitUpdate):
         )
     except Exception as e:
         logger.exception(
-            "Erreur update produit (co_produit=%s, fields=%s)",
+            "Erreur mise à jour produit (co_produit=%s, champs=%s)",
             co_produit,
             safe_preview(fields),
         )
@@ -180,7 +188,7 @@ async def update_produit(co_produit: str, payload: ProduitUpdate):
     )
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "update_produit OK (co_produit=%s, fields_updated=%d, duration_ms=%.1f)",
+        "Mise à jour produit terminée (co_produit=%s, nb_champs=%d, duration_ms=%.1f)",
         co_produit,
         len(fields),
         duration_ms,
@@ -196,7 +204,7 @@ async def soft_delete_produit(
     """Soft delete : positionne dt_desactivation = aujourd'hui + motif_desactivation."""
     start = time.perf_counter()
     logger.info(
-        "→ soft_delete_produit (co_produit=%s, motif=%s)",
+        "Début désactivation produit (co_produit=%s, motif=%s)",
         co_produit,
         safe_preview(motif),
     )
@@ -205,7 +213,9 @@ async def soft_delete_produit(
         "SELECT co_produit FROM trppu_produit WHERE co_produit = %s", (co_produit,)
     )
     if not existing:
-        logger.info("soft_delete_produit 404 (co_produit=%s)", co_produit)
+        logger.info(
+            "Produit introuvable pour désactivation (co_produit=%s)", co_produit
+        )
         raise HTTPException(status_code=404, detail=f"Produit {co_produit} introuvable.")
 
     today = date.today()
@@ -218,7 +228,7 @@ async def soft_delete_produit(
         )
     except Exception as e:
         logger.exception(
-            "Erreur soft delete produit (co_produit=%s, motif=%s)",
+            "Erreur désactivation produit (co_produit=%s, motif=%s)",
             co_produit,
             safe_preview(motif),
         )
@@ -226,7 +236,7 @@ async def soft_delete_produit(
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "soft_delete_produit OK (co_produit=%s, dt_desactivation=%s, duration_ms=%.1f)",
+        "Désactivation produit terminée (co_produit=%s, dt_desactivation=%s, duration_ms=%.1f)",
         co_produit,
         today,
         duration_ms,
@@ -243,7 +253,7 @@ async def soft_delete_produit(
 async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")):
     """Upload massif via Excel : upsert (INSERT ... ON DUPLICATE KEY UPDATE)."""
     start = time.perf_counter()
-    logger.info("→ upload_excel produits (file=%s)", file.filename)
+    logger.info("Début upload Excel produits (fichier=%s)", file.filename)
 
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(
@@ -255,7 +265,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
     if not content:
         raise HTTPException(status_code=400, detail="Fichier vide.")
     logger.info(
-        "... upload_excel produits file read (file=%s, size=%d bytes)",
+        "Fichier Excel produits lu (fichier=%s, taille=%d octets)",
         file.filename,
         len(content),
     )
@@ -264,20 +274,20 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
         produits, errors = parse_excel_produits(content)
     except ValueError as e:
         logger.info(
-            "upload_excel produits 400 (file=%s, reason=%s)",
+            "Excel produits invalide (fichier=%s, raison=%s)",
             file.filename,
             safe_preview(str(e), max_len=200),
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception(
-            "Erreur parsing Excel produits (file=%s, size=%d)",
+            "Erreur parsing Excel produits (fichier=%s, taille=%d)",
             file.filename,
             len(content),
         )
         raise HTTPException(status_code=500, detail="Erreur lecture Excel.") from e
     logger.info(
-        "... upload_excel produits parsed (file=%s, valid=%d, errors=%d)",
+        "Excel produits parsé (fichier=%s, valides=%d, erreurs=%d)",
         file.filename,
         len(produits),
         len(errors),
@@ -289,7 +299,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
 
     if produits:
         logger.info(
-            "... upload_excel produits transaction open (file=%s, batch_size=%d)",
+            "Ouverture transaction upsert produits (fichier=%s, taille_lot=%d)",
             file.filename,
             len(produits),
         )
@@ -300,7 +310,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         rc = await tx.execute(UPSERT_SQL, produit_to_upsert_params(p))
                     except Exception:
                         logger.exception(
-                            "Échec UPSERT trppu_produit (file=%s, excel_row=%d, payload=%s)",
+                            "Échec UPSERT trppu_produit (fichier=%s, ligne_excel=%d, payload=%s)",
                             file.filename,
                             excel_row,
                             safe_preview(p.model_dump(mode="json")),
@@ -314,7 +324,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         nb_unchanged += 1
         except Exception as e:
             logger.exception(
-                "Erreur upsert lot trppu_produit (file=%s, batch_size=%d)",
+                "Erreur upsert lot trppu_produit (fichier=%s, taille_lot=%d)",
                 file.filename,
                 len(produits),
             )
@@ -325,7 +335,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
 
     duration_s = round(time.perf_counter() - start, 3)
     logger.info(
-        "upload_excel produits OK (file=%s, inserted=%d, updated=%d, unchanged=%d, errors=%d, duration_s=%.3f)",
+        "Upload Excel produits terminé (fichier=%s, insérés=%d, modifiés=%d, inchangés=%d, erreurs=%d, duration_s=%.3f)",
         file.filename,
         nb_inserted,
         nb_updated,

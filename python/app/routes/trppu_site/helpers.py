@@ -10,37 +10,18 @@ from pydantic import ValidationError
 
 from .schemas import BulkUploadError, SiteCreate
 
-EXPECTED_HEADERS = ["co_regate", "lb_regate", "lb_site", "type_site", "co_roc", "est_actif"]
-REQUIRED_HEADERS = ["co_regate", "lb_site", "type_site", "co_roc"]
+EXPECTED_HEADERS = ["co_regate", "lb_regate", "type_site", "co_roc"]
+REQUIRED_HEADERS = ["co_regate", "type_site", "co_roc"]
 
 
 UPSERT_SQL = (
-    "INSERT INTO trppu_site (co_regate, lb_regate, lb_site, type_site, co_roc, est_actif) "
-    "VALUES (%s, %s, %s, %s, %s, %s) "
+    "INSERT INTO trppu_site (co_regate, lb_regate, type_site, co_roc) "
+    "VALUES (%s, %s, %s, %s) "
     "ON DUPLICATE KEY UPDATE "
     "lb_regate = VALUES(lb_regate), "
-    "lb_site = VALUES(lb_site), "
     "type_site = VALUES(type_site), "
-    "co_roc = VALUES(co_roc), "
-    "est_actif = VALUES(est_actif)"
+    "co_roc = VALUES(co_roc)"
 )
-
-
-def _normalize_est_actif(value: Any) -> bool:
-    """Accepte 0/1, True/False, '0'/'1', 'oui'/'non', 'true'/'false', vide → True."""
-    if value is None or value == "":
-        return True
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return int(value) == 1
-    if isinstance(value, str):
-        v = value.strip().lower()
-        if v in {"1", "true", "vrai", "oui", "yes", "y", "o", "actif"}:
-            return True
-        if v in {"0", "false", "faux", "non", "no", "n", "inactif"}:
-            return False
-    raise ValueError(f"Valeur est_actif invalide : {value!r}")
 
 
 def _normalize_co(value: Any) -> str:
@@ -56,8 +37,8 @@ def parse_excel_sites(content: bytes) -> tuple[list[SiteCreate], list[BulkUpload
     """Lit un fichier Excel et retourne (sites valides, erreurs par ligne).
 
     Format attendu : première feuille, ligne 1 = en-têtes, ligne 2+ = données.
-    Les en-têtes doivent contenir au moins : co_regate, lb_site, type_site, co_roc.
-    La colonne est_actif est optionnelle (défaut True).
+    Les en-têtes obligatoires sont : co_regate, type_site, co_roc.
+    La colonne lb_regate est optionnelle.
     """
     wb = load_workbook(BytesIO(content), data_only=True, read_only=True)
     ws = wb.worksheets[0]
@@ -97,10 +78,10 @@ def parse_excel_sites(content: bytes) -> tuple[list[SiteCreate], list[BulkUpload
                     if raw.get("lb_regate") not in (None, "")
                     else None
                 ),
-                "lb_site": (str(raw["lb_site"]).strip() if raw.get("lb_site") is not None else ""),
-                "type_site": (str(raw["type_site"]).strip() if raw.get("type_site") is not None else None),
+                "type_site": (
+                    str(raw["type_site"]).strip() if raw.get("type_site") is not None else None
+                ),
                 "co_roc": _normalize_co(raw.get("co_roc")),
-                "est_actif": _normalize_est_actif(raw.get("est_actif")),
             }
             site = SiteCreate.model_validate(payload)
             valid.append(site)
@@ -121,8 +102,6 @@ def site_to_upsert_params(site: SiteCreate) -> tuple:
     return (
         site.co_regate,
         site.lb_regate,
-        site.lb_site,
         site.type_site,
         site.co_roc,
-        1 if site.est_actif else 0,
     )

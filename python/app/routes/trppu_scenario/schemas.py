@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CO_REGATE_PATTERN = r"^[A-Za-z0-9]{6}$"
 
-Statut = Literal["BROUILLON", "SIMULATION", "VALIDE", "PRODUCTION", "ARCHIVE"]
+Statut = Literal["EN COURS", "SIMULATION", "VALIDE", "VEROUILLE", "ARCHIVE"]
 NbJours = Literal[5, 6]
 
 
@@ -24,7 +24,9 @@ class ScenarioCreate(ScenarioBase):
     nb_jours_semaine : 5 par défaut, contraint à {5, 6}.
     id_pic_version : si non fourni, résolu côté serveur (premier est_par_defaut=1, fallback 1).
     Périodes principales : si None, today-1an / today+1an.
-    statut, version_scenario, est_fige : forcés à BROUILLON / 1 / False.
+    Les colonnes periode_realise_*/periode_prev_* sont **dérivées serveur** depuis
+    (periode_debut, periode_fin, today) et ne sont pas acceptées dans le body.
+    statut, version_scenario, est_fige : forcés côté serveur à EN COURS / 1 / False.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -33,28 +35,11 @@ class ScenarioCreate(ScenarioBase):
     id_pic_version: Optional[int] = Field(None, gt=0)
     periode_debut: Optional[date] = None
     periode_fin: Optional[date] = None
-    periode_realise_debut: Optional[date] = None
-    periode_realise_fin: Optional[date] = None
-    periode_prev_debut: Optional[date] = None
-    periode_prev_fin: Optional[date] = None
-    id_scenario_parent: Optional[int] = Field(None, gt=0)
 
     @model_validator(mode="after")
     def _check_periodes(self):
         if self.periode_debut and self.periode_fin and self.periode_fin < self.periode_debut:
             raise ValueError("periode_fin doit être >= periode_debut")
-        if (
-            self.periode_realise_debut
-            and self.periode_realise_fin
-            and self.periode_realise_fin < self.periode_realise_debut
-        ):
-            raise ValueError("periode_realise_fin doit être >= periode_realise_debut")
-        if (
-            self.periode_prev_debut
-            and self.periode_prev_fin
-            and self.periode_prev_fin < self.periode_prev_debut
-        ):
-            raise ValueError("periode_prev_fin doit être >= periode_prev_debut")
         return self
 
 
@@ -80,21 +65,16 @@ class ScenarioOut(BaseModel):
     nb_jours_semaine: int
     id_pic_version: int
     version_scenario: int
-    id_scenario_parent: Optional[int] = None
     est_fige: bool
 
 
 class PeriodeUpdate(BaseModel):
-    """PATCH /periodes : MAJ partielle des bornes de période."""
+    """PATCH /periodes : MAJ des bornes principales (realise/prev recalculés serveur)."""
 
     model_config = ConfigDict(extra="forbid")
 
     periode_debut: Optional[date] = None
     periode_fin: Optional[date] = None
-    periode_realise_debut: Optional[date] = None
-    periode_realise_fin: Optional[date] = None
-    periode_prev_debut: Optional[date] = None
-    periode_prev_fin: Optional[date] = None
 
     @model_validator(mode="after")
     def _at_least_one(self):

@@ -1,4 +1,4 @@
-"""Helpers pour trppu_scenario : SQL constants, FK checks, défauts métier."""
+"""Helpers pour trppu_scenario : SQL constants, défauts métier, recalcul des bornes."""
 
 from datetime import date, timedelta
 from typing import Any
@@ -11,15 +11,48 @@ SELECT_SCENARIO_SQL = (
     "SELECT id_scenario, co_regate, lb_scenario, co_roc, statut, dt_creation, "
     "dt_validation, dt_mise_en_prod, periode_debut, periode_fin, "
     "periode_realise_debut, periode_realise_fin, periode_prev_debut, periode_prev_fin, "
-    "nb_jours_semaine, id_pic_version, version_scenario, id_scenario_parent, est_fige "
+    "nb_jours_semaine, id_pic_version, version_scenario, est_fige "
     "FROM trppu_scenario"
 )
 
 
 def default_periode() -> tuple[date, date]:
-    """Période par défaut : today - 1 an → today + 1 an."""
+    """Période par défaut : today - 1 an a today + 1 an."""
     today = date.today()
     return today - timedelta(days=365), today + timedelta(days=365)
+
+
+def recompute_realise_prev(
+    periode_debut: date,
+    periode_fin: date,
+    today: date | None = None,
+) -> tuple[date | None, date | None, date | None, date | None]:
+    """Recalcule les bornes réalisé / prévision en fonction de la période et de today.
+
+    Renvoie (realise_debut, realise_fin, prev_debut, prev_fin).
+
+    Règles :
+    - La portion réalisée (passée + présent) = [periode_debut, min(today, periode_fin)]
+      si periode_debut <= today, sinon (None, None).
+    - La portion prévision (futur + présent) = [max(today, periode_debut), periode_fin]
+      si periode_fin >= today, sinon (None, None).
+    - Cas où today est dans la période : realise_fin == prev_debut == today
+      (les deux périodes se touchent sur la journée du jour).
+    """
+    today = today or date.today()
+    if periode_debut <= today:
+        realise_debut = periode_debut
+        realise_fin = min(today, periode_fin)
+    else:
+        realise_debut = None
+        realise_fin = None
+    if periode_fin >= today:
+        prev_debut = max(today, periode_debut)
+        prev_fin = periode_fin
+    else:
+        prev_debut = None
+        prev_fin = None
+    return realise_debut, realise_fin, prev_debut, prev_fin
 
 
 async def resolve_default_pic_version() -> int:
@@ -63,7 +96,7 @@ def assert_not_fige(scenario: dict[str, Any]) -> None:
 
     Le PATCH /est-fige est la seule manière de défiger ; il n'utilise donc pas ce check.
     Le PATCH /statut a sa propre logique (transitions autorisées) et ne se sert pas non plus
-    de ce check : un scénario PRODUCTION reste archivable.
+    de ce check : un scénario VEROUILLE reste archivable.
     """
     if scenario.get("est_fige"):
         raise HTTPException(

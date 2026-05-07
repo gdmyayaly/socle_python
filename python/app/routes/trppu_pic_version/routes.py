@@ -54,7 +54,7 @@ async def list_pic_versions(
         "limit": limit,
         "offset": offset,
     }
-    logger.info("→ list_pic_versions (filters=%s)", safe_preview(filters))
+    logger.info("Début listing des versions PIC (filtres=%s)", safe_preview(filters))
 
     where: list[str] = []
     params: list = []
@@ -79,12 +79,16 @@ async def list_pic_versions(
     try:
         rows = await db_read.fetch_all(sql, tuple(params))
     except Exception as e:
-        logger.exception("Erreur listing pic_versions (filters=%s)", safe_preview(filters))
+        logger.exception(
+            "Erreur listing des versions PIC (filtres=%s)", safe_preview(filters)
+        )
         raise HTTPException(status_code=500, detail="Erreur listing pic_versions.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "list_pic_versions OK (count=%d, duration_ms=%.1f)", len(rows), duration_ms
+        "Listing des versions PIC terminé (count=%d, duration_ms=%.1f)",
+        len(rows),
+        duration_ms,
     )
     return rows
 
@@ -92,31 +96,33 @@ async def list_pic_versions(
 @router.get("/enums")
 async def list_enums():
     """Valeurs autorisées pour les colonnes ENUM de trppu_pic_version."""
-    logger.info("→ list_enums pic_version")
+    logger.info("Récupération des enums versions PIC")
     return {"niveau": [e.value for e in NiveauEnum]}
 
 
 @router.get("/{id_pic_version}", response_model=PicVersionOut)
 async def get_pic_version(id_pic_version: int):
     start = time.perf_counter()
-    logger.info("→ get_pic_version (id_pic_version=%d)", id_pic_version)
+    logger.info("Début récupération version PIC (id_pic_version=%d)", id_pic_version)
 
     try:
         row = await db_read.fetch_one(
             SELECT_PICV_SQL + " WHERE id_pic_version = %s", (id_pic_version,)
         )
     except Exception as e:
-        logger.exception("Erreur get pic_version (id_pic_version=%d)", id_pic_version)
+        logger.exception(
+            "Erreur récupération version PIC (id_pic_version=%d)", id_pic_version
+        )
         raise HTTPException(status_code=500, detail="Erreur récupération PIC version.") from e
     if not row:
-        logger.info("get_pic_version 404 (id_pic_version=%d)", id_pic_version)
+        logger.info("Version PIC introuvable (id_pic_version=%d)", id_pic_version)
         raise HTTPException(
             status_code=404, detail=f"PIC version {id_pic_version} introuvable."
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "get_pic_version OK (id_pic_version=%d, duration_ms=%.1f)",
+        "Récupération version PIC terminée (id_pic_version=%d, duration_ms=%.1f)",
         id_pic_version,
         duration_ms,
     )
@@ -127,7 +133,7 @@ async def get_pic_version(id_pic_version: int):
 async def create_pic_version(payload: PicVersionCreate):
     start = time.perf_counter()
     logger.info(
-        "→ create_pic_version (co_regate=%s, niveau=%s, payload=%s)",
+        "Début création version PIC (co_regate=%s, niveau=%s, payload=%s)",
         payload.co_regate,
         payload.niveau.value,
         safe_preview(payload.model_dump(mode="json")),
@@ -141,14 +147,14 @@ async def create_pic_version(payload: PicVersionCreate):
             )
     except Exception as e:
         logger.exception(
-            "Erreur création pic_version (payload=%s)",
+            "Erreur création version PIC (payload=%s)",
             safe_preview(payload.model_dump(mode="json")),
         )
         raise HTTPException(status_code=500, detail="Erreur création PIC version.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "create_pic_version OK (id_pic_version=%d, co_regate=%s, duration_ms=%.1f)",
+        "Création version PIC terminée (id_pic_version=%d, co_regate=%s, duration_ms=%.1f)",
         new_row["id_pic_version"],
         new_row["co_regate"],
         duration_ms,
@@ -161,7 +167,7 @@ async def update_pic_version(id_pic_version: int, payload: PicVersionUpdate):
     start = time.perf_counter()
     fields = payload.model_dump(exclude_unset=True)
     logger.info(
-        "→ update_pic_version (id_pic_version=%d, fields=%s)",
+        "Début mise à jour version PIC (id_pic_version=%d, champs=%s)",
         id_pic_version,
         safe_preview(fields),
     )
@@ -174,7 +180,9 @@ async def update_pic_version(id_pic_version: int, payload: PicVersionUpdate):
         (id_pic_version,),
     )
     if not existing:
-        logger.info("update_pic_version 404 (id_pic_version=%d)", id_pic_version)
+        logger.info(
+            "Version PIC introuvable pour mise à jour (id_pic_version=%d)", id_pic_version
+        )
         raise HTTPException(
             status_code=404, detail=f"PIC version {id_pic_version} introuvable."
         )
@@ -206,7 +214,7 @@ async def update_pic_version(id_pic_version: int, payload: PicVersionUpdate):
         )
     except Exception as e:
         logger.exception(
-            "Erreur update pic_version (id_pic_version=%d, fields=%s)",
+            "Erreur mise à jour version PIC (id_pic_version=%d, champs=%s)",
             id_pic_version,
             safe_preview(fields),
         )
@@ -219,7 +227,7 @@ async def update_pic_version(id_pic_version: int, payload: PicVersionUpdate):
     )
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "update_pic_version OK (id_pic_version=%d, fields_updated=%d, duration_ms=%.1f)",
+        "Mise à jour version PIC terminée (id_pic_version=%d, nb_champs=%d, duration_ms=%.1f)",
         id_pic_version,
         len(fields),
         duration_ms,
@@ -234,7 +242,7 @@ async def soft_delete_pic_version(
 ):
     start = time.perf_counter()
     logger.info(
-        "→ soft_delete_pic_version (id_pic_version=%d, motif=%s)",
+        "Début désactivation version PIC (id_pic_version=%d, motif=%s)",
         id_pic_version,
         safe_preview(motif),
     )
@@ -244,7 +252,10 @@ async def soft_delete_pic_version(
         (id_pic_version,),
     )
     if not existing:
-        logger.info("soft_delete_pic_version 404 (id_pic_version=%d)", id_pic_version)
+        logger.info(
+            "Version PIC introuvable pour désactivation (id_pic_version=%d)",
+            id_pic_version,
+        )
         raise HTTPException(
             status_code=404, detail=f"PIC version {id_pic_version} introuvable."
         )
@@ -252,7 +263,7 @@ async def soft_delete_pic_version(
     now = datetime.now()
     if now <= existing["dt_activation"]:
         logger.info(
-            "soft_delete_pic_version 422 (id_pic_version=%d, dt_activation=%s in the future)",
+            "Désactivation refusée : dt_activation dans le futur (id_pic_version=%d, dt_activation=%s)",
             id_pic_version,
             existing["dt_activation"],
         )
@@ -271,7 +282,7 @@ async def soft_delete_pic_version(
         )
     except Exception as e:
         logger.exception(
-            "Erreur soft delete pic_version (id_pic_version=%d, motif=%s)",
+            "Erreur désactivation version PIC (id_pic_version=%d, motif=%s)",
             id_pic_version,
             safe_preview(motif),
         )
@@ -281,7 +292,7 @@ async def soft_delete_pic_version(
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "soft_delete_pic_version OK (id_pic_version=%d, dt_desactivation=%s, duration_ms=%.1f)",
+        "Désactivation version PIC terminée (id_pic_version=%d, dt_desactivation=%s, duration_ms=%.1f)",
         id_pic_version,
         now,
         duration_ms,
@@ -298,7 +309,7 @@ async def soft_delete_pic_version(
 async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")):
     """Upload massif via Excel : INSERT-only (PK auto-incrément)."""
     start = time.perf_counter()
-    logger.info("→ upload_excel pic_versions (file=%s)", file.filename)
+    logger.info("Début upload Excel versions PIC (fichier=%s)", file.filename)
 
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(
@@ -310,7 +321,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
     if not content:
         raise HTTPException(status_code=400, detail="Fichier vide.")
     logger.info(
-        "... upload_excel pic_versions file read (file=%s, size=%d bytes)",
+        "Fichier Excel versions PIC lu (fichier=%s, taille=%d octets)",
         file.filename,
         len(content),
     )
@@ -319,20 +330,20 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
         pic_versions, errors = parse_excel_pic_versions(content)
     except ValueError as e:
         logger.info(
-            "upload_excel pic_versions 400 (file=%s, reason=%s)",
+            "Excel versions PIC invalide (fichier=%s, raison=%s)",
             file.filename,
             safe_preview(str(e), max_len=200),
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception(
-            "Erreur parsing Excel pic_versions (file=%s, size=%d)",
+            "Erreur parsing Excel versions PIC (fichier=%s, taille=%d)",
             file.filename,
             len(content),
         )
         raise HTTPException(status_code=500, detail="Erreur lecture Excel.") from e
     logger.info(
-        "... upload_excel pic_versions parsed (file=%s, valid=%d, errors=%d)",
+        "Excel versions PIC parsé (fichier=%s, valides=%d, erreurs=%d)",
         file.filename,
         len(pic_versions),
         len(errors),
@@ -341,7 +352,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
     nb_inserted = 0
     if pic_versions:
         logger.info(
-            "... upload_excel pic_versions transaction open (file=%s, batch_size=%d)",
+            "Ouverture transaction insertion versions PIC (fichier=%s, taille_lot=%d)",
             file.filename,
             len(pic_versions),
         )
@@ -353,7 +364,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         nb_inserted += 1
                     except Exception:
                         logger.exception(
-                            "Échec INSERT trppu_pic_version (file=%s, excel_row=%d, payload=%s)",
+                            "Échec INSERT trppu_pic_version (fichier=%s, ligne_excel=%d, payload=%s)",
                             file.filename,
                             excel_row,
                             safe_preview(p.model_dump(mode="json")),
@@ -361,7 +372,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         raise
         except Exception as e:
             logger.exception(
-                "Erreur insert lot trppu_pic_version (file=%s, batch_size=%d)",
+                "Erreur insertion lot trppu_pic_version (fichier=%s, taille_lot=%d)",
                 file.filename,
                 len(pic_versions),
             )
@@ -372,7 +383,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
 
     duration_s = round(time.perf_counter() - start, 3)
     logger.info(
-        "upload_excel pic_versions OK (file=%s, inserted=%d, errors=%d, duration_s=%.3f)",
+        "Upload Excel versions PIC terminé (fichier=%s, insérés=%d, erreurs=%d, duration_s=%.3f)",
         file.filename,
         nb_inserted,
         len(errors),

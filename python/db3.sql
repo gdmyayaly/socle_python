@@ -21,14 +21,12 @@ DROP TABLE IF EXISTS `trppu_site`;
 CREATE TABLE `trppu_site` (
   `co_regate`        CHAR(6)        NOT NULL,
   `lb_regate`        VARCHAR(120)   DEFAULT NULL,
-  `lb_site`          VARCHAR(120)   NOT NULL,
   `type_site`        CHAR(5)        NOT NULL,
   `co_roc`           CHAR(6)        NOT NULL,
-  `est_actif`        TINYINT(1)     NOT NULL DEFAULT 1,
   `dt_maj`           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP
                                     ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`co_regate`),
-  KEY `idx_site_type` (`type_site`, `est_actif`),
+  KEY `idx_site_type` (`type_site`),
   KEY `idx_site_roc`  (`co_roc`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -177,8 +175,8 @@ CREATE TABLE `trppu_scenario` (
   `co_regate`               CHAR(6)        NOT NULL,
   `lb_scenario`             VARCHAR(50)    NOT NULL,
   `co_roc`                  CHAR(6)        NOT NULL,
-  `statut`                  ENUM('BROUILLON','SIMULATION','VALIDE',
-                                 'PRODUCTION','ARCHIVE') NOT NULL,
+  `statut`                  ENUM('EN COURS','SIMULATION','VALIDE',
+                                 'VEROUILLE','ARCHIVE') NOT NULL,
   `dt_creation`             DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `dt_validation`           DATETIME       DEFAULT NULL,
   `dt_mise_en_prod`         DATETIME       DEFAULT NULL,
@@ -191,18 +189,14 @@ CREATE TABLE `trppu_scenario` (
   `nb_jours_semaine`        TINYINT        NOT NULL,
   `id_pic_version`          INT            NOT NULL,
   `version_scenario`        INT            NOT NULL DEFAULT 1,
-  `id_scenario_parent`      BIGINT         DEFAULT NULL,
   `est_fige`                TINYINT(1)     NOT NULL DEFAULT 0,
   PRIMARY KEY (`id_scenario`),
   KEY `idx_scen_site_statut` (`co_regate`, `statut`),
   KEY `idx_scen_periode`     (`periode_debut`, `periode_fin`),
-  KEY `idx_scen_parent`      (`id_scenario_parent`),
   CONSTRAINT `fk_scen_site`    FOREIGN KEY (`co_regate`)
     REFERENCES `trppu_site`(`co_regate`)             ON DELETE RESTRICT,
   CONSTRAINT `fk_scen_picv`    FOREIGN KEY (`id_pic_version`)
     REFERENCES `trppu_pic_version`(`id_pic_version`) ON DELETE RESTRICT,
-  CONSTRAINT `fk_scen_parent`  FOREIGN KEY (`id_scenario_parent`)
-    REFERENCES `trppu_scenario`(`id_scenario`)       ON DELETE SET NULL,
   CONSTRAINT `chk_scen_jours`        CHECK (`nb_jours_semaine` IN (5,6)),
   CONSTRAINT `chk_scen_periode`      CHECK (`periode_debut` <= `periode_fin`),
   CONSTRAINT `chk_scen_periode_real` CHECK (`periode_realise_debut` IS NULL

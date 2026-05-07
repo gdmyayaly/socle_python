@@ -10,10 +10,8 @@ CO_REGATE_PATTERN = r"^[A-Za-z0-9]{6}$"
 class SiteBase(BaseModel):
     co_regate: str = Field(..., min_length=6, max_length=6, pattern=CO_REGATE_PATTERN)
     lb_regate: str | None = Field(None, max_length=120)
-    lb_site: str = Field(..., min_length=1, max_length=120)
     type_site: str = Field(..., min_length=1, max_length=5)
     co_roc: str = Field(..., min_length=6, max_length=6, pattern=CO_REGATE_PATTERN)
-    est_actif: bool = True
 
 
 class SiteCreate(SiteBase):
@@ -28,10 +26,8 @@ class SiteUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     lb_regate: str | None = Field(None, max_length=120)
-    lb_site: str | None = Field(None, min_length=1, max_length=120)
     type_site: str | None = Field(None, min_length=1, max_length=5)
     co_roc: str | None = Field(None, min_length=6, max_length=6, pattern=CO_REGATE_PATTERN)
-    est_actif: bool | None = None
 
 
 class SiteOut(SiteBase):
@@ -40,12 +36,6 @@ class SiteOut(SiteBase):
     model_config = ConfigDict(from_attributes=True)
 
     dt_maj: datetime
-
-
-class SoftDeleteResult(BaseModel):
-    co_regate: str
-    est_actif: int = 0
-    rows_affected: int
 
 
 class BulkUploadError(BaseModel):

@@ -34,11 +34,11 @@ async def download_latest_log():
     le fichier en cours d'écriture si l'application logge dans un fichier.
     """
     start = time.perf_counter()
-    logger.info("→ download_latest_log")
+    logger.info("Début téléchargement du dernier log")
 
     logs_dir = _get_logs_dir()
     if not logs_dir.exists():
-        logger.info("← download_latest_log 404 (logs_dir absent: %s)", logs_dir)
+        logger.info("Dossier de logs introuvable (logs_dir=%s)", logs_dir)
         raise HTTPException(
             status_code=404,
             detail=f"Dossier de logs introuvable : {logs_dir}",
@@ -46,7 +46,7 @@ async def download_latest_log():
 
     log_files = _list_log_files(logs_dir)
     if not log_files:
-        logger.info("← download_latest_log 404 (aucun .log dans %s)", logs_dir)
+        logger.info("Aucun fichier .log dans le dossier (logs_dir=%s)", logs_dir)
         raise HTTPException(
             status_code=404,
             detail=f"Aucun fichier .log dans {logs_dir}",
@@ -56,7 +56,7 @@ async def download_latest_log():
     size = latest.stat().st_size
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "← download_latest_log OK (file=%s, size=%d bytes, duration_ms=%.1f)",
+        "Téléchargement du dernier log servi (fichier=%s, taille=%d octets, duration_ms=%.1f)",
         latest.name,
         size,
         duration_ms,
@@ -87,11 +87,11 @@ async def clean_logs(
     reste — utile sous Windows où un handler ouvert peut empêcher la suppression.
     """
     start = time.perf_counter()
-    logger.info("→ clean_logs (keep_today=%s)", keep_today)
+    logger.info("Début nettoyage des logs (keep_today=%s)", keep_today)
 
     logs_dir = _get_logs_dir()
     if not logs_dir.exists():
-        logger.info("← clean_logs 404 (logs_dir absent: %s)", logs_dir)
+        logger.info("Dossier de logs introuvable (logs_dir=%s)", logs_dir)
         raise HTTPException(
             status_code=404,
             detail=f"Dossier de logs introuvable : {logs_dir}",
@@ -112,7 +112,7 @@ async def clean_logs(
                 truncated.append(log_file.name)
             except OSError as e:
                 logger.exception(
-                    "Échec truncate du log courant (file=%s)", log_file.name
+                    "Échec troncature du log courant (fichier=%s)", log_file.name
                 )
                 errors.append({"file": log_file.name, "error": str(e)})
         else:
@@ -121,13 +121,13 @@ async def clean_logs(
                 deleted.append(log_file.name)
             except OSError as e:
                 logger.exception(
-                    "Échec suppression du log (file=%s)", log_file.name
+                    "Échec suppression du log (fichier=%s)", log_file.name
                 )
                 errors.append({"file": log_file.name, "error": str(e)})
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "← clean_logs OK (deleted=%d, truncated=%d, errors=%d, duration_ms=%.1f)",
+        "Nettoyage des logs terminé (supprimés=%d, tronqués=%d, erreurs=%d, duration_ms=%.1f)",
         len(deleted),
         len(truncated),
         len(errors),
