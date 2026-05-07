@@ -12,8 +12,6 @@ from app.routes import health as health_routes
 from app.routes import calcl_nbr_jours as calcl_nbr_jours_routes
 from app.routes import mysql_debug as mysql_debug_routes
 from app.routes import trafics as trafics_routes
-from app.routes.trppu_agrebal import router as trppu_agrebal_router
-from app.routes.trppu_pdi import router as trppu_pdi_router
 from app.routes.trppu_pic_coefficients import router as trppu_pic_coefficients_router
 from app.routes.trppu_pic_version import router as trppu_pic_version_router
 from app.routes.trppu_produit import router as trppu_produit_router
@@ -38,7 +36,17 @@ app = FastAPI(title="trppu API YS04", description="API de test trppu YS04", life
 async def log_requests(request: Request, call_next):
     start = time.time()
     log.info(">>> %s %s", request.method, request.url.path)
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.time() - start) * 1000
+        log.exception(
+            "<<< %s %s 500 (%.1fms) — UNHANDLED",
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
     duration_ms = (time.time() - start) * 1000
     log.info(
         "<<< %s %s %d (%.1fms)",
@@ -57,8 +65,6 @@ app.include_router(trafics_routes.router)
 app.include_router(calcl_nbr_jours_routes.router)
 app.include_router(trppu_site_router)
 app.include_router(trppu_produit_router)
-app.include_router(trppu_pdi_router)
-app.include_router(trppu_agrebal_router)
 app.include_router(trppu_pic_version_router)
 app.include_router(trppu_pic_coefficients_router)
 app.include_router(trppu_scenario_router)

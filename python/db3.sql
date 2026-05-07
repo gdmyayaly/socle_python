@@ -32,38 +32,6 @@ CREATE TABLE `trppu_site` (
   KEY `idx_site_roc`  (`co_roc`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Référentiel des PDI (donnée a chargée qui reference les pdi (NB : Id qui venanait dans nos table sans table source) )
-DROP TABLE IF EXISTS `trppu_pdi`;
-CREATE TABLE `trppu_pdi` (
-  `id_pdi`           BIGINT         NOT NULL,
-  `co_regate`        CHAR(6)        NOT NULL,
-  `lb_pdi`           VARCHAR(150)   DEFAULT NULL,
-  `est_actif`        TINYINT(1)     NOT NULL DEFAULT 1,
-  `dt_maj`           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                    ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id_pdi`),
-  KEY `idx_pdi_site` (`co_regate`),
-  CONSTRAINT `fk_pdi_site` FOREIGN KEY (`co_regate`)
-    REFERENCES `trppu_site`(`co_regate`) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- Référentiel des agrégal (Renommage de AMS )
--- Definition Amas : Un amas est un regroupement géographique de pdi desservis de façon continue
-DROP TABLE IF EXISTS `trppu_agrebal`;
-CREATE TABLE `trppu_agrebal` (
-  `id_agrebal`       BIGINT         NOT NULL,
-  `co_regate`        CHAR(6)        NOT NULL,
-  `lb_agrebal`       VARCHAR(120)   DEFAULT NULL,
-  `est_actif`        TINYINT(1)     NOT NULL DEFAULT 1,
-  `dt_maj`           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                    ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id_agrebal`),
-  KEY `idx_agrebal_site` (`co_regate`),
-  CONSTRAINT `fk_agrebal_site` FOREIGN KEY (`co_regate`)
-    REFERENCES `trppu_site`(`co_regate`) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-
 -- =============================================================================
 --  01  trppu_produit Pour le référencement de tous les produits EX : (OO,Presse)
 -- =============================================================================
@@ -142,39 +110,6 @@ CREATE TABLE `trppu_pic_coefficients` (
 
 
 -- =============================================================================
---  04  trppu_agrebal_pdi
--- =============================================================================
-DROP TABLE IF EXISTS `trppu_agrebal_pdi`;
-CREATE TABLE `trppu_agrebal_pdi` (
-  `id_agrebal_pdi`         BIGINT         NOT NULL AUTO_INCREMENT,
-  `id_agrebal`             BIGINT         NOT NULL,
-  `id_pdi`                 BIGINT         NOT NULL,
-  `co_regate`              CHAR(6)        NOT NULL,
-  `dt_debut_rattachement`  DATE           NOT NULL,
-  `dt_fin_rattachement`    DATE           DEFAULT NULL,
-  `dt_creation`            DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `dt_maj`                 DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                          ON UPDATE CURRENT_TIMESTAMP,
-  `id_rh_creation`         VARCHAR(40)    DEFAULT NULL,
-  `id_rh_maj`              VARCHAR(40)    DEFAULT NULL,
-  PRIMARY KEY (`id_agrebal_pdi`),
-  UNIQUE KEY `uq_agrpdi_courant` (`id_agrebal`, `id_pdi`, `dt_debut_rattachement`),
-  KEY `idx_agrpdi_pdi`   (`id_pdi`),
-  KEY `idx_agrpdi_site`  (`co_regate`),
-  KEY `idx_agrpdi_actif` (`dt_fin_rattachement`),
-  CONSTRAINT `fk_agrpdi_agr`  FOREIGN KEY (`id_agrebal`)
-    REFERENCES `trppu_agrebal`(`id_agrebal`) ON DELETE RESTRICT,
-  CONSTRAINT `fk_agrpdi_pdi`  FOREIGN KEY (`id_pdi`)
-    REFERENCES `trppu_pdi`(`id_pdi`) ON DELETE RESTRICT,
-  CONSTRAINT `fk_agrpdi_site` FOREIGN KEY (`co_regate`)
-    REFERENCES `trppu_site`(`co_regate`) ON DELETE RESTRICT,
-  CONSTRAINT `chk_agrpdi_dates`
-    CHECK (`dt_fin_rattachement` IS NULL
-           OR `dt_fin_rattachement` >= `dt_debut_rattachement`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-
--- =============================================================================
 --  05  trppu_cles_repartition 
 --  rajout de id_cle_repartition (clé primaire), version(pour le versionning)
 --  dt_effet, dt_fin_effet : 
@@ -210,8 +145,6 @@ CREATE TABLE `trppu_cles_repartition` (
   PRIMARY KEY (`id_cle_repartition`),
   UNIQUE KEY `uq_cles_pdi_eff` (`id_pdi`, `dt_effet`),
   KEY `idx_cles_pdi_actif` (`id_pdi`, `dt_fin_effet`),
-  CONSTRAINT `fk_cles_pdi` FOREIGN KEY (`id_pdi`)
-    REFERENCES `trppu_pdi`(`id_pdi`) ON DELETE RESTRICT,
   CONSTRAINT `chk_cles_dates`
     CHECK (`dt_fin_effet` IS NULL OR `dt_fin_effet` > `dt_effet`),
   CONSTRAINT `chk_cles_pcts` CHECK (

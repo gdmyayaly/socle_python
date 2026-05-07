@@ -47,21 +47,6 @@ async def resolve_default_pic_version() -> int:
     )
 
 
-async def site_exists(co_regate: str) -> bool:
-    row = await db_read.fetch_one(
-        "SELECT 1 AS ok FROM trppu_site WHERE co_regate = %s", (co_regate,)
-    )
-    return row is not None
-
-
-async def pic_version_exists(id_pic_version: int) -> bool:
-    row = await db_read.fetch_one(
-        "SELECT 1 AS ok FROM trppu_pic_version WHERE id_pic_version = %s",
-        (id_pic_version,),
-    )
-    return row is not None
-
-
 async def fetch_scenario_or_404(id_scenario: int) -> dict[str, Any]:
     row = await db_read.fetch_one(
         SELECT_SCENARIO_SQL + " WHERE id_scenario = %s", (id_scenario,)

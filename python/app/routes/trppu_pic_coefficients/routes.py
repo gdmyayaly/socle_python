@@ -7,6 +7,7 @@ from datetime import date
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from app.db.mysql import db_read, db_write
+from app.log_utils import safe_preview
 
 from .helpers import (
     UPSERT_SQL,
@@ -14,7 +15,6 @@ from .helpers import (
     pic_coef_to_upsert_params,
 )
 from .schemas import (
-    BulkUploadError,
     BulkUploadResult,
     JourSemaineEnum,
     PicCoefCreate,
@@ -36,21 +36,6 @@ SELECT_PICC_SQL = (
 )
 
 
-async def _pic_version_exists(id_pic_version: int) -> bool:
-    row = await db_read.fetch_one(
-        "SELECT 1 AS ok FROM trppu_pic_version WHERE id_pic_version = %s",
-        (id_pic_version,),
-    )
-    return row is not None
-
-
-async def _produit_exists(co_produit: str) -> bool:
-    row = await db_read.fetch_one(
-        "SELECT 1 AS ok FROM trppu_produit WHERE co_produit = %s", (co_produit,)
-    )
-    return row is not None
-
-
 @router.get("", response_model=list[PicCoefOut])
 async def list_pic_coefs(
     id_pic_version: int | None = Query(None, gt=0),
@@ -60,6 +45,17 @@ async def list_pic_coefs(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
+    start = time.perf_counter()
+    filters = {
+        "id_pic_version": id_pic_version,
+        "co_produit": co_produit,
+        "jour_semaine": jour_semaine,
+        "actif_only": actif_only,
+        "limit": limit,
+        "offset": offset,
+    }
+    logger.info("→ list_pic_coefs (filters=%s)", safe_preview(filters))
+
     where: list[str] = []
     params: list = []
     if id_pic_version is not None:
@@ -81,52 +77,65 @@ async def list_pic_coefs(
     params.extend([limit, offset])
 
     try:
-        return await db_read.fetch_all(sql, tuple(params))
+        rows = await db_read.fetch_all(sql, tuple(params))
     except Exception as e:
-        logger.error("Erreur listing pic_coefficients : %s", e)
+        logger.exception(
+            "Erreur listing pic_coefficients (filters=%s)", safe_preview(filters)
+        )
         raise HTTPException(
             status_code=500, detail="Erreur listing pic_coefficients."
         ) from e
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info("list_pic_coefs OK (count=%d, duration_ms=%.1f)", len(rows), duration_ms)
+    return rows
 
 
 @router.get("/enums")
 async def list_enums():
     """Valeurs autorisées pour les colonnes ENUM de trppu_pic_coefficients."""
+    logger.info("→ list_enums pic_coefficients")
     return {"jour_semaine": [e.value for e in JourSemaineEnum]}
 
 
 @router.get("/{id_pic_coef}", response_model=PicCoefOut)
 async def get_pic_coef(id_pic_coef: int):
+    start = time.perf_counter()
+    logger.info("→ get_pic_coef (id_pic_coef=%d)", id_pic_coef)
+
     try:
         row = await db_read.fetch_one(
             SELECT_PICC_SQL + " WHERE id_pic_coef = %s", (id_pic_coef,)
         )
     except Exception as e:
-        logger.error("Erreur get pic_coef %d : %s", id_pic_coef, e)
+        logger.exception("Erreur get pic_coef (id_pic_coef=%d)", id_pic_coef)
         raise HTTPException(
             status_code=500, detail="Erreur récupération coefficient."
         ) from e
     if not row:
+        logger.info("get_pic_coef 404 (id_pic_coef=%d)", id_pic_coef)
         raise HTTPException(
             status_code=404, detail=f"Coefficient {id_pic_coef} introuvable."
         )
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "get_pic_coef OK (id_pic_coef=%d, duration_ms=%.1f)", id_pic_coef, duration_ms
+    )
     return row
 
 
 @router.post("", response_model=PicCoefOut, status_code=status.HTTP_201_CREATED)
 async def create_pic_coef(payload: PicCoefCreate):
-    if not await _pic_version_exists(payload.id_pic_version):
-        raise HTTPException(
-            status_code=422,
-            detail=f"PIC version {payload.id_pic_version} inexistante dans trppu_pic_version.",
-        )
-    if not await _produit_exists(payload.co_produit):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Produit {payload.co_produit} inexistant dans trppu_produit.",
-        )
+    start = time.perf_counter()
+    logger.info(
+        "→ create_pic_coef (id_pic_version=%d, co_produit=%s, jour_semaine=%s, dt_effet=%s)",
+        payload.id_pic_version,
+        payload.co_produit,
+        payload.jour_semaine.value,
+        payload.dt_effet,
+    )
 
-    # Pré-check de la natural key uq_picc pour distinguer 409 / 500.
     duplicate = await db_read.fetch_one(
         "SELECT id_pic_coef FROM trppu_pic_coefficients "
         "WHERE id_pic_version = %s AND co_produit = %s "
@@ -139,6 +148,10 @@ async def create_pic_coef(payload: PicCoefCreate):
         ),
     )
     if duplicate:
+        logger.info(
+            "create_pic_coef 409 (existing id_pic_coef=%d for natural key)",
+            duplicate["id_pic_coef"],
+        )
         raise HTTPException(
             status_code=409,
             detail=(
@@ -147,6 +160,7 @@ async def create_pic_coef(payload: PicCoefCreate):
                 f"dt_effet={payload.dt_effet.isoformat()}) — id_pic_coef={duplicate['id_pic_coef']}."
             ),
         )
+    logger.info("... create_pic_coef natural-key check OK")
 
     try:
         async with db_write.transaction() as tx:
@@ -161,15 +175,31 @@ async def create_pic_coef(payload: PicCoefCreate):
                 SELECT_PICC_SQL + " WHERE id_pic_coef = LAST_INSERT_ID()"
             )
     except Exception as e:
-        logger.error("Erreur création pic_coef : %s", e)
+        logger.exception(
+            "Erreur création pic_coef (payload=%s)",
+            safe_preview(payload.model_dump(mode="json")),
+        )
         raise HTTPException(status_code=500, detail="Erreur création coefficient.") from e
 
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "create_pic_coef OK (id_pic_coef=%d, duration_ms=%.1f)",
+        new_row["id_pic_coef"],
+        duration_ms,
+    )
     return new_row
 
 
 @router.put("/{id_pic_coef}", response_model=PicCoefOut)
 async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
+    start = time.perf_counter()
     fields = payload.model_dump(exclude_unset=True)
+    logger.info(
+        "→ update_pic_coef (id_pic_coef=%d, fields=%s)",
+        id_pic_coef,
+        safe_preview(fields),
+    )
+
     if not fields:
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour.")
 
@@ -179,22 +209,11 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
         (id_pic_coef,),
     )
     if not existing:
+        logger.info("update_pic_coef 404 (id_pic_coef=%d)", id_pic_coef)
         raise HTTPException(
             status_code=404, detail=f"Coefficient {id_pic_coef} introuvable."
         )
 
-    if "id_pic_version" in fields and not await _pic_version_exists(fields["id_pic_version"]):
-        raise HTTPException(
-            status_code=422,
-            detail=f"PIC version {fields['id_pic_version']} inexistante dans trppu_pic_version.",
-        )
-    if "co_produit" in fields and not await _produit_exists(fields["co_produit"]):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Produit {fields['co_produit']} inexistant dans trppu_produit.",
-        )
-
-    # Cohérence dt_effet/dt_fin_effet après MAJ partielle.
     new_dt_effet = fields.get("dt_effet", existing["dt_effet"])
     if "dt_fin_effet" in fields and fields["dt_fin_effet"] is not None:
         if fields["dt_fin_effet"] <= new_dt_effet:
@@ -203,7 +222,6 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
                 detail="dt_fin_effet doit être strictement supérieure à dt_effet.",
             )
 
-    # Détection collision natural key uq_picc.
     nk_changed = any(k in fields for k in ("id_pic_version", "co_produit", "jour_semaine", "dt_effet"))
     if nk_changed:
         nk = {
@@ -224,10 +242,16 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
             (nk["id_pic_version"], nk["co_produit"], nk["jour_semaine"], nk["dt_effet"], id_pic_coef),
         )
         if collision:
+            logger.info(
+                "update_pic_coef 409 (id_pic_coef=%d collides with existing id_pic_coef=%d)",
+                id_pic_coef,
+                collision["id_pic_coef"],
+            )
             raise HTTPException(
                 status_code=409,
                 detail=f"La nouvelle clé naturelle entre en collision avec id_pic_coef={collision['id_pic_coef']}.",
             )
+        logger.info("... update_pic_coef natural-key collision check OK")
 
     set_parts: list[str] = []
     params: list = []
@@ -245,34 +269,51 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
             tuple(params),
         )
     except Exception as e:
-        logger.error("Erreur update pic_coef %d : %s", id_pic_coef, e)
+        logger.exception(
+            "Erreur update pic_coef (id_pic_coef=%d, fields=%s)",
+            id_pic_coef,
+            safe_preview(fields),
+        )
         raise HTTPException(
             status_code=500, detail="Erreur mise à jour coefficient."
         ) from e
 
-    return await db_read.fetch_one(
+    updated = await db_read.fetch_one(
         SELECT_PICC_SQL + " WHERE id_pic_coef = %s", (id_pic_coef,)
     )
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "update_pic_coef OK (id_pic_coef=%d, fields_updated=%d, duration_ms=%.1f)",
+        id_pic_coef,
+        len(fields),
+        duration_ms,
+    )
+    return updated
 
 
 @router.delete("/{id_pic_coef}", response_model=SoftDeleteResult)
 async def soft_delete_pic_coef(id_pic_coef: int):
-    """Soft delete : positionne dt_fin_effet = aujourd'hui (clôt la période).
+    """Soft delete : positionne dt_fin_effet = aujourd'hui (clôt la période)."""
+    start = time.perf_counter()
+    logger.info("→ soft_delete_pic_coef (id_pic_coef=%d)", id_pic_coef)
 
-    Échoue en 422 si dt_effet >= aujourd'hui (CHECK strict dt_fin_effet > dt_effet).
-    Dans ce cas, utiliser PUT pour fixer une dt_fin_effet postérieure à dt_effet.
-    """
     existing = await db_read.fetch_one(
         "SELECT id_pic_coef, dt_effet FROM trppu_pic_coefficients WHERE id_pic_coef = %s",
         (id_pic_coef,),
     )
     if not existing:
+        logger.info("soft_delete_pic_coef 404 (id_pic_coef=%d)", id_pic_coef)
         raise HTTPException(
             status_code=404, detail=f"Coefficient {id_pic_coef} introuvable."
         )
 
     today = date.today()
     if today <= existing["dt_effet"]:
+        logger.info(
+            "soft_delete_pic_coef 422 (id_pic_coef=%d, dt_effet=%s >= today)",
+            id_pic_coef,
+            existing["dt_effet"],
+        )
         raise HTTPException(
             status_code=422,
             detail="dt_effet est aujourd'hui ou dans le futur — impossible de clore par DELETE. "
@@ -285,11 +326,18 @@ async def soft_delete_pic_coef(id_pic_coef: int):
             (today, id_pic_coef),
         )
     except Exception as e:
-        logger.error("Erreur soft delete pic_coef %d : %s", id_pic_coef, e)
+        logger.exception("Erreur soft delete pic_coef (id_pic_coef=%d)", id_pic_coef)
         raise HTTPException(
             status_code=500, detail="Erreur clôture coefficient."
         ) from e
 
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "soft_delete_pic_coef OK (id_pic_coef=%d, dt_fin_effet=%s, duration_ms=%.1f)",
+        id_pic_coef,
+        today,
+        duration_ms,
+    )
     return SoftDeleteResult(
         id_pic_coef=id_pic_coef, dt_fin_effet=today, rows_affected=rows_affected
     )
@@ -297,15 +345,9 @@ async def soft_delete_pic_coef(id_pic_coef: int):
 
 @router.post("/upload-excel", response_model=BulkUploadResult)
 async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")):
-    """Upload massif via Excel : upsert sur la natural key uq_picc.
-
-    - Pré-vérifie que chaque `id_pic_version` existe dans trppu_pic_version
-      et chaque `co_produit` dans trppu_produit.
-    - Upsert via INSERT … ON DUPLICATE KEY UPDATE sur
-      (id_pic_version, co_produit, jour_semaine, dt_effet).
-    - Compteurs MySQL : rowcount=1 → insert, rowcount=2 → update, rowcount=0 → unchanged.
-    """
+    """Upload massif via Excel : upsert sur la natural key uq_picc."""
     start = time.perf_counter()
+    logger.info("→ upload_excel pic_coefficients (file=%s)", file.filename)
 
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(
@@ -316,57 +358,58 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Fichier vide.")
+    logger.info(
+        "... upload_excel pic_coefficients file read (file=%s, size=%d bytes)",
+        file.filename,
+        len(content),
+    )
 
     try:
         coefs, errors = parse_excel_pic_coefs(content)
     except ValueError as e:
+        logger.info(
+            "upload_excel pic_coefficients 400 (file=%s, reason=%s)",
+            file.filename,
+            safe_preview(str(e), max_len=200),
+        )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.error("Erreur parsing Excel pic_coefs : %s", e)
+        logger.exception(
+            "Erreur parsing Excel pic_coefs (file=%s, size=%d)",
+            file.filename,
+            len(content),
+        )
         raise HTTPException(status_code=500, detail="Erreur lecture Excel.") from e
-
-    valid_coefs: list = []
-    if coefs:
-        wanted_versions = {c.id_pic_version for c in coefs}
-        wanted_produits = {c.co_produit for c in coefs}
-
-        existing_v = await db_read.fetch_all(
-            f"SELECT id_pic_version FROM trppu_pic_version "
-            f"WHERE id_pic_version IN ({','.join(['%s'] * len(wanted_versions))})",
-            tuple(wanted_versions),
-        )
-        existing_p = await db_read.fetch_all(
-            f"SELECT co_produit FROM trppu_produit "
-            f"WHERE co_produit IN ({','.join(['%s'] * len(wanted_produits))})",
-            tuple(wanted_produits),
-        )
-        valid_versions = {r["id_pic_version"] for r in existing_v}
-        valid_produits = {r["co_produit"] for r in existing_p}
-
-        for i, c in enumerate(coefs, start=2):
-            problems = []
-            if c.id_pic_version not in valid_versions:
-                problems.append(f"id_pic_version {c.id_pic_version} inexistante")
-            if c.co_produit not in valid_produits:
-                problems.append(f"co_produit {c.co_produit} inexistant")
-            if problems:
-                errors.append(
-                    BulkUploadError(
-                        row=i, error=" / ".join(problems), raw=c.model_dump(mode="json")
-                    )
-                )
-            else:
-                valid_coefs.append(c)
+    logger.info(
+        "... upload_excel pic_coefficients parsed (file=%s, valid=%d, errors=%d)",
+        file.filename,
+        len(coefs),
+        len(errors),
+    )
 
     nb_inserted = 0
     nb_updated = 0
     nb_unchanged = 0
 
-    if valid_coefs:
+    if coefs:
+        logger.info(
+            "... upload_excel pic_coefficients transaction open (file=%s, batch_size=%d)",
+            file.filename,
+            len(coefs),
+        )
         try:
             async with db_write.transaction() as tx:
-                for c in valid_coefs:
-                    rc = await tx.execute(UPSERT_SQL, pic_coef_to_upsert_params(c))
+                for excel_row, c in enumerate(coefs, start=2):
+                    try:
+                        rc = await tx.execute(UPSERT_SQL, pic_coef_to_upsert_params(c))
+                    except Exception:
+                        logger.exception(
+                            "Échec UPSERT trppu_pic_coefficients (file=%s, excel_row=%d, payload=%s)",
+                            file.filename,
+                            excel_row,
+                            safe_preview(c.model_dump(mode="json")),
+                        )
+                        raise
                     if rc == 1:
                         nb_inserted += 1
                     elif rc == 2:
@@ -374,13 +417,26 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                     else:
                         nb_unchanged += 1
         except Exception as e:
-            logger.error("Erreur upsert lot trppu_pic_coefficients : %s", e)
+            logger.exception(
+                "Erreur upsert lot trppu_pic_coefficients (file=%s, batch_size=%d)",
+                file.filename,
+                len(coefs),
+            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Échec de l'écriture du lot en base : {e}",
             ) from e
 
     duration_s = round(time.perf_counter() - start, 3)
+    logger.info(
+        "upload_excel pic_coefficients OK (file=%s, inserted=%d, updated=%d, unchanged=%d, errors=%d, duration_s=%.3f)",
+        file.filename,
+        nb_inserted,
+        nb_updated,
+        nb_unchanged,
+        len(errors),
+        duration_s,
+    )
     return BulkUploadResult(
         nb_rows_read=len(coefs) + len([e for e in errors if e.row > 0]),
         nb_inserted=nb_inserted,

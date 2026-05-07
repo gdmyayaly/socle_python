@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from app.db.mysql import db_read, db_write
+from app.log_utils import safe_preview
 
 from .helpers import (
     INSERT_SQL,
@@ -14,7 +15,6 @@ from .helpers import (
     pic_version_to_insert_params,
 )
 from .schemas import (
-    BulkUploadError,
     BulkUploadResult,
     NiveauEnum,
     PicVersionCreate,
@@ -36,13 +36,6 @@ SELECT_PICV_SQL = (
 )
 
 
-async def _site_exists(co_regate: str) -> bool:
-    row = await db_read.fetch_one(
-        "SELECT 1 AS ok FROM trppu_site WHERE co_regate = %s", (co_regate,)
-    )
-    return row is not None
-
-
 @router.get("", response_model=list[PicVersionOut])
 async def list_pic_versions(
     co_regate: str | None = Query(None, min_length=6, max_length=6),
@@ -52,6 +45,17 @@ async def list_pic_versions(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
+    start = time.perf_counter()
+    filters = {
+        "co_regate": co_regate,
+        "niveau": niveau,
+        "actif_only": actif_only,
+        "est_par_defaut": est_par_defaut,
+        "limit": limit,
+        "offset": offset,
+    }
+    logger.info("→ list_pic_versions (filters=%s)", safe_preview(filters))
+
     where: list[str] = []
     params: list = []
     if co_regate is not None:
@@ -73,41 +77,61 @@ async def list_pic_versions(
     params.extend([limit, offset])
 
     try:
-        return await db_read.fetch_all(sql, tuple(params))
+        rows = await db_read.fetch_all(sql, tuple(params))
     except Exception as e:
-        logger.error("Erreur listing pic_versions : %s", e)
+        logger.exception("Erreur listing pic_versions (filters=%s)", safe_preview(filters))
         raise HTTPException(status_code=500, detail="Erreur listing pic_versions.") from e
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "list_pic_versions OK (count=%d, duration_ms=%.1f)", len(rows), duration_ms
+    )
+    return rows
 
 
 @router.get("/enums")
 async def list_enums():
     """Valeurs autorisées pour les colonnes ENUM de trppu_pic_version."""
+    logger.info("→ list_enums pic_version")
     return {"niveau": [e.value for e in NiveauEnum]}
 
 
 @router.get("/{id_pic_version}", response_model=PicVersionOut)
 async def get_pic_version(id_pic_version: int):
+    start = time.perf_counter()
+    logger.info("→ get_pic_version (id_pic_version=%d)", id_pic_version)
+
     try:
         row = await db_read.fetch_one(
             SELECT_PICV_SQL + " WHERE id_pic_version = %s", (id_pic_version,)
         )
     except Exception as e:
-        logger.error("Erreur get pic_version %d : %s", id_pic_version, e)
+        logger.exception("Erreur get pic_version (id_pic_version=%d)", id_pic_version)
         raise HTTPException(status_code=500, detail="Erreur récupération PIC version.") from e
     if not row:
+        logger.info("get_pic_version 404 (id_pic_version=%d)", id_pic_version)
         raise HTTPException(
             status_code=404, detail=f"PIC version {id_pic_version} introuvable."
         )
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "get_pic_version OK (id_pic_version=%d, duration_ms=%.1f)",
+        id_pic_version,
+        duration_ms,
+    )
     return row
 
 
 @router.post("", response_model=PicVersionOut, status_code=status.HTTP_201_CREATED)
 async def create_pic_version(payload: PicVersionCreate):
-    if not await _site_exists(payload.co_regate):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Site parent {payload.co_regate} inexistant dans trppu_site.",
-        )
+    start = time.perf_counter()
+    logger.info(
+        "→ create_pic_version (co_regate=%s, niveau=%s, payload=%s)",
+        payload.co_regate,
+        payload.niveau.value,
+        safe_preview(payload.model_dump(mode="json")),
+    )
 
     try:
         async with db_write.transaction() as tx:
@@ -116,15 +140,32 @@ async def create_pic_version(payload: PicVersionCreate):
                 SELECT_PICV_SQL + " WHERE id_pic_version = LAST_INSERT_ID()"
             )
     except Exception as e:
-        logger.error("Erreur création pic_version : %s", e)
+        logger.exception(
+            "Erreur création pic_version (payload=%s)",
+            safe_preview(payload.model_dump(mode="json")),
+        )
         raise HTTPException(status_code=500, detail="Erreur création PIC version.") from e
 
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "create_pic_version OK (id_pic_version=%d, co_regate=%s, duration_ms=%.1f)",
+        new_row["id_pic_version"],
+        new_row["co_regate"],
+        duration_ms,
+    )
     return new_row
 
 
 @router.put("/{id_pic_version}", response_model=PicVersionOut)
 async def update_pic_version(id_pic_version: int, payload: PicVersionUpdate):
+    start = time.perf_counter()
     fields = payload.model_dump(exclude_unset=True)
+    logger.info(
+        "→ update_pic_version (id_pic_version=%d, fields=%s)",
+        id_pic_version,
+        safe_preview(fields),
+    )
+
     if not fields:
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour.")
 
@@ -133,17 +174,11 @@ async def update_pic_version(id_pic_version: int, payload: PicVersionUpdate):
         (id_pic_version,),
     )
     if not existing:
+        logger.info("update_pic_version 404 (id_pic_version=%d)", id_pic_version)
         raise HTTPException(
             status_code=404, detail=f"PIC version {id_pic_version} introuvable."
         )
 
-    if "co_regate" in fields and not await _site_exists(fields["co_regate"]):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Site parent {fields['co_regate']} inexistant dans trppu_site.",
-        )
-
-    # Cohérence dt_activation/dt_desactivation après MAJ partielle
     new_dt_activation = fields.get("dt_activation", existing["dt_activation"])
     if "dt_desactivation" in fields and fields["dt_desactivation"] is not None:
         if fields["dt_desactivation"] <= new_dt_activation:
@@ -170,14 +205,26 @@ async def update_pic_version(id_pic_version: int, payload: PicVersionUpdate):
             tuple(params),
         )
     except Exception as e:
-        logger.error("Erreur update pic_version %d : %s", id_pic_version, e)
+        logger.exception(
+            "Erreur update pic_version (id_pic_version=%d, fields=%s)",
+            id_pic_version,
+            safe_preview(fields),
+        )
         raise HTTPException(
             status_code=500, detail="Erreur mise à jour PIC version."
         ) from e
 
-    return await db_read.fetch_one(
+    updated = await db_read.fetch_one(
         SELECT_PICV_SQL + " WHERE id_pic_version = %s", (id_pic_version,)
     )
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "update_pic_version OK (id_pic_version=%d, fields_updated=%d, duration_ms=%.1f)",
+        id_pic_version,
+        len(fields),
+        duration_ms,
+    )
+    return updated
 
 
 @router.delete("/{id_pic_version}", response_model=SoftDeleteResult)
@@ -185,21 +232,30 @@ async def soft_delete_pic_version(
     id_pic_version: int,
     motif: str = Query("Désactivé via API", max_length=255),
 ):
-    """Soft delete : positionne dt_desactivation = NOW() + motif_desactivation.
+    start = time.perf_counter()
+    logger.info(
+        "→ soft_delete_pic_version (id_pic_version=%d, motif=%s)",
+        id_pic_version,
+        safe_preview(motif),
+    )
 
-    Échoue si dt_activation est dans le futur (CHECK strict dt_desactivation > dt_activation).
-    """
     existing = await db_read.fetch_one(
         "SELECT id_pic_version, dt_activation FROM trppu_pic_version WHERE id_pic_version = %s",
         (id_pic_version,),
     )
     if not existing:
+        logger.info("soft_delete_pic_version 404 (id_pic_version=%d)", id_pic_version)
         raise HTTPException(
             status_code=404, detail=f"PIC version {id_pic_version} introuvable."
         )
 
     now = datetime.now()
     if now <= existing["dt_activation"]:
+        logger.info(
+            "soft_delete_pic_version 422 (id_pic_version=%d, dt_activation=%s in the future)",
+            id_pic_version,
+            existing["dt_activation"],
+        )
         raise HTTPException(
             status_code=422,
             detail="dt_activation est dans le futur — impossible de désactiver maintenant. "
@@ -214,11 +270,22 @@ async def soft_delete_pic_version(
             (now, motif, id_pic_version),
         )
     except Exception as e:
-        logger.error("Erreur soft delete pic_version %d : %s", id_pic_version, e)
+        logger.exception(
+            "Erreur soft delete pic_version (id_pic_version=%d, motif=%s)",
+            id_pic_version,
+            safe_preview(motif),
+        )
         raise HTTPException(
             status_code=500, detail="Erreur désactivation PIC version."
         ) from e
 
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "soft_delete_pic_version OK (id_pic_version=%d, dt_desactivation=%s, duration_ms=%.1f)",
+        id_pic_version,
+        now,
+        duration_ms,
+    )
     return SoftDeleteResult(
         id_pic_version=id_pic_version,
         dt_desactivation=now,
@@ -229,13 +296,9 @@ async def soft_delete_pic_version(
 
 @router.post("/upload-excel", response_model=BulkUploadResult)
 async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")):
-    """Upload massif via Excel : INSERT-only (PK auto-incrément).
-
-    - Pré-vérifie que chaque `co_regate` existe dans trppu_site.
-    - Les lignes invalides sont collectées dans `errors`.
-    - Les nouvelles versions reçoivent un `id_pic_version` auto-généré côté base.
-    """
+    """Upload massif via Excel : INSERT-only (PK auto-incrément)."""
     start = time.perf_counter()
+    logger.info("→ upload_excel pic_versions (file=%s)", file.filename)
 
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(
@@ -246,51 +309,75 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Fichier vide.")
+    logger.info(
+        "... upload_excel pic_versions file read (file=%s, size=%d bytes)",
+        file.filename,
+        len(content),
+    )
 
     try:
         pic_versions, errors = parse_excel_pic_versions(content)
     except ValueError as e:
+        logger.info(
+            "upload_excel pic_versions 400 (file=%s, reason=%s)",
+            file.filename,
+            safe_preview(str(e), max_len=200),
+        )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.error("Erreur parsing Excel pic_versions : %s", e)
-        raise HTTPException(status_code=500, detail="Erreur lecture Excel.") from e
-
-    valid_pvs: list = []
-    if pic_versions:
-        wanted = {p.co_regate for p in pic_versions}
-        existing_rows = await db_read.fetch_all(
-            f"SELECT co_regate FROM trppu_site WHERE co_regate IN "
-            f"({','.join(['%s'] * len(wanted))})",
-            tuple(wanted),
+        logger.exception(
+            "Erreur parsing Excel pic_versions (file=%s, size=%d)",
+            file.filename,
+            len(content),
         )
-        existing_sites = {r["co_regate"] for r in existing_rows}
-        for i, p in enumerate(pic_versions, start=2):
-            if p.co_regate not in existing_sites:
-                errors.append(
-                    BulkUploadError(
-                        row=i,
-                        error=f"Site parent {p.co_regate} inexistant dans trppu_site",
-                        raw=p.model_dump(mode="json"),
-                    )
-                )
-            else:
-                valid_pvs.append(p)
+        raise HTTPException(status_code=500, detail="Erreur lecture Excel.") from e
+    logger.info(
+        "... upload_excel pic_versions parsed (file=%s, valid=%d, errors=%d)",
+        file.filename,
+        len(pic_versions),
+        len(errors),
+    )
 
     nb_inserted = 0
-    if valid_pvs:
+    if pic_versions:
+        logger.info(
+            "... upload_excel pic_versions transaction open (file=%s, batch_size=%d)",
+            file.filename,
+            len(pic_versions),
+        )
         try:
             async with db_write.transaction() as tx:
-                for p in valid_pvs:
-                    await tx.execute(INSERT_SQL, pic_version_to_insert_params(p))
-                    nb_inserted += 1
+                for excel_row, p in enumerate(pic_versions, start=2):
+                    try:
+                        await tx.execute(INSERT_SQL, pic_version_to_insert_params(p))
+                        nb_inserted += 1
+                    except Exception:
+                        logger.exception(
+                            "Échec INSERT trppu_pic_version (file=%s, excel_row=%d, payload=%s)",
+                            file.filename,
+                            excel_row,
+                            safe_preview(p.model_dump(mode="json")),
+                        )
+                        raise
         except Exception as e:
-            logger.error("Erreur insert lot trppu_pic_version : %s", e)
+            logger.exception(
+                "Erreur insert lot trppu_pic_version (file=%s, batch_size=%d)",
+                file.filename,
+                len(pic_versions),
+            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Échec de l'écriture du lot en base : {e}",
             ) from e
 
     duration_s = round(time.perf_counter() - start, 3)
+    logger.info(
+        "upload_excel pic_versions OK (file=%s, inserted=%d, errors=%d, duration_s=%.3f)",
+        file.filename,
+        nb_inserted,
+        len(errors),
+        duration_s,
+    )
     return BulkUploadResult(
         nb_rows_read=len(pic_versions) + len([e for e in errors if e.row > 0]),
         nb_inserted=nb_inserted,
