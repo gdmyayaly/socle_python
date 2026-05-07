@@ -155,12 +155,12 @@ async def create_scenario(payload: ScenarioCreate):
         async with db_write.transaction() as tx:
             await tx.execute(
                 "INSERT INTO trppu_scenario "
-                "(co_regate, lb_scenario, co_roc, statut, "
+                "(co_regate, lb_scenario, co_roc, statut, dt_creation, "
                 " periode_debut, periode_fin, "
                 " periode_realise_debut, periode_realise_fin, "
                 " periode_prev_debut, periode_prev_fin, "
                 " nb_jours_semaine, id_pic_version, version_scenario, est_fige) "
-                "VALUES (%s, %s, %s, 'EN COURS', %s, %s, %s, %s, %s, %s, %s, %s, 1, 0)",
+                "VALUES (%s, %s, %s, 'EN COURS', NOW(), %s, %s, %s, %s, %s, %s, %s, %s, 1, 0)",
                 (
                     payload.co_regate,
                     payload.lb_scenario,
@@ -532,12 +532,12 @@ async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest | None 
         async with db_write.transaction() as tx:
             await tx.execute(
                 "INSERT INTO trppu_scenario "
-                "(co_regate, lb_scenario, co_roc, statut, "
+                "(co_regate, lb_scenario, co_roc, statut, dt_creation, "
                 " periode_debut, periode_fin, "
                 " periode_realise_debut, periode_realise_fin, "
                 " periode_prev_debut, periode_prev_fin, "
                 " nb_jours_semaine, id_pic_version, version_scenario, est_fige) "
-                "VALUES (%s, %s, %s, 'EN COURS', %s, %s, %s, %s, %s, %s, %s, %s, 1, 0)",
+                "VALUES (%s, %s, %s, 'EN COURS', NOW(), %s, %s, %s, %s, %s, %s, %s, %s, 1, 0)",
                 (
                     source["co_regate"],
                     new_lb,
