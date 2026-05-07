@@ -18,7 +18,7 @@ et flag de figeage (`est_fige`).
 | `co_regate`             | CHAR(6) NOT NULL                                           | FK → `trppu_site`                           |
 | `lb_scenario`           | VARCHAR(50) NOT NULL                                       | Libellé                                     |
 | `co_roc`                | CHAR(6) NOT NULL                                           |                                             |
-| `statut`                | ENUM('EN COURS','SIMULATION','VALIDE','VEROUILLE','ARCHIVE') | Voir `GET /enums`                        |
+| `statut`                | ENUM('EN COURS','VALIDE','EN PRODUCTION','ARCHIVE') | Voir `GET /enums`                        |
 | `dt_creation`           | DATETIME — auto                                            |                                             |
 | `dt_validation`         | DATETIME NULL                                              | Posée auto au passage vers VALIDE           |
 | `dt_mise_en_prod`       | DATETIME NULL                                              | Posée auto par `POST /mise-en-prod`         |
@@ -37,16 +37,15 @@ et flag de figeage (`est_fige`).
 ## 2. Machine à états
 
 ```
-EN COURS   -> {SIMULATION, ARCHIVE}
-SIMULATION -> {VALIDE, EN COURS, ARCHIVE}
-VALIDE     -> {SIMULATION, ARCHIVE}            (VEROUILLE atteignable UNIQUEMENT via /mise-en-prod)
-VEROUILLE  -> {ARCHIVE}
+EN COURS      -> {VALIDE, ARCHIVE}
+VALIDE        -> {EN COURS, ARCHIVE}              (EN PRODUCTION atteignable UNIQUEMENT via /mise-en-prod)
+EN PRODUCTION  -> {ARCHIVE}
 ARCHIVE    -> {}                               (terminal)
 ```
 
 **Effets de bord** :
 - Vers `VALIDE` : `dt_validation = COALESCE(dt_validation, NOW())`
-- Vers `VEROUILLE` (via `/mise-en-prod` uniquement) : `dt_mise_en_prod = NOW()`, `est_fige = 1`, `dt_validation = COALESCE(dt_validation, NOW())`
+- Vers `EN PRODUCTION` (via `/mise-en-prod` uniquement) : `dt_mise_en_prod = NOW()`, `est_fige = 1`, `dt_validation = COALESCE(dt_validation, NOW())`
 
 ---
 
@@ -61,8 +60,8 @@ ARCHIVE    -> {}                               (terminal)
 | `DELETE`| `/trppu-api/scenarios/{id_scenario}` | Soft-delete : transition vers `ARCHIVE` |
 | `PATCH` | `/trppu-api/scenarios/{id_scenario}/periodes` | MAJ `periode_debut/fin` ; realise/prev recalculés serveur |
 | `PATCH` | `/trppu-api/scenarios/{id_scenario}/nb-jours-semaine` | MAJ 5 ou 6 |
-| `PATCH` | `/trppu-api/scenarios/{id_scenario}/statut` | Transition de statut (sauf VEROUILLE) |
-| `POST`  | `/trppu-api/scenarios/{id_scenario}/mise-en-prod` | **Seule manière d'atteindre VEROUILLE** |
+| `PATCH` | `/trppu-api/scenarios/{id_scenario}/statut` | Transition de statut (sauf EN PRODUCTION) |
+| `POST`  | `/trppu-api/scenarios/{id_scenario}/mise-en-prod` | **Seule manière d'atteindre EN PRODUCTION** |
 | `PATCH` | `/trppu-api/scenarios/{id_scenario}/est-fige` | Force le flag est_fige |
 | `PATCH` | `/trppu-api/scenarios/{id_scenario}/lb-scenario` | MAJ libellé |
 | `POST`  | `/trppu-api/scenarios/{id_scenario}/duplicate` | Clone en `EN COURS` v1 (sans tracking parent) |
@@ -91,7 +90,7 @@ ARCHIVE    -> {}                               (terminal)
 ### 3.2 `GET /trppu-api/scenarios/enums`
 
 ```json
-{ "statut": ["EN COURS", "SIMULATION", "VALIDE", "VEROUILLE", "ARCHIVE"] }
+{ "statut": ["EN COURS", "VALIDE", "EN PRODUCTION", "ARCHIVE"] }
 ```
 
 ### 3.3 `PATCH /trppu-api/scenarios/{id_scenario}/periodes`
@@ -121,12 +120,12 @@ prev_fin      = periode_fin               si periode_fin >= today,   sinon NULL
 ```
 
 - Lève **422** si la transition est interdite (cf. matrice).
-- Lève **409** si la transition demandée est `VALIDE -> VEROUILLE` (réservée à `/mise-en-prod`).
+- Lève **409** si la transition demandée est `VALIDE -> EN PRODUCTION` (réservée à `/mise-en-prod`).
 
 ### 3.5 `POST /trppu-api/scenarios/{id_scenario}/mise-en-prod`
 
 Aucun body. Effets :
-- `statut` devient `VEROUILLE`
+- `statut` devient `EN PRODUCTION`
 - `dt_mise_en_prod = NOW()`
 - `est_fige = 1`
 - `dt_validation = COALESCE(dt_validation, NOW())` (filet de sécurité)
@@ -155,7 +154,7 @@ tracking parent : aucun lien clone↔source persisté.
 curl -X PATCH .../scenarios/42/statut -d '{"statut":"VALIDE"}'
 # 2. Mettre en prod
 curl -X POST .../scenarios/42/mise-en-prod
-# Le scénario est désormais VEROUILLE, est_fige=1, dt_mise_en_prod posée.
+# Le scénario est désormais EN PRODUCTION, est_fige=1, dt_mise_en_prod posée.
 ```
 
 ### 4.2 Modifier un scénario verrouillé

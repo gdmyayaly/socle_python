@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CO_REGATE_PATTERN = r"^[A-Za-z0-9]{6}$"
 
-Statut = Literal["EN COURS", "SIMULATION", "VALIDE", "VEROUILLE", "ARCHIVE"]
+Statut = Literal["EN COURS", "VALIDE", "EN PRODUCTION", "ARCHIVE"]
 NbJours = Literal[5, 6]
 
 

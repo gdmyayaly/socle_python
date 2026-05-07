@@ -21,8 +21,8 @@ période. Cette période est ensuite découpée en deux parties :
 - la partie **réalisée** (ce qui est dans le passé ou aujourd'hui)
 - la partie **prévision** (ce qui est dans le futur)
 
-Le scénario suit un workflow : EN COURS, puis SIMULATION, puis VALIDE, puis
-VEROUILLE, et enfin ARCHIVE. La création ouvre ce workflow en posant le
+Le scénario suit un workflow : EN COURS, puis VALIDE, puis EN PRODUCTION,
+et enfin ARCHIVE. La création ouvre ce workflow en posant le
 scénario au statut EN COURS.
 
 ---

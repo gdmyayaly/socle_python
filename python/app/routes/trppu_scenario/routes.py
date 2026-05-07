@@ -345,7 +345,7 @@ async def update_nb_jours_semaine(id_scenario: int, payload: NbJoursUpdate):
 async def update_statut(id_scenario: int, payload: StatutUpdate):
     """Change le statut via la machine à états + effets de bord automatiques.
 
-    La transition VALIDE -> VEROUILLE n'est pas accessible ici : passer par
+    La transition VALIDE -> EN PRODUCTION n'est pas accessible ici : passer par
     POST /{id_scenario}/mise-en-prod.
     """
     start = time.perf_counter()
@@ -391,23 +391,23 @@ async def update_statut(id_scenario: int, payload: StatutUpdate):
 
 @router.post("/{id_scenario}/mise-en-prod", response_model=ScenarioOut)
 async def mise_en_prod(id_scenario: int):
-    """Notifie la mise en production : statut VEROUILLE + dt_mise_en_prod = NOW() + est_fige = 1.
+    """Notifie la mise en production : statut EN PRODUCTION + dt_mise_en_prod = NOW() + est_fige = 1.
 
-    Seule manière d'atteindre le statut VEROUILLE. Transition autorisée uniquement
+    Seule manière d'atteindre le statut EN PRODUCTION. Transition autorisée uniquement
     depuis VALIDE.
     """
     start = time.perf_counter()
     logger.info("Début mise en production (id_scenario=%d)", id_scenario)
 
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_internal_transition_allowed(scenario["statut"], "VEROUILLE")
+    assert_internal_transition_allowed(scenario["statut"], "EN PRODUCTION")
     logger.info(
-        "Transition autorisée (depuis=%s vers VEROUILLE)", scenario["statut"]
+        "Transition autorisée (depuis=%s vers EN PRODUCTION)", scenario["statut"]
     )
 
     try:
         async with db_write.transaction() as tx:
-            await apply_transition_side_effects(tx, scenario, "VEROUILLE")
+            await apply_transition_side_effects(tx, scenario, "EN PRODUCTION")
             await increment_version(tx, id_scenario)
     except HTTPException:
         raise
@@ -422,7 +422,7 @@ async def mise_en_prod(id_scenario: int):
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Mise en production terminée (id_scenario=%d, statut=VEROUILLE, duration_ms=%.1f)",
+        "Mise en production terminée (id_scenario=%d, statut=EN PRODUCTION, duration_ms=%.1f)",
         id_scenario,
         duration_ms,
     )

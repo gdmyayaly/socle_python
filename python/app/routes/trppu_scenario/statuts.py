@@ -4,28 +4,27 @@ from typing import Any
 
 from fastapi import HTTPException
 
-STATUTS = ("EN COURS", "SIMULATION", "VALIDE", "VEROUILLE", "ARCHIVE")
+STATUTS = ("EN COURS", "VALIDE", "EN PRODUCTION", "ARCHIVE")
 
 # Transitions accessibles via PATCH /statut.
-# La transition VALIDE -> VEROUILLE est volontairement absente : elle passe
+# La transition VALIDE -> EN PRODUCTION est volontairement absente : elle passe
 # uniquement par POST /mise-en-prod (cf. INTERNAL_TRANSITIONS).
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    "EN COURS":   {"SIMULATION", "ARCHIVE"},
-    "SIMULATION": {"VALIDE", "EN COURS", "ARCHIVE"},
-    "VALIDE":     {"SIMULATION", "ARCHIVE"},
-    "VEROUILLE":  {"ARCHIVE"},
-    "ARCHIVE":    set(),
+    "EN COURS":      {"VALIDE", "ARCHIVE"},
+    "VALIDE":        {"EN COURS", "ARCHIVE"},
+    "EN PRODUCTION": {"ARCHIVE"},
+    "ARCHIVE":       set(),
 }
 
 # Transitions internes, déclenchables uniquement par leur endpoint dédié.
 INTERNAL_TRANSITIONS: dict[str, set[str]] = {
-    "VALIDE": {"VEROUILLE"},
+    "VALIDE": {"EN PRODUCTION"},
 }
 
 
 def _internal_route_for(current: str, target: str) -> str | None:
     """Retourne le nom de l'endpoint dédié si la transition n'est accessible que par lui."""
-    if current == "VALIDE" and target == "VEROUILLE":
+    if current == "VALIDE" and target == "EN PRODUCTION":
         return "POST /trppu-api/scenarios/{id_scenario}/mise-en-prod"
     return None
 
@@ -100,7 +99,7 @@ async def apply_transition_side_effects(tx, scenario: dict[str, Any], target: st
     """Applique l'UPDATE du statut + effets de bord automatiques.
 
     - VALIDE : pose dt_validation = NOW() si NULL.
-    - VEROUILLE : pose dt_mise_en_prod = NOW(), est_fige = 1, et dt_validation si NULL
+    - EN PRODUCTION : pose dt_mise_en_prod = NOW(), est_fige = 1, et dt_validation si NULL
       (pour respecter chk_scen_prod : dt_mise_en_prod >= dt_validation).
     - autres : juste l'UPDATE du statut.
     """
@@ -113,7 +112,7 @@ async def apply_transition_side_effects(tx, scenario: dict[str, Any], target: st
             "WHERE id_scenario = %s",
             (target, id_scenario),
         )
-    elif target == "VEROUILLE":
+    elif target == "EN PRODUCTION":
         await tx.execute(
             "UPDATE trppu_scenario SET statut = %s, "
             "dt_validation = COALESCE(dt_validation, NOW()), "
