@@ -108,6 +108,32 @@ def assert_not_fige(scenario: dict[str, Any]) -> None:
         )
 
 
+async def ensure_site_exists(
+    tx,
+    co_regate: str,
+    co_roc: str,
+    lb_regate: str,
+    type_site: str,
+) -> bool:
+    """Garantit la présence du site dans trppu_site avant insert d'un scénario.
+
+    Retourne True si une ligne a été insérée, False si le site existait déjà.
+    Aucun UPDATE n'est fait sur un site déjà présent.
+    """
+    row = await tx.fetch_one(
+        "SELECT co_regate FROM trppu_site WHERE co_regate = %s", (co_regate,)
+    )
+    if row:
+        return False
+
+    await tx.execute(
+        "INSERT INTO trppu_site (co_regate, lb_regate, type_site, co_roc) "
+        "VALUES (%s, %s, %s, %s)",
+        (co_regate, lb_regate, type_site, co_roc),
+    )
+    return True
+
+
 async def increment_version(tx, id_scenario: int) -> int:
     """Incrémente version_scenario et retourne la nouvelle valeur."""
     await tx.execute(

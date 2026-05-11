@@ -20,17 +20,23 @@ class ScenarioBase(BaseModel):
 class ScenarioCreate(ScenarioBase):
     """Body POST /scenarios.
 
-    Obligatoires : co_regate, lb_scenario, co_roc.
+    Obligatoires : co_regate, lb_scenario, co_roc, lb_regate, type_site.
     nb_jours_semaine : 5 par défaut, contraint à {5, 6}.
     id_pic_version : si non fourni, résolu côté serveur (premier est_par_defaut=1, fallback 1).
     Périodes principales : si None, today-1an / today+1an.
     Les colonnes periode_realise_*/periode_prev_* sont **dérivées serveur** depuis
     (periode_debut, periode_fin, today) et ne sont pas acceptées dans le body.
     statut, version_scenario, est_fige : forcés côté serveur à EN COURS / 1 / False.
+
+    lb_regate, type_site : obligatoires. Si le site (co_regate) n'existe pas
+    encore dans trppu_site, il est créé avec ces valeurs. Si le site existe
+    déjà, ces champs sont ignorés (pas de MAJ).
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    lb_regate: str = Field(..., min_length=1, max_length=120)
+    type_site: str = Field(..., min_length=1, max_length=5)
     nb_jours_semaine: NbJours = 5
     id_pic_version: Optional[int] = Field(None, gt=0)
     periode_debut: Optional[date] = None

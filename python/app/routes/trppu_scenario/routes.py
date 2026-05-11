@@ -12,6 +12,7 @@ from .helpers import (
     SELECT_SCENARIO_SQL,
     assert_not_fige,
     default_periode,
+    ensure_site_exists,
     fetch_scenario_or_404,
     increment_version,
     recompute_realise_prev,
@@ -153,6 +154,25 @@ async def create_scenario(payload: ScenarioCreate):
 
     try:
         async with db_write.transaction() as tx:
+            site_created = await ensure_site_exists(
+                tx,
+                co_regate=payload.co_regate,
+                co_roc=payload.co_roc,
+                lb_regate=payload.lb_regate,
+                type_site=payload.type_site,
+            )
+            if site_created:
+                logger.info(
+                    "Site créé automatiquement (co_regate=%s, type_site=%s)",
+                    payload.co_regate,
+                    payload.type_site,
+                )
+            else:
+                logger.info(
+                    "Site déjà présent dans trppu_site (co_regate=%s)",
+                    payload.co_regate,
+                )
+
             await tx.execute(
                 "INSERT INTO trppu_scenario "
                 "(co_regate, lb_scenario, co_roc, statut, dt_creation, "
