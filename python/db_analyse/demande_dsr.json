@@ -1,0 +1,152 @@
+{
+  "execution_time_s": 0.005,
+  "database": "dsr_mercure_aa",
+  "table": "demande_dsr",
+  "count": 18,
+  "columns": [
+    {
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "int",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "nomFichier",
+      "COLUMN_TYPE": "text",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "statut",
+      "COLUMN_TYPE": "enum('EN_ATTENTE','EN_COURS','TERMINEE','ERREUR')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "idrh",
+      "COLUMN_TYPE": "char(7)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "codeRegate",
+      "COLUMN_TYPE": "char(6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "message",
+      "COLUMN_TYPE": "text",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "bassins",
+      "COLUMN_TYPE": "json",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "simuOptiTheo",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "simuScenarDex",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "simuScenarRef",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "simuExistProj",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "forcerExec",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "restitTousBassins",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "optiTransport",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "choixPI",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "simulerACP",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "createdAt",
+      "COLUMN_TYPE": "timestamp",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": "CURRENT_TIMESTAMP",
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "updatedAt",
+      "COLUMN_TYPE": "timestamp",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": "CURRENT_TIMESTAMP",
+      "COLUMN_COMMENT": ""
+    }
+  ]
+}

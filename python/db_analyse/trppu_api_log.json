@@ -1,0 +1,64 @@
+{
+  "execution_time_s": 0.003,
+  "database": "dsr_mercure_aa",
+  "table": "trppu_api_log",
+  "count": 7,
+  "columns": [
+    {
+      "COLUMN_NAME": "id_log",
+      "COLUMN_TYPE": "bigint",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "api_name",
+      "COLUMN_TYPE": "varchar(50)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "MUL",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "id_scenario",
+      "COLUMN_TYPE": "bigint",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "MUL",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "regate",
+      "COLUMN_TYPE": "char(6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "dt_appel",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "caller",
+      "COLUMN_TYPE": "varchar(120)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "params",
+      "COLUMN_TYPE": "json",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "execution_time_s": 0.002,
+  "database": "dsr_mercure_aa",
+  "table": "trppu_site",
+  "count": 5,
+  "columns": [
+    {
+      "COLUMN_NAME": "co_regate",
+      "COLUMN_TYPE": "char(6)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "lb_regate",
+      "COLUMN_TYPE": "varchar(40)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "type_site",
+      "COLUMN_TYPE": "char(5)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "co_roc",
+      "COLUMN_TYPE": "char(6)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL",
+      "COLUMN_DEFAULT": null,
+      "COLUMN_COMMENT": ""
+    },
+    {
+      "COLUMN_NAME": "dt_maj",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "",
+      "COLUMN_DEFAULT": "CURRENT_TIMESTAMP",
+      "COLUMN_COMMENT": ""
+    }
+  ]
+}

@@ -3,9 +3,23 @@
 import logging
 import time
 from contextlib import asynccontextmanager
- 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
- 
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
+from fastapi.staticfiles import StaticFiles
+
+from app.config import (
+    CORS_ALLOW_CREDENTIALS,
+    CORS_ALLOW_HEADERS,
+    CORS_ALLOW_METHODS,
+    CORS_ALLOW_ORIGINS,
+)
 from app.json_formatter import setup_logging
 from app.routes import databricks as databricks_routes
 from app.routes import health as health_routes
@@ -30,9 +44,58 @@ async def lifespan(app: FastAPI):
     log.info("Arrêt de l'application trppu")
  
  
-app = FastAPI(title="trppu API YS04", description="API de test trppu YS04", lifespan=lifespan)
- 
- 
+app = FastAPI(
+    title="trppu API YS04",
+    description="API de test trppu YS04",
+    lifespan=lifespan,
+    # On désactive les docs par défaut (qui chargent les assets depuis le CDN)
+    # pour les remplacer par des routes servant les assets en local.
+    docs_url=None,
+    redoc_url=None,
+)
+
+# Assets Swagger UI / ReDoc servis en local (fonctionne sans accès internet)
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_js_url="/static/swagger-ui/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui/swagger-ui.css",
+        swagger_favicon_url="/static/swagger-ui/favicon-32x32.png",
+    )
+
+
+@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
+async def swagger_ui_redirect():
+    return get_swagger_ui_oauth2_redirect_html()
+
+
+@app.get("/redoc", include_in_schema=False)
+async def custom_redoc_html():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - ReDoc",
+        redoc_js_url="/static/swagger-ui/redoc.standalone.js",
+        redoc_favicon_url="/static/swagger-ui/favicon-32x32.png",
+        with_google_fonts=False,
+    )
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
+    allow_methods=CORS_ALLOW_METHODS,
+    allow_headers=CORS_ALLOW_HEADERS,
+)
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
