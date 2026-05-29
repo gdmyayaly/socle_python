@@ -30,8 +30,13 @@ from app.routes import trafics as trafics_routes
 from app.routes.trppu_pic_coefficients import router as trppu_pic_coefficients_router
 from app.routes.trppu_pic_version import router as trppu_pic_version_router
 from app.routes.trppu_produit import router as trppu_produit_router
+from app.routes.trppu_comptages import router as trppu_comptages_router
+from app.routes.trppu_neutralisations import router as trppu_neutralisations_router
 from app.routes.trppu_scenario import router as trppu_scenario_router
+from app.routes.trppu_scenario_pic import router as trppu_scenario_pic_router
 from app.routes.trppu_site import router as trppu_site_router
+from app.routes.trppu_tmh import router as trppu_tmh_router
+from app.routes.trppu_variations import router as trppu_variations_router
 
 setup_logging()
 log = logging.getLogger("trppu")
@@ -133,6 +138,11 @@ app.include_router(trppu_produit_router)
 app.include_router(trppu_pic_version_router)
 app.include_router(trppu_pic_coefficients_router)
 app.include_router(trppu_scenario_router)
+app.include_router(trppu_tmh_router)
+app.include_router(trppu_comptages_router)
+app.include_router(trppu_variations_router)
+app.include_router(trppu_neutralisations_router)
+app.include_router(trppu_scenario_pic_router)
 
 if __name__ == "__main__":
     import uvicorn

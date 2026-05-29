@@ -2,11 +2,14 @@
 
 import logging
 import time
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
+from app.security.crypto import encrypt_id_rh
+from app.services.jours_service import compute_nb_jours
 
 from .helpers import (
     SELECT_SCENARIO_SQL,
@@ -25,7 +28,9 @@ from .schemas import (
     NbJoursUpdate,
     PeriodeUpdate,
     ScenarioCreate,
+    ScenarioMajRequest,
     ScenarioOut,
+    ScenarioPeriodesOut,
     StatutUpdate,
 )
 from .statuts import (
@@ -117,13 +122,37 @@ async def get_scenario(id_scenario: int):
     return row
 
 
+@router.get("/{id_scenario}/periodes", response_model=ScenarioPeriodesOut)
+async def get_scenario_periodes(
+    id_scenario: int,
+    id_session_ihm: str | None = Query(None, description="Id de session IHM (traçabilité)"),
+):
+    """DSR-655 : périodes + nombres de jours d'un scénario (actualisation du slider IHM)."""
+    start = time.perf_counter()
+    logger.info(
+        "Début lecture périodes scénario (id_scenario=%d, id_session_ihm=%s)",
+        id_scenario,
+        safe_preview(id_session_ihm),
+    )
+    row = await fetch_scenario_or_404(id_scenario)
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "Lecture périodes scénario terminée (id_scenario=%d, duration_ms=%.1f)",
+        id_scenario,
+        duration_ms,
+    )
+    return row
+
+
 @router.post("", response_model=ScenarioOut, status_code=status.HTTP_201_CREATED)
 async def create_scenario(payload: ScenarioCreate):
     start = time.perf_counter()
+    # NB : on n'inclut jamais id_rh (en clair) dans les logs.
+    logged_payload = payload.model_dump(mode="json", exclude={"id_rh"})
     logger.info(
         "Début création scénario (co_regate=%s, payload=%s)",
         payload.co_regate,
-        safe_preview(payload.model_dump(mode="json")),
+        safe_preview(logged_payload),
     )
 
     if payload.id_pic_version is not None:
@@ -152,6 +181,21 @@ async def create_scenario(payload: ScenarioCreate):
         prev_fin,
     )
 
+    # Nombres de jours sur la période (fériés déduits) — DSR-613 / DSR-634.
+    nbj = await compute_nb_jours(debut, fin)
+    nb_jours_scenario = (
+        nbj.nb_jours_ouvres if payload.nb_jours_semaine == 5 else nbj.nb_jours_ouvrables
+    )
+    logger.info(
+        "Nombres de jours calculés (ouvres=%d, ouvrables=%d, scenario=%d)",
+        nbj.nb_jours_ouvres,
+        nbj.nb_jours_ouvrables,
+        nb_jours_scenario,
+    )
+
+    dt_mise_en_oeuvre = payload.dt_mise_en_oeuvre or date.today()
+    id_rh_token = encrypt_id_rh(payload.id_rh)
+
     try:
         async with db_write.transaction() as tx:
             site_created = await ensure_site_exists(
@@ -176,15 +220,19 @@ async def create_scenario(payload: ScenarioCreate):
             await tx.execute(
                 "INSERT INTO trppu_scenario "
                 "(co_regate, lb_scenario, co_roc, statut, dt_creation, "
+                " dt_mise_en_oeuvre, dt_real_prev, "
                 " periode_debut, periode_fin, "
                 " periode_realise_debut, periode_realise_fin, "
                 " periode_prev_debut, periode_prev_fin, "
-                " nb_jours_semaine, id_pic_version, version_scenario, est_fige) "
-                "VALUES (%s, %s, %s, 'EN COURS', NOW(), %s, %s, %s, %s, %s, %s, %s, %s, 1, 0)",
+                " nb_jours_semaine, nb_jours_ouvres, nb_jours_ouvrables, nb_jours_scenario, "
+                " id_pic_version, version_scenario, est_fige, id_rh_creation, id_rh_maj) "
+                "VALUES (%s, %s, %s, 'EN COURS', NOW(), %s, NOW(), %s, %s, %s, %s, %s, %s, "
+                "%s, %s, %s, %s, %s, 1, 0, %s, %s)",
                 (
                     payload.co_regate,
                     payload.lb_scenario,
                     payload.co_roc,
+                    dt_mise_en_oeuvre,
                     debut,
                     fin,
                     realise_debut,
@@ -192,17 +240,33 @@ async def create_scenario(payload: ScenarioCreate):
                     prev_debut,
                     prev_fin,
                     payload.nb_jours_semaine,
+                    nbj.nb_jours_ouvres,
+                    nbj.nb_jours_ouvrables,
+                    nb_jours_scenario,
                     pic_version,
+                    id_rh_token,
+                    id_rh_token,
                 ),
             )
             row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
             id_scenario = int(row["id"])
+
+            # Trafics TMH (1 ligne par produit) — DSR-634 (réutilise le service TMH).
+            if payload.tmh:
+                from app.routes.trppu_tmh.helpers import upsert_tmh_rows
+
+                nb_ins, _ = await upsert_tmh_rows(tx, id_scenario, payload.tmh)
+                logger.info(
+                    "Lignes TMH insérées à la création (id_scenario=%d, nb=%d)",
+                    id_scenario,
+                    nb_ins,
+                )
     except HTTPException:
         raise
     except Exception as e:
         logger.exception(
             "Erreur création scénario (payload=%s)",
-            safe_preview(payload.model_dump(mode="json")),
+            safe_preview(logged_payload),
         )
         raise HTTPException(status_code=500, detail="Erreur création scenario.") from e
 
@@ -215,6 +279,174 @@ async def create_scenario(payload: ScenarioCreate):
         duration_ms,
     )
     return created
+
+
+@router.put("/{id_scenario}", response_model=ScenarioOut)
+async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
+    """DSR-656 : MAJ d'un scénario EN COURS après actualisation des trafics.
+
+    Recalcule serveur les bornes réalisé/prév et les nb_jours (fériés + neutralisations),
+    repositionne dt_real_prev / dt_maj, crypte id_rh_maj, et met à jour le TMH (DSR-659).
+    """
+    start = time.perf_counter()
+    logged = payload.model_dump(mode="json", exclude={"id_rh"})
+    logger.info(
+        "Début MAJ scénario (id_scenario=%d, payload=%s)", id_scenario, safe_preview(logged)
+    )
+
+    scenario = await fetch_scenario_or_404(id_scenario)
+    if scenario["statut"] != "EN COURS":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Mise à jour interdite : le scénario {id_scenario} est au statut "
+                f"'{scenario['statut']}' (attendu 'EN COURS')."
+            ),
+        )
+
+    realise_debut, realise_fin, prev_debut, prev_fin = recompute_realise_prev(
+        payload.periode_debut, payload.periode_fin
+    )
+    nbj = await compute_nb_jours(payload.periode_debut, payload.periode_fin)
+    base = nbj.nb_jours_ouvres if payload.nb_jours_semaine == 5 else nbj.nb_jours_ouvrables
+    neut = await db_read.fetch_one(
+        "SELECT COALESCE(SUM(nb_jour), 0) AS s FROM trppu_neutralisations WHERE id_scenario = %s",
+        (id_scenario,),
+    )
+    nb_jours_scenario = base - (int(neut["s"]) if neut else 0)
+    id_rh_token = encrypt_id_rh(payload.id_rh)
+
+    set_parts = [
+        "periode_debut = %s", "periode_fin = %s",
+        "periode_realise_debut = %s", "periode_realise_fin = %s",
+        "periode_prev_debut = %s", "periode_prev_fin = %s",
+        "dt_real_prev = NOW()",
+        "nb_jours_semaine = %s", "nb_jours_ouvres = %s",
+        "nb_jours_ouvrables = %s", "nb_jours_scenario = %s",
+        "dt_maj = NOW()", "id_rh_maj = %s",
+    ]
+    params: list = [
+        payload.periode_debut, payload.periode_fin,
+        realise_debut, realise_fin, prev_debut, prev_fin,
+        payload.nb_jours_semaine, nbj.nb_jours_ouvres, nbj.nb_jours_ouvrables,
+        nb_jours_scenario, id_rh_token,
+    ]
+    if payload.dt_mise_en_oeuvre is not None:
+        set_parts.insert(6, "dt_mise_en_oeuvre = %s")
+        params.insert(6, payload.dt_mise_en_oeuvre)
+    params.append(id_scenario)
+
+    try:
+        async with db_write.transaction() as tx:
+            await tx.execute(
+                f"UPDATE trppu_scenario SET {', '.join(set_parts)} WHERE id_scenario = %s",
+                tuple(params),
+            )
+            await increment_version(tx, id_scenario)
+            if payload.tmh:
+                from app.routes.trppu_tmh.helpers import upsert_tmh_rows
+
+                nb_ins, nb_upd = await upsert_tmh_rows(tx, id_scenario, payload.tmh)
+                logger.info(
+                    "TMH mis à jour à la MAJ scénario (id_scenario=%d, insérés=%d, modifiés=%d)",
+                    id_scenario,
+                    nb_ins,
+                    nb_upd,
+                )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Erreur MAJ scénario (id_scenario=%d)", id_scenario)
+        raise HTTPException(status_code=500, detail="Erreur mise à jour scenario.") from e
+
+    updated = await fetch_scenario_or_404(id_scenario)
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "MAJ scénario terminée (id_scenario=%d, duration_ms=%.1f)", id_scenario, duration_ms
+    )
+    return updated
+
+
+@router.get("/{id_scenario}/edition")
+async def get_scenario_edition(
+    id_scenario: int,
+    id_session_ihm: str | None = Query(None, description="Id de session IHM (traçabilité)"),
+):
+    """DSR-654 : agrégateur d'édition — tous les blocs d'un scénario en un appel.
+
+    Regroupe : entête scénario, périodes, TMH, comptages, variations, neutralisations,
+    coefficients PIC (fusion défaut/scénario). Propage l'id de session IHM aux logs.
+    """
+    start = time.perf_counter()
+    logger.info(
+        "Début édition scénario (id_scenario=%d, id_session_ihm=%s)",
+        id_scenario,
+        safe_preview(id_session_ihm),
+    )
+    scenario = await fetch_scenario_or_404(id_scenario)
+
+    # Imports locaux : évite tout cycle d'import entre modules de routes.
+    from app.routes.trppu_comptages.helpers import SELECT_COMPTAGES_SQL
+    from app.routes.trppu_neutralisations.helpers import (
+        SELECT_NEUTRALISATIONS_SQL,
+        group_neutralisations,
+    )
+    from app.routes.trppu_scenario_pic.helpers import (
+        DEFAULT_PIC_VERSION,
+        fetch_coeffs_for_version,
+        fetch_scenario_pic_version,
+        merge_coeffs,
+    )
+    from app.routes.trppu_tmh.helpers import fetch_tmh
+    from app.routes.trppu_variations.helpers import SELECT_VARIATIONS_SQL
+
+    try:
+        tmh = await fetch_tmh(db_read, id_scenario)
+        comptages = await db_read.fetch_all(SELECT_COMPTAGES_SQL, (id_scenario,))
+        variations = await db_read.fetch_all(SELECT_VARIATIONS_SQL, (id_scenario,))
+        neutralisations = group_neutralisations(
+            await db_read.fetch_all(SELECT_NEUTRALISATIONS_SQL, (id_scenario,))
+        )
+        defaults = await fetch_coeffs_for_version(db_read, DEFAULT_PIC_VERSION)
+        scen_v = await fetch_scenario_pic_version(db_read, id_scenario)
+        overrides = (
+            await fetch_coeffs_for_version(db_read, int(scen_v["id_pic_version"]))
+            if scen_v
+            else []
+        )
+        pic = {
+            "id_pic_version_defaut": DEFAULT_PIC_VERSION,
+            "id_pic_version_scenario": int(scen_v["id_pic_version"]) if scen_v else None,
+            "niveau_scenario": scen_v["niveau"] if scen_v else None,
+            "coefficients": merge_coeffs(defaults, overrides),
+        }
+    except Exception as e:
+        logger.exception("Erreur édition scénario (id_scenario=%d)", id_scenario)
+        raise HTTPException(status_code=500, detail="Erreur édition scenario.") from e
+
+    periode_keys = (
+        "periode_debut", "periode_fin", "periode_realise_debut", "periode_realise_fin",
+        "periode_prev_debut", "periode_prev_fin", "nb_jours_semaine",
+        "nb_jours_ouvres", "nb_jours_ouvrables", "nb_jours_scenario",
+    )
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "Édition scénario terminée (id_scenario=%d, tmh=%d, comptages=%d, variations=%d, duration_ms=%.1f)",
+        id_scenario,
+        len(tmh),
+        len(comptages),
+        len(variations),
+        duration_ms,
+    )
+    return {
+        "scenario": scenario,
+        "periodes": {k: scenario.get(k) for k in periode_keys},
+        "tmh": tmh,
+        "comptages": comptages,
+        "variations": variations,
+        "neutralisations": neutralisations,
+        "pic": pic,
+    }
 
 
 @router.delete("/{id_scenario}", response_model=ScenarioOut)

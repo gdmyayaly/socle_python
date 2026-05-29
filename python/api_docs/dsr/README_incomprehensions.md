@@ -124,6 +124,23 @@ implémentation**. Criticité : 🔴 bloquant · 🟠 important · 🟡 confort.
 - **Chevauchement DSR-649 / DSR-659** (cf. amélioration dédiée).
 - **Tickets** : 649, 659.
 
+## 14. 🟠 Erreurs arithmétiques dans les exemples chiffrés (DSR-613, DSR-645)
+
+- **Constat** (découvert à l'implémentation/tests) :
+  - **DSR-613** : l'exemple annonce 272 jours ouvrés bruts → 262 nets. Or sur
+    01/03/2025–31/03/2026 (396 j) il y a **282** jours ouvrés bruts (Lun-Ven) :
+    339 ouvrables − 282 ouvrés = 57 samedis (cohérent), alors que 339 − 272 = 67
+    samedis serait impossible. Le résultat correct est **nbJoursOuvres = 272**
+    (le côté ouvrables 339 → 328 du ticket est correct).
+  - **DSR-645 PEAK** : l'exemple s'appuie sur « 10 samedis + 11 dimanches » sur
+    40 jours, impossible. Calcul correct : **28 (5j) / 34 (6j)** (ticket : 18/28).
+    L'exemple **SAISON** (10/12) est, lui, cohérent.
+- **Impact** : le code applique la **définition** (pas les valeurs erronées). Les
+  tests asserent les valeurs correctes.
+- **Question** : confirmer que les valeurs attendues sont bien les valeurs
+  définitionnelles (et non les chiffres des exemples).
+- **Tickets** : 613, 645.
+
 ---
 
 ## Récapitulatif par criticité
@@ -143,3 +160,4 @@ implémentation**. Criticité : 🔴 bloquant · 🟠 important · 🟡 confort.
 | 11 | id session IHM | 🟡 | 650-653, 660, 661 |
 | 12 | Unicité / upsert | 🟡 | 644, 645, 646, 649, 659 |
 | 13 | TMH moyennes / ligne absente | 🟡 | 649, 659 |
+| 14 | Exemples chiffrés erronés (262 vs 272 ; PEAK 18/28) | 🟠 | 613, 645 |

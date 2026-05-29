@@ -40,6 +40,10 @@ APP_ENV = os.getenv("APP_ENV", "sdev")
 MODULE = os.getenv("MODULE", "ys04")
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 LOGS_DIR = os.getenv("LOGS_DIR", "")
+
+# Sécurité : clé de cryptage réversible de l'id_rh (Fernet).
+# Secret arbitraire accepté (dérivé en clé Fernet) ou clé Fernet native (44 car.).
+ID_RH_CRYPTO_KEY = os.getenv("ID_RH_CRYPTO_KEY", "")
  
 # Validation
 MAX_DATE_RANGE_DAYS = 730 # SOIT 365 * 2

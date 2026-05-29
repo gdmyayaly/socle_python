@@ -1,14 +1,34 @@
 """Schémas Pydantic v2 pour la table trppu_scenario."""
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CO_REGATE_PATTERN = r"^[A-Za-z0-9]{6}$"
+CO_PRODUIT_PATTERN = r"^[A-Za-z0-9]{1,2}$"
 
 Statut = Literal["EN COURS", "VALIDE", "EN PRODUCTION", "ARCHIVE"]
 NbJours = Literal[5, 6]
+
+
+class ScenarioTmhItem(BaseModel):
+    """Une ligne TMH fournie à la création/MAJ d'un scénario.
+
+    Mirroir de `app.routes.trppu_tmh.schemas.TmhUpsert` (défini ici pour éviter un
+    import circulaire entre les modules scénario et TMH). Mêmes noms d'attributs :
+    consommé par `trppu_tmh.helpers.upsert_tmh_rows` (duck typing).
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    co_produit: str = Field(..., min_length=1, max_length=2, pattern=CO_PRODUIT_PATTERN)
+    volume_realise: Optional[int] = Field(None, ge=0)
+    volume_previsionnel: Optional[int] = Field(None, ge=0)
+    moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
+    moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
+    exclusion: bool = False
 
 
 class ScenarioBase(BaseModel):
@@ -37,10 +57,16 @@ class ScenarioCreate(ScenarioBase):
 
     lb_regate: str = Field(..., min_length=1, max_length=120)
     type_site: str = Field(..., min_length=1, max_length=5)
-    nb_jours_semaine: NbJours = 5
+    nb_jours_semaine: NbJours = 6  # défaut 6 (jours ouvrables) — cf. DSR-634
     id_pic_version: Optional[int] = Field(None, gt=0)
     periode_debut: Optional[date] = None
     periode_fin: Optional[date] = None
+    dt_mise_en_oeuvre: Optional[date] = None  # défaut serveur = date du jour
+    id_rh: str = Field(..., min_length=1)  # crypté en base (id_rh_creation/maj)
+    tmh: list[ScenarioTmhItem] = Field(
+        default_factory=list,
+        description="Lignes du tableau TMH à enregistrer (1 par produit).",
+    )
 
     @model_validator(mode="after")
     def _check_periodes(self):
@@ -61,7 +87,9 @@ class ScenarioOut(BaseModel):
     statut: Statut
     dt_creation: datetime
     dt_validation: Optional[datetime] = None
+    dt_mise_en_oeuvre: Optional[datetime] = None
     dt_mise_en_prod: Optional[datetime] = None
+    dt_real_prev: Optional[datetime] = None
     periode_debut: date
     periode_fin: date
     periode_realise_debut: Optional[date] = None
@@ -69,9 +97,53 @@ class ScenarioOut(BaseModel):
     periode_prev_debut: Optional[date] = None
     periode_prev_fin: Optional[date] = None
     nb_jours_semaine: int
+    nb_jours_ouvres: Optional[int] = None
+    nb_jours_ouvrables: Optional[int] = None
+    nb_jours_scenario: Optional[int] = None
     id_pic_version: int
     version_scenario: int
     est_fige: bool
+
+
+class ScenarioPeriodesOut(BaseModel):
+    """Réponse DSR-655 : périodes + nombres de jours d'un scénario (slider IHM)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    periode_debut: date
+    periode_fin: date
+    periode_realise_debut: Optional[date] = None
+    periode_realise_fin: Optional[date] = None
+    periode_prev_debut: Optional[date] = None
+    periode_prev_fin: Optional[date] = None
+    nb_jours_semaine: int
+    nb_jours_ouvres: Optional[int] = None
+    nb_jours_ouvrables: Optional[int] = None
+    nb_jours_scenario: Optional[int] = None
+
+
+class ScenarioMajRequest(BaseModel):
+    """Body PUT /scenarios/{id} (DSR-656) : MAJ d'un scénario EN COURS après recalcul.
+
+    Les bornes réalisé/prév et les nb_jours sont **recalculés serveur** ; dt_real_prev
+    et dt_maj = date courante ; id_rh (maj) crypté. `tmh` (optionnel) met à jour les
+    trafics recalculés (DSR-659).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    periode_debut: date
+    periode_fin: date
+    nb_jours_semaine: NbJours
+    dt_mise_en_oeuvre: Optional[date] = None  # si absent : valeur existante conservée
+    id_rh: str = Field(..., min_length=1)
+    tmh: list[ScenarioTmhItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.periode_fin < self.periode_debut:
+            raise ValueError("periode_fin doit être >= periode_debut")
+        return self
 
 
 class PeriodeUpdate(BaseModel):

@@ -9,8 +9,12 @@ databricks-sql-connector
 databricks-sdk
 pyarrow
 python-json-logger
+cryptography
 
 # Audit securite
 bandit
 pip-audit
 safety
+
+# Tests (dev)
+pytest

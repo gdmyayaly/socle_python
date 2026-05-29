@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
+from starlette.concurrency import run_in_threadpool
 
 from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA, DEBUG_SHOW_QUERY
 from app.db.databricks import databricks
@@ -16,6 +17,7 @@ from app.routes.trafics_helpers import (
     render_sql,
     validate_params,
 )
+from app.services.jours_service import compute_nb_jours
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ def build_query(
 
 
 @router.get("/get_trafics")
-def get_trafics(
+async def get_trafics(
     co_regate: str,
     date_debut: str,
     date_fin: str,
@@ -75,7 +77,9 @@ def get_trafics(
     try:
         results = []
         for sql, params in queries:
-            results.extend(databricks.fetch_all(sql, params))
+            # Databricks est synchrone : déporté hors de la boucle d'événements.
+            rows = await run_in_threadpool(databricks.fetch_all, sql, params)
+            results.extend(rows)
     except Exception as e:
         logger.error("Erreur requête trafics : %s", e)
         detail = {
@@ -89,6 +93,20 @@ def get_trafics(
         raise HTTPException(status_code=500, detail=detail) from e
     duration_s = round(time.perf_counter() - start, 3)
 
+    # DSR-613 : RecupererTrafics renvoie aussi le nb de jours ouvrés / ouvrables.
+    # Résilient : un échec du calcul des jours n'invalide pas la réponse trafics.
+    nb_jours = None
+    try:
+        nbj = await compute_nb_jours(dt_debut.date(), dt_fin.date())
+        nb_jours = {
+            "nbJoursOuvres": nbj.nb_jours_ouvres,
+            "nbJoursOuvrables": nbj.nb_jours_ouvrables,
+        }
+    except Exception:
+        logger.warning(
+            "Calcul nb_jours indisponible (co_regate=%s) — bloc nb_jours=null.", co_regate
+        )
+
     response = {
         "execution_time_s": duration_s,
         "co_regate": co_regate,
@@ -96,6 +114,7 @@ def get_trafics(
         "date_fin": fmt_date(dt_fin),
         "count": len(results),
         "data": results,
+        "nb_jours": nb_jours,
     }
     if DEBUG_SHOW_QUERY:
         response["queries"] = [render_sql(sql, params) for sql, params in queries]

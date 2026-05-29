@@ -9,9 +9,11 @@ from app.db.mysql import db_read
 
 SELECT_SCENARIO_SQL = (
     "SELECT id_scenario, co_regate, lb_scenario, co_roc, statut, dt_creation, "
-    "dt_validation, dt_mise_en_prod, periode_debut, periode_fin, "
+    "dt_validation, dt_mise_en_oeuvre, dt_mise_en_prod, dt_real_prev, "
+    "periode_debut, periode_fin, "
     "periode_realise_debut, periode_realise_fin, periode_prev_debut, periode_prev_fin, "
-    "nb_jours_semaine, id_pic_version, version_scenario, est_fige "
+    "nb_jours_semaine, nb_jours_ouvres, nb_jours_ouvrables, nb_jours_scenario, "
+    "id_pic_version, version_scenario, est_fige "
     "FROM trppu_scenario"
 )
 

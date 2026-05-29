@@ -1,0 +1,2132 @@
+{
+  "info": {
+    "name": "TRPPU ys04 — API (DSR)",
+    "description": "Collection générée depuis OpenAPI. Couvre tous les endpoints (scénarios, TMH, comptages, variations, neutralisations, PIC, trafics, jours...).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Autres",
+      "item": [
+        {
+          "name": "GET /",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": []
+            },
+            "description": "Root"
+          }
+        },
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Health"
+          }
+        },
+        {
+          "name": "GET /health/resources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health",
+                "resources"
+              ]
+            },
+            "description": "Health Resources"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Databricks",
+      "item": [
+        {
+          "name": "GET /databricks/test",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/databricks/test",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "databricks",
+                "test"
+              ]
+            },
+            "description": "Databricks Test"
+          }
+        }
+      ]
+    },
+    {
+      "name": "MySQL Debug",
+      "item": [
+        {
+          "name": "GET /mysql/test",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/test",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "test"
+              ]
+            },
+            "description": "Mysql Test"
+          }
+        },
+        {
+          "name": "GET /mysql/tables",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/tables",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "tables"
+              ]
+            },
+            "description": "List Tables"
+          }
+        },
+        {
+          "name": "GET /mysql/columns",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/columns?table=string",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "columns"
+              ],
+              "query": [
+                {
+                  "key": "table",
+                  "value": "string",
+                  "disabled": false,
+                  "description": "Nom de la table"
+                }
+              ]
+            },
+            "description": "List Columns"
+          }
+        },
+        {
+          "name": "GET /mysql/indexes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/indexes?table=string",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "indexes"
+              ],
+              "query": [
+                {
+                  "key": "table",
+                  "value": "string",
+                  "disabled": false,
+                  "description": "Nom de la table"
+                }
+              ]
+            },
+            "description": "List Indexes"
+          }
+        },
+        {
+          "name": "GET /mysql/sample",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/sample?table=string",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "sample"
+              ],
+              "query": [
+                {
+                  "key": "table",
+                  "value": "string",
+                  "disabled": false,
+                  "description": "Nom de la table"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "disabled": true,
+                  "description": "Nombre de lignes (max 100)"
+                }
+              ]
+            },
+            "description": "Sample Rows"
+          }
+        },
+        {
+          "name": "GET /mysql/schema",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/schema",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "schema"
+              ]
+            },
+            "description": "Full Schema"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Trafics",
+      "item": [
+        {
+          "name": "GET /trppu-api/trafics/get_trafics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/trafics/get_trafics?co_regate={{co_regate}}&date_debut=string&date_fin=string",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "trafics",
+                "get_trafics"
+              ],
+              "query": [
+                {
+                  "key": "co_regate",
+                  "value": "{{co_regate}}",
+                  "disabled": false,
+                  "description": ""
+                },
+                {
+                  "key": "date_debut",
+                  "value": "string",
+                  "disabled": false,
+                  "description": ""
+                },
+                {
+                  "key": "date_fin",
+                  "value": "string",
+                  "disabled": false,
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "0",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Get Trafics"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Calcul nombre de jours",
+      "item": [
+        {
+          "name": "GET /calcl_nbr_jours/get_nbr_jours",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/calcl_nbr_jours/get_nbr_jours?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "calcl_nbr_jours",
+                "get_nbr_jours"
+              ],
+              "query": [
+                {
+                  "key": "date_debut",
+                  "value": "string",
+                  "disabled": true,
+                  "description": "Date de début au format AAAAMMJJ"
+                },
+                {
+                  "key": "date_fin",
+                  "value": "string",
+                  "disabled": true,
+                  "description": "Date de fin au format AAAAMMJJ"
+                }
+              ]
+            },
+            "description": "Get Nbr Jours"
+          }
+        },
+        {
+          "name": "GET /calcl_nbr_jours/get_nb_jours",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/calcl_nbr_jours/get_nb_jours?date_debut=string&date_fin=string",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "calcl_nbr_jours",
+                "get_nb_jours"
+              ],
+              "query": [
+                {
+                  "key": "date_debut",
+                  "value": "string",
+                  "disabled": false,
+                  "description": "Date de début AAAAMMJJ ou AAAA-MM-JJ"
+                },
+                {
+                  "key": "date_fin",
+                  "value": "string",
+                  "disabled": false,
+                  "description": "Date de fin AAAAMMJJ ou AAAA-MM-JJ"
+                }
+              ]
+            },
+            "description": "Get Nb Jours"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Logs",
+      "item": [
+        {
+          "name": "GET /logs/latest",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logs/latest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs",
+                "latest"
+              ]
+            },
+            "description": "Download Latest Log"
+          }
+        },
+        {
+          "name": "DELETE /logs",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logs?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "keep_today",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "Si true, conserve le fichier du jour intact (utile sous Windows si le handler tient le fichier ouvert)."
+                }
+              ]
+            },
+            "description": "Clean Logs"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sites",
+      "item": [
+        {
+          "name": "GET /trppu-api/sites",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/sites?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "sites"
+              ],
+              "query": [
+                {
+                  "key": "type_site",
+                  "value": "PDC",
+                  "disabled": true,
+                  "description": "Filtre type_site"
+                },
+                {
+                  "key": "co_roc",
+                  "value": "{{co_roc}}",
+                  "disabled": true,
+                  "description": "Filtre co_roc"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List Sites"
+          }
+        },
+        {
+          "name": "POST /trppu-api/sites",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/sites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "sites"
+              ]
+            },
+            "description": "Create Site",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"co_regate\": \"{{co_regate}}\",\n  \"lb_regate\": \"PARIS PDC\",\n  \"type_site\": \"PDC\",\n  \"co_roc\": \"{{co_roc}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /trppu-api/sites/{co_regate}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/sites/{{co_regate}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "sites",
+                "{{co_regate}}"
+              ]
+            },
+            "description": "Get Site"
+          }
+        },
+        {
+          "name": "PUT /trppu-api/sites/{co_regate}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/sites/{{co_regate}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "sites",
+                "{{co_regate}}"
+              ]
+            },
+            "description": "Update Site",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lb_regate\": \"PARIS PDC\",\n  \"type_site\": \"PDC\",\n  \"co_roc\": \"{{co_roc}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /trppu-api/sites/upload-excel",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/sites/upload-excel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "sites",
+                "upload-excel"
+              ]
+            },
+            "description": "Upload Excel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Produits",
+      "item": [
+        {
+          "name": "GET /trppu-api/produits",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/produits?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "produits"
+              ],
+              "query": [
+                {
+                  "key": "actif_only",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "Si true, n'inclut pas les produits désactivés."
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List Produits"
+          }
+        },
+        {
+          "name": "POST /trppu-api/produits",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/produits",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "produits"
+              ]
+            },
+            "description": "Create Produit",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"co_produit\": \"{{co_produit}}\",\n  \"lb_produit\": \"string\",\n  \"dt_desactivation\": \"2026-01-01\",\n  \"motif_desactivation\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /trppu-api/produits/{co_produit}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/produits/{{co_produit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "produits",
+                "{{co_produit}}"
+              ]
+            },
+            "description": "Get Produit"
+          }
+        },
+        {
+          "name": "PUT /trppu-api/produits/{co_produit}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/produits/{{co_produit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "produits",
+                "{{co_produit}}"
+              ]
+            },
+            "description": "Update Produit",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lb_produit\": \"string\",\n  \"dt_desactivation\": \"2026-01-01\",\n  \"motif_desactivation\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /trppu-api/produits/{co_produit}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/produits/{{co_produit}}?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "produits",
+                "{{co_produit}}"
+              ],
+              "query": [
+                {
+                  "key": "motif",
+                  "value": "Désactivé via API",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Soft Delete Produit"
+          }
+        },
+        {
+          "name": "POST /trppu-api/produits/upload-excel",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/produits/upload-excel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "produits",
+                "upload-excel"
+              ]
+            },
+            "description": "Upload Excel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "PIC Versions",
+      "item": [
+        {
+          "name": "GET /trppu-api/pic-versions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-versions?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-versions"
+              ],
+              "query": [
+                {
+                  "key": "co_regate",
+                  "value": "{{co_regate}}",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "niveau",
+                  "value": "SCENARIO",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "actif_only",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "N'inclut pas les versions désactivées."
+                },
+                {
+                  "key": "est_par_defaut",
+                  "value": "False",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List Pic Versions"
+          }
+        },
+        {
+          "name": "POST /trppu-api/pic-versions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-versions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-versions"
+              ]
+            },
+            "description": "Create Pic Version",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lb_pic_version\": \"string\",\n  \"niveau\": \"SCENARIO\",\n  \"co_regate\": \"{{co_regate}}\",\n  \"dt_activation\": \"2026-01-01T00:00:00\",\n  \"dt_desactivation\": \"2026-01-01T00:00:00\",\n  \"motif_desactivation\": \"string\",\n  \"commentaire\": \"string\",\n  \"est_par_defaut\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /trppu-api/pic-versions/enums",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-versions/enums",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-versions",
+                "enums"
+              ]
+            },
+            "description": "List Enums"
+          }
+        },
+        {
+          "name": "GET /trppu-api/pic-versions/{id_pic_version}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-versions/{{id_pic_version}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-versions",
+                "{{id_pic_version}}"
+              ]
+            },
+            "description": "Get Pic Version"
+          }
+        },
+        {
+          "name": "PUT /trppu-api/pic-versions/{id_pic_version}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-versions/{{id_pic_version}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-versions",
+                "{{id_pic_version}}"
+              ]
+            },
+            "description": "Update Pic Version",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lb_pic_version\": \"string\",\n  \"niveau\": \"SCENARIO\",\n  \"co_regate\": \"{{co_regate}}\",\n  \"dt_activation\": \"2026-01-01T00:00:00\",\n  \"dt_desactivation\": \"2026-01-01T00:00:00\",\n  \"motif_desactivation\": \"string\",\n  \"commentaire\": \"string\",\n  \"est_par_defaut\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /trppu-api/pic-versions/{id_pic_version}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-versions/{{id_pic_version}}?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-versions",
+                "{{id_pic_version}}"
+              ],
+              "query": [
+                {
+                  "key": "motif",
+                  "value": "Désactivé via API",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Soft Delete Pic Version"
+          }
+        },
+        {
+          "name": "POST /trppu-api/pic-versions/upload-excel",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-versions/upload-excel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-versions",
+                "upload-excel"
+              ]
+            },
+            "description": "Upload Excel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "PIC Coefficients",
+      "item": [
+        {
+          "name": "GET /trppu-api/pic-coefficients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-coefficients?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-coefficients"
+              ],
+              "query": [
+                {
+                  "key": "id_pic_version",
+                  "value": "1",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "co_produit",
+                  "value": "{{co_produit}}",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "jour_semaine",
+                  "value": "LUNDI",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "actif_only",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "Si true, exclut les coefficients clos."
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List Pic Coefs"
+          }
+        },
+        {
+          "name": "POST /trppu-api/pic-coefficients",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-coefficients",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-coefficients"
+              ]
+            },
+            "description": "Create Pic Coef",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_pic_version\": 1,\n  \"co_produit\": \"{{co_produit}}\",\n  \"jour_semaine\": \"LUNDI\",\n  \"dt_effet\": \"2026-01-01\",\n  \"dt_fin_effet\": \"2026-01-01\",\n  \"coef_dense\": 0,\n  \"coef_faible1\": 0,\n  \"coef_faible2\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /trppu-api/pic-coefficients/enums",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-coefficients/enums",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-coefficients",
+                "enums"
+              ]
+            },
+            "description": "List Enums"
+          }
+        },
+        {
+          "name": "GET /trppu-api/pic-coefficients/{id_pic_coef}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-coefficients/{{id_pic_coef}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-coefficients",
+                "{{id_pic_coef}}"
+              ]
+            },
+            "description": "Get Pic Coef"
+          }
+        },
+        {
+          "name": "PUT /trppu-api/pic-coefficients/{id_pic_coef}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-coefficients/{{id_pic_coef}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-coefficients",
+                "{{id_pic_coef}}"
+              ]
+            },
+            "description": "Update Pic Coef",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_pic_version\": 1,\n  \"co_produit\": \"{{co_produit}}\",\n  \"jour_semaine\": \"LUNDI\",\n  \"dt_effet\": \"2026-01-01\",\n  \"dt_fin_effet\": \"2026-01-01\",\n  \"coef_dense\": 0,\n  \"coef_faible1\": 0,\n  \"coef_faible2\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /trppu-api/pic-coefficients/{id_pic_coef}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-coefficients/{{id_pic_coef}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-coefficients",
+                "{{id_pic_coef}}"
+              ]
+            },
+            "description": "Soft Delete Pic Coef"
+          }
+        },
+        {
+          "name": "POST /trppu-api/pic-coefficients/upload-excel",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/pic-coefficients/upload-excel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "pic-coefficients",
+                "upload-excel"
+              ]
+            },
+            "description": "Upload Excel"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Scenarios",
+      "item": [
+        {
+          "name": "GET /trppu-api/scenarios",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios"
+              ],
+              "query": [
+                {
+                  "key": "co_regate",
+                  "value": "{{co_regate}}",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "co_roc",
+                  "value": "{{co_roc}}",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "statut",
+                  "value": "VALIDE",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "est_fige",
+                  "value": "False",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List Scenarios"
+          }
+        },
+        {
+          "name": "POST /trppu-api/scenarios",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios"
+              ]
+            },
+            "description": "Create Scenario",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"co_regate\": \"{{co_regate}}\",\n  \"lb_scenario\": \"Scénario test\",\n  \"co_roc\": \"{{co_roc}}\",\n  \"lb_regate\": \"PARIS PDC\",\n  \"type_site\": \"PDC\",\n  \"nb_jours_semaine\": 6,\n  \"id_pic_version\": 1,\n  \"periode_debut\": \"2026-01-01\",\n  \"periode_fin\": \"2026-12-31\",\n  \"dt_mise_en_oeuvre\": \"2026-06-01\",\n  \"id_rh\": \"{{id_rh}}\",\n  \"tmh\": [\n    {\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var j = pm.response.json();",
+                  "if (j && j.id_scenario) {",
+                  "  pm.collectionVariables.set('id_scenario', j.id_scenario);",
+                  "  console.log('id_scenario =', j.id_scenario);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trppu-api/scenarios/enums",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/enums",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "enums"
+              ]
+            },
+            "description": "List Enums"
+          }
+        },
+        {
+          "name": "GET /trppu-api/scenarios/{id_scenario}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}"
+              ]
+            },
+            "description": "Get Scenario"
+          }
+        },
+        {
+          "name": "PUT /trppu-api/scenarios/{id_scenario}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}"
+              ]
+            },
+            "description": "Update Scenario",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"periode_debut\": \"2026-01-01\",\n  \"periode_fin\": \"2026-12-31\",\n  \"nb_jours_semaine\": 6,\n  \"dt_mise_en_oeuvre\": \"2026-06-01\",\n  \"id_rh\": \"{{id_rh}}\",\n  \"tmh\": [\n    {\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /trppu-api/scenarios/{id_scenario}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}"
+              ]
+            },
+            "description": "Delete Scenario"
+          }
+        },
+        {
+          "name": "GET /trppu-api/scenarios/{id_scenario}/periodes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/periodes?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "periodes"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Get Scenario Periodes"
+          }
+        },
+        {
+          "name": "PATCH /trppu-api/scenarios/{id_scenario}/periodes",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/periodes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "periodes"
+              ]
+            },
+            "description": "Update Periodes",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"periode_debut\": \"2026-01-01\",\n  \"periode_fin\": \"2026-12-31\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /trppu-api/scenarios/{id_scenario}/edition",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/edition?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "edition"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Get Scenario Edition"
+          }
+        },
+        {
+          "name": "PATCH /trppu-api/scenarios/{id_scenario}/nb-jours-semaine",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/nb-jours-semaine",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "nb-jours-semaine"
+              ]
+            },
+            "description": "Update Nb Jours Semaine",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nb_jours_semaine\": 6\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /trppu-api/scenarios/{id_scenario}/statut",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/statut",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "statut"
+              ]
+            },
+            "description": "Update Statut",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statut\": \"VALIDE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /trppu-api/scenarios/{id_scenario}/mise-en-prod",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/mise-en-prod",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "mise-en-prod"
+              ]
+            },
+            "description": "Mise En Prod"
+          }
+        },
+        {
+          "name": "PATCH /trppu-api/scenarios/{id_scenario}/est-fige",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/est-fige",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "est-fige"
+              ]
+            },
+            "description": "Update Est Fige",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"est_fige\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /trppu-api/scenarios/{id_scenario}/lb-scenario",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/lb-scenario",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "lb-scenario"
+              ]
+            },
+            "description": "Update Lb Scenario",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lb_scenario\": \"Scénario test\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /trppu-api/scenarios/{id_scenario}/duplicate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/duplicate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "duplicate"
+              ]
+            },
+            "description": "Duplicate Scenario",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lb_scenario\": \"Scénario test\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "TMH",
+      "item": [
+        {
+          "name": "GET /trppu-api/scenarios/{id_scenario}/tmh",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/tmh?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "tmh"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "List Tmh"
+          }
+        },
+        {
+          "name": "PUT /trppu-api/scenarios/{id_scenario}/tmh",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/tmh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "tmh"
+              ]
+            },
+            "description": "Upsert Tmh",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tmh\": [\n    {\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /trppu-api/scenarios/{id_scenario}/tmh/{co_produit}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/tmh/{{co_produit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "tmh",
+                "{{co_produit}}"
+              ]
+            },
+            "description": "Update Tmh Volume",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"volume_realise\": 120000,\n  \"moyenne_journaliere\": 4000.0,\n  \"moyenne_hebdo\": 24000.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Comptages manuels",
+      "item": [
+        {
+          "name": "GET /trppu-api/scenarios/{id_scenario}/comptages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/comptages?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "comptages"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "List Comptages"
+          }
+        },
+        {
+          "name": "POST /trppu-api/scenarios/{id_scenario}/comptages",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/comptages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "comptages"
+              ]
+            },
+            "description": "Add Comptage",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"co_produit\": \"{{co_produit}}\",\n  \"dt_comptage\": \"2026-05-29\",\n  \"nb_produit\": 1500,\n  \"id_rh\": \"{{id_rh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PUT /trppu-api/scenarios/{id_scenario}/comptages/{co_produit}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/comptages/{{co_produit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "comptages",
+                "{{co_produit}}"
+              ]
+            },
+            "description": "Update Comptage",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dt_comptage\": \"2026-05-29\",\n  \"nb_produit\": 1500,\n  \"id_rh\": \"{{id_rh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /trppu-api/scenarios/{id_scenario}/comptages/{co_produit}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/comptages/{{co_produit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "comptages",
+                "{{co_produit}}"
+              ]
+            },
+            "description": "Delete Comptage"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Variations prévisionnelles",
+      "item": [
+        {
+          "name": "GET /trppu-api/scenarios/{id_scenario}/variations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/variations?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "variations"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "List Variations"
+          }
+        },
+        {
+          "name": "PUT /trppu-api/scenarios/{id_scenario}/variations/{co_produit}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/variations/{{co_produit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "variations",
+                "{{co_produit}}"
+              ]
+            },
+            "description": "Upsert Variation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variation_pct\": 25.0,\n  \"id_rh\": \"{{id_rh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /trppu-api/scenarios/{id_scenario}/variations/{co_produit}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/variations/{{co_produit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "variations",
+                "{{co_produit}}"
+              ]
+            },
+            "description": "Delete Variation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Neutralisations",
+      "item": [
+        {
+          "name": "GET /trppu-api/scenarios/{id_scenario}/neutralisations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/neutralisations?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "neutralisations"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "List Neutralisations"
+          }
+        },
+        {
+          "name": "POST /trppu-api/scenarios/{id_scenario}/neutralisations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/neutralisations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "neutralisations"
+              ]
+            },
+            "description": "Add Neutralisation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PEAK\",\n  \"dt_debut\": \"2026-11-10\",\n  \"dt_fin\": \"2026-12-19\",\n  \"id_rh\": \"{{id_rh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /trppu-api/scenarios/{id_scenario}/neutralisations",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/neutralisations?type=PEAK",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "neutralisations"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "PEAK",
+                  "disabled": false,
+                  "description": "FERIE | PEAK | SAISON"
+                },
+                {
+                  "key": "dt",
+                  "value": "2026-01-01",
+                  "disabled": true,
+                  "description": "Jour à supprimer (obligatoire pour FERIE)"
+                }
+              ]
+            },
+            "description": "Delete Neutralisation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rétention PIC",
+      "item": [
+        {
+          "name": "GET /trppu-api/scenarios/{id_scenario}/pic-coefficients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/pic-coefficients?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "pic-coefficients"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Get Pic Coefficients"
+          }
+        },
+        {
+          "name": "PUT /trppu-api/scenarios/{id_scenario}/pic-coefficients",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/pic-coefficients",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "pic-coefficients"
+              ]
+            },
+            "description": "Upsert Pic Coefficient",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"co_produit\": \"{{co_produit}}\",\n  \"jour_semaine\": \"LUNDI\",\n  \"densite\": 0,\n  \"coef\": 0.85,\n  \"id_rh\": \"{{id_rh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "id_scenario",
+      "value": "1"
+    },
+    {
+      "key": "co_regate",
+      "value": "012345"
+    },
+    {
+      "key": "co_roc",
+      "value": "012345"
+    },
+    {
+      "key": "co_produit",
+      "value": "OO"
+    },
+    {
+      "key": "id_rh",
+      "value": "A123456"
+    },
+    {
+      "key": "id_pic_version",
+      "value": "1"
+    },
+    {
+      "key": "id_pic_coef",
+      "value": "1"
+    },
+    {
+      "key": "id_session_ihm",
+      "value": "sess-001"
+    }
+  ]
+}
