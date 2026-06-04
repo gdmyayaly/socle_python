@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
 from app.security.crypto import encrypt_id_rh
-from app.routes.trppu_scenario.helpers import assert_not_fige, fetch_scenario_or_404
+from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 from app.services.jours_service import compute_nb_jour_neutralise_db
 
 from .helpers import SELECT_NEUTRALISATIONS_SQL, group_neutralisations
@@ -72,7 +72,7 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
         payload.dt_fin,
     )
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     if payload.type == "FERIE":
         nb_jour = 1
@@ -182,7 +182,7 @@ async def delete_neutralisation(
         dt,
     )
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     try:
         async with db_write.transaction() as tx:

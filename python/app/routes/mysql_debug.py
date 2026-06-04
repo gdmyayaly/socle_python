@@ -4,6 +4,7 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 
 from app.config import MYSQL_DATABASE
 from app.db.mysql import db_read
@@ -170,3 +171,84 @@ async def full_schema():
         "table_count": len(schema),
         "schema": schema,
     }
+
+
+@router.get("/dump")
+async def dump_create_sql(
+    fmt: str = Query(
+        "sql",
+        pattern="^(sql|json)$",
+        description="Format de sortie : 'sql' (texte brut copiable) ou 'json'.",
+    ),
+    drop: bool = Query(
+        True,
+        description="Inclure les DROP TABLE/VIEW IF EXISTS avant chaque CREATE.",
+    ),
+):
+    """Retourne le DDL complet (CREATE) de la base, copiable pour la recréer.
+
+    Reconstruit le SQL via `SHOW CREATE TABLE` / `SHOW CREATE VIEW` pour chaque
+    objet de la base. La sortie n'inclut PAS les données (schéma uniquement).
+
+    - `fmt=sql`  : réponse text/plain prête à copier-coller dans un client SQL.
+    - `fmt=json` : réponse structurée (un objet par table/vue + le SQL complet).
+    """
+    start = time.perf_counter()
+    try:
+        objects = await db_read.fetch_all(
+            "SELECT table_name, table_type "
+            "FROM information_schema.tables "
+            "WHERE table_schema = %s "
+            # Tables d'abord, puis vues (qui peuvent dépendre des tables)
+            "ORDER BY (table_type = 'VIEW'), table_name",
+            (MYSQL_DATABASE,),
+        )
+
+        items: list[dict] = []
+        for obj in objects:
+            name = obj["table_name"]
+            is_view = obj["table_type"] == "VIEW"
+            kind = "VIEW" if is_view else "TABLE"
+            row = await db_read.fetch_one(
+                f"SHOW CREATE {kind} `{MYSQL_DATABASE}`.`{name}`"
+            )
+            # SHOW CREATE TABLE -> clé "Create Table" ; SHOW CREATE VIEW -> "Create View"
+            create_key = "Create View" if is_view else "Create Table"
+            create_sql = (row or {}).get(create_key, "")
+            items.append({"name": name, "type": kind, "create_sql": create_sql})
+    except Exception as e:
+        logger.error("Erreur génération dump SQL : %s", e)
+        raise HTTPException(status_code=500, detail="Erreur génération dump SQL.") from e
+
+    # Assemble le script SQL complet
+    parts: list[str] = [
+        f"-- Dump du schéma de la base `{MYSQL_DATABASE}`",
+        f"-- {len(items)} objet(s) — schéma uniquement (sans données)",
+        "",
+        f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DATABASE}`;",
+        f"USE `{MYSQL_DATABASE}`;",
+        "",
+        "SET FOREIGN_KEY_CHECKS = 0;",
+        "",
+    ]
+    for item in items:
+        parts.append(f"-- ----- {item['type']} `{item['name']}` -----")
+        if drop:
+            parts.append(f"DROP {item['type']} IF EXISTS `{item['name']}`;")
+        parts.append(f"{item['create_sql']};")
+        parts.append("")
+    parts.append("SET FOREIGN_KEY_CHECKS = 1;")
+    parts.append("")
+    sql = "\n".join(parts)
+
+    duration_s = round(time.perf_counter() - start, 3)
+
+    if fmt == "json":
+        return {
+            "execution_time_s": duration_s,
+            "database": MYSQL_DATABASE,
+            "object_count": len(items),
+            "objects": items,
+            "sql": sql,
+        }
+    return PlainTextResponse(content=sql, media_type="text/plain; charset=utf-8")

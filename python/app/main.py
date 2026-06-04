@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.openapi.docs import (
     get_redoc_html,
     get_swagger_ui_html,
@@ -21,6 +22,7 @@ from app.config import (
     CORS_ALLOW_ORIGINS,
 )
 from app.json_formatter import setup_logging
+from app.services.jours_fermes_client import JoursFermesAPIError
 from app.routes import databricks as databricks_routes
 from app.routes import health as health_routes
 from app.routes import calcl_nbr_jours as calcl_nbr_jours_routes
@@ -99,6 +101,15 @@ app.add_middleware(
     allow_methods=CORS_ALLOW_METHODS,
     allow_headers=CORS_ALLOW_HEADERS,
 )
+
+
+@app.exception_handler(JoursFermesAPIError)
+async def _jours_fermes_unavailable(request: Request, exc: JoursFermesAPIError):
+    log.warning("API jours fermés indisponible sur %s : %s", request.url.path, exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Service jours fermés indisponible"},
+    )
 
 
 @app.middleware("http")

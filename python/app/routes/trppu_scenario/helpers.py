@@ -110,6 +110,53 @@ def assert_not_fige(scenario: dict[str, Any]) -> None:
         )
 
 
+def assert_not_archive(scenario: dict[str, Any]) -> None:
+    """Lève HTTP 409 si le scénario est archivé.
+
+    Un scénario ARCHIVE est terminal : aucune édition (ni de l'entête, ni des
+    sous-ressources) n'est autorisée.
+    """
+    if scenario.get("statut") == "ARCHIVE":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Scénario {scenario['id_scenario']} archivé : modification interdite.",
+        )
+
+
+def assert_editable(scenario: dict[str, Any]) -> None:
+    """Lève HTTP 409 si le scénario n'est pas modifiable (archivé ou figé)."""
+    assert_not_archive(scenario)
+    assert_not_fige(scenario)
+
+
+# Tables détenant des données opérationnelles rattachées à un scénario (aucune
+# contrainte FK en base : le nettoyage est explicite à la suppression).
+# Les tables de logs (trppu_api_log, trppu_recalcul_log) sont volontairement
+# exclues pour préserver la traçabilité.
+SCENARIO_CHILD_TABLES = (
+    "trppu_neutralisations",
+    "trppu_tmh",
+    "trppu_scenario_comptages_manuels",
+    "trppu_scenario_exclusions",
+    "trppu_scenario_pic_coeffs",
+    "trppu_scenario_variations_prev",
+    "trppu_trafic_agrebal",
+    "trppu_trafic_pdi",
+    "trppu_pic_version",
+)
+
+
+async def delete_scenario_cascade(tx, id_scenario: int) -> None:
+    """Supprime définitivement un scénario et toutes ses données rattachées.
+
+    Aucune contrainte FK n'existe en base : on supprime explicitement les lignes
+    des tables enfants (cf. SCENARIO_CHILD_TABLES) avant le scénario lui-même.
+    """
+    for table in SCENARIO_CHILD_TABLES:
+        await tx.execute(f"DELETE FROM {table} WHERE id_scenario = %s", (id_scenario,))
+    await tx.execute("DELETE FROM trppu_scenario WHERE id_scenario = %s", (id_scenario,))
+
+
 async def ensure_site_exists(
     tx,
     co_regate: str,

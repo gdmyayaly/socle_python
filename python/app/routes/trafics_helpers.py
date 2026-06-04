@@ -11,9 +11,9 @@ from app.config import MAX_DATE_RANGE_DAYS
 logger = logging.getLogger(__name__)
 
 TABLES_PERIODE = {
-    "jours": "g_mdp_trafics_jour_actualise",
-    "semaines": "g_mdp_trafics_semaine_actualise",
-    "mois": "g_mdp_trafics_mois_actualise",
+    "jours": "g_trppu_trafics_jour",
+    "semaines": "g_trppu_trafics_semaine",
+    "mois": "g_trppu_trafics_mois",
 }
 
 DATE_COLUMN_PERIODE = {

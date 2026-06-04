@@ -10,21 +10,15 @@ tickets DSR. Ils ne modifient **pas** `db_analyse/schema_trppu.sql` (fichier
 |---|---------|-------|---------|
 | 001 | `001_widen_id_rh_columns.sql` | `id_rh*` → VARCHAR(255) (token Fernet) | 634, 661 |
 | 002 | `002_add_param_columns.sql` | colonnes `id_rh`/`dt_creation` + enum `SAISON` | 644, 645, 646 |
-| 003 | `003_create_trppu_jours_feries.sql` | table des jours fériés | 613, 645 |
-| 004 | `004_seed_trppu_jours_feries.sql` | seed fériés FR 2020-2035 (généré) | 613, 645 |
 
 ```bash
 mysql -h <host> -u <user> -p trppu < db_migrations/001_widen_id_rh_columns.sql
 mysql -h <host> -u <user> -p trppu < db_migrations/002_add_param_columns.sql
-mysql -h <host> -u <user> -p trppu < db_migrations/003_create_trppu_jours_feries.sql
-mysql -h <host> -u <user> -p trppu < db_migrations/004_seed_trppu_jours_feries.sql
 ```
 
-## Régénérer le seed des fériés
-
-```bash
-python scripts/gen_jours_feries_sql.py 2020 2035
-```
+> **Jours fériés / fermés (613, 645)** : ne reposent plus sur une table en base.
+> Ils sont récupérés via l'API jours-fermes (cf. `app/services/jours_fermes_client.py`,
+> variable `JOURS_FERMES_API_BASE_URL`).
 
 ## Points de vigilance
 

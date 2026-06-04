@@ -9,6 +9,20 @@
     </span>
   </div>
 
+  <!-- Sélecteur de granularité (écart d'accroche) -->
+  <div class="granularity-bar">
+    <span class="granularity-label">Écart</span>
+    <div class="granularity-options">
+      <button *ngFor="let g of granularities"
+              type="button"
+              class="granularity-btn"
+              [class.active]="granularity === g.value"
+              (click)="setGranularity(g.value)">
+        {{ g.label }}
+      </button>
+    </div>
+  </div>
+
   <!-- Bornes extrêmes -->
   <div class="extremes">
     <div class="extreme-chip">
@@ -25,7 +39,7 @@
   <div class="slider-wrapper">
 
     <!-- Tooltip flottant début -->
-    <div class="floating-tooltip tooltip-start" [style.left.%]="startPercent">
+    <div class="floating-tooltip tooltip-start" [class.is-close]="tooltipsClose" [style.left.%]="startPercent">
       <div class="tooltip-content" *ngIf="!editingStart" (click)="openEditStart()">
         <mat-icon>edit_calendar</mat-icon>
         <span>{{ formatDateFr(startDateStr) }}</span>
@@ -46,7 +60,7 @@
     </div>
 
     <!-- Tooltip flottant fin -->
-    <div class="floating-tooltip tooltip-end" [style.left.%]="endPercent">
+    <div class="floating-tooltip tooltip-end" [class.is-close]="tooltipsClose" [style.left.%]="endPercent">
       <div class="tooltip-content" *ngIf="!editingEnd" (click)="openEditEnd()">
         <span>{{ formatDateFr(endDateStr) }}</span>
         <mat-icon>edit_calendar</mat-icon>
@@ -69,19 +83,29 @@
     <!-- Track -->
     <div class="track" #track>
 
-      <!-- Marqueur Aujourd'hui -->
-      <div class="today-marker" *ngIf="todayPercent >= 0" [style.left.%]="todayPercent">
-        <div class="today-line"></div>
-        <div class="today-label" *ngIf="!todayBeforePeriode && !todayAfterPeriode">Aujourd'hui ({{ formatDateFr(todayStr) }})</div>
-        <div class="today-label today-label-outside" *ngIf="todayBeforePeriode">{{ formatDateFr(startDateStr) }} (auj. {{ formatDateFr(todayStr) }})</div>
-        <div class="today-label today-label-outside" *ngIf="todayAfterPeriode">{{ formatDateFr(endDateStr) }} (auj. {{ formatDateFr(todayStr) }})</div>
+      <!-- Segment réalisé (début → curseur) -->
+      <div class="track-realise"
+           [style.left.%]="startPercent"
+           [style.width.%]="realiseWidthPercent"></div>
+
+      <!-- Segment prévisionnel (curseur → fin) -->
+      <div class="track-prev"
+           [style.left.%]="cursorPercent"
+           [style.width.%]="prevWidthPercent">
+        <div class="track-active-glow"></div>
       </div>
 
-      <!-- Zone active (fourchette) -->
-      <div class="track-active"
-           [style.left.%]="startPercent"
-           [style.width.%]="rangePercent">
-        <div class="track-active-glow"></div>
+      <!-- Curseur "date du jour" déplaçable -->
+      <div class="cursor"
+           [class.cursor-dragging]="dragging === 'cursor'"
+           [style.left.%]="cursorPercent"
+           (mousedown)="onThumbMouseDown($event, 'cursor')"
+           (touchstart)="onThumbTouchStart($event, 'cursor')">
+        <div class="cursor-line"></div>
+        <div class="cursor-label">
+          <mat-icon>today</mat-icon>
+          {{ formatDateFr(cursorDateStr) }}
+        </div>
       </div>
 
       <!-- Thumb début -->
@@ -111,6 +135,16 @@
     <mat-icon>swap_horiz</mat-icon>
     <span class="range-days">{{ selectedDays }} jours</span>
     <span class="range-equiv">( {{ durationLabel }} )</span>
+  </div>
+
+  <!-- Répartition réalisé / prévisionnel -->
+  <div class="range-breakdown">
+    <span class="breakdown-chip chip-realise">
+      <span class="dot"></span> Réalisé : {{ realiseSpanLabel }}
+    </span>
+    <span class="breakdown-chip chip-prev">
+      <span class="dot"></span> Prévisionnel : {{ prevSpanLabel }}
+    </span>
   </div>
 
   <!-- Notifications -->

@@ -1,4 +1,61 @@
-<div class="recap-container">
-  <p><strong>Scénario :</strong> {{ scenario ? scenario.nom : '—' }}</p>
-  <p><strong>Statut :</strong> {{ scenario ? scenario.statut : '—' }}</p>
+<div class="recap-container" *ngIf="scenario; else noScenario">
+
+  <div class="recap-header">
+    <div class="recap-title">
+      <mat-icon>description</mat-icon>
+      <span class="recap-name">{{ scenario.lb_scenario }}</span>
+      <mat-icon *ngIf="scenario.est_fige" class="lock-icon" title="Scénario figé">lock</mat-icon>
+    </div>
+    <span class="status-badge" [ngClass]="'status-' + scenario.statut.toLowerCase().replace(' ', '-')">
+      {{ scenario.statut }}
+    </span>
+  </div>
+
+  <div class="recap-grid">
+    <div class="recap-item">
+      <span class="recap-label">Version</span>
+      <span class="recap-value">v{{ scenario.version_scenario }}</span>
+    </div>
+    <div class="recap-item">
+      <span class="recap-label">Code ROC</span>
+      <span class="recap-value">{{ scenario.co_roc || '—' }}</span>
+    </div>
+    <div class="recap-item">
+      <span class="recap-label">Code Regate</span>
+      <span class="recap-value">{{ scenario.co_regate || '—' }}</span>
+    </div>
+    <div class="recap-item">
+      <span class="recap-label">Jours / semaine</span>
+      <span class="recap-value">{{ scenario.nb_jours_semaine }}</span>
+    </div>
+    <div class="recap-item">
+      <span class="recap-label">Créé le</span>
+      <span class="recap-value">{{ scenario.dt_creation | date:'dd/MM/yyyy' }}</span>
+    </div>
+    <div class="recap-item">
+      <span class="recap-label">Validé le</span>
+      <span class="recap-value">{{ (scenario.dt_validation | date:'dd/MM/yyyy') || '—' }}</span>
+    </div>
+    <div class="recap-item">
+      <span class="recap-label">Mise en prod</span>
+      <span class="recap-value">{{ (scenario.dt_mise_en_prod | date:'dd/MM/yyyy') || '—' }}</span>
+    </div>
+    <div class="recap-item recap-item-wide">
+      <span class="recap-label">Période</span>
+      <span class="recap-value">
+        <ng-container *ngIf="scenario.periode_debut && scenario.periode_fin; else noPeriode">
+          {{ scenario.periode_debut | date:'dd/MM/yyyy' }} → {{ scenario.periode_fin | date:'dd/MM/yyyy' }}
+        </ng-container>
+        <ng-template #noPeriode>Non définie</ng-template>
+      </span>
+    </div>
+  </div>
+
 </div>
+
+<ng-template #noScenario>
+  <div class="recap-container recap-empty">
+    <mat-icon>info_outline</mat-icon>
+    <span>Aucun scénario sélectionné.</span>
+  </div>
+</ng-template>

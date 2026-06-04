@@ -34,8 +34,21 @@ export class CalculComponent {
     this.periodeHasChanges = false;
   }
 
-  onEditScenario(scenario: Scenario): void {
-    if (this.selectedScenario && this.selectedScenario.id !== scenario.id && this.periodeHasChanges) {
+  get selectedPeriode(): Periode | null {
+    if (!this.selectedScenario) return null;
+    const { periode_debut, periode_fin } = this.selectedScenario;
+    if (!periode_debut || !periode_fin) return null;
+    return { dateDebut: periode_debut, dateFin: periode_fin };
+  }
+
+  onSelectScenario(scenario: Scenario | null): void {
+    if (scenario === null) {
+      this.selectedScenario = null;
+      this.needsRefresh = false;
+      this.periodeHasChanges = false;
+      return;
+    }
+    if (this.selectedScenario && this.selectedScenario.id_scenario !== scenario.id_scenario && this.periodeHasChanges) {
       const ok = confirm(
         'Vous avez des modifications non sauvegardées sur la période. Changer de scénario réinitialisera la période. Continuer ?'
       );
@@ -47,7 +60,7 @@ export class CalculComponent {
   }
 
   onRemoveScenario(scenario: Scenario): void {
-    if (this.selectedScenario?.id === scenario.id) {
+    if (this.selectedScenario?.id_scenario === scenario.id_scenario) {
       this.selectedScenario = null;
     }
   }
@@ -56,8 +69,8 @@ export class CalculComponent {
     this.currentPeriode = periode;
   }
 
-  onAddScenario(): void {
-    console.log('Nouveau scénario ajouté');
+  onAddScenario(scenario: Scenario): void {
+    console.log('Nouveau scénario ajouté', scenario);
   }
 
   onComptagesChange(comptages: Comptage[]): void {

@@ -13,8 +13,10 @@ from app.services.jours_service import compute_nb_jours
 
 from .helpers import (
     SELECT_SCENARIO_SQL,
-    assert_not_fige,
+    assert_editable,
+    assert_not_archive,
     default_periode,
+    delete_scenario_cascade,
     ensure_site_exists,
     fetch_scenario_or_404,
     increment_version,
@@ -449,9 +451,44 @@ async def get_scenario_edition(
     }
 
 
-@router.delete("/{id_scenario}", response_model=ScenarioOut)
+@router.delete("/{id_scenario}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_scenario(id_scenario: int):
-    """Soft-delete : transition de statut vers ARCHIVE."""
+    """Suppression DÉFINITIVE du scénario et de toutes ses données rattachées.
+
+    Hard-delete (les tables enfants sont nettoyées explicitement, faute de FK).
+    Pour un retrait réversible/conservant l'historique, utiliser plutôt
+    POST /{id_scenario}/archive.
+    """
+    start = time.perf_counter()
+    logger.info("Début suppression scénario (id_scenario=%d)", id_scenario)
+
+    await fetch_scenario_or_404(id_scenario)
+
+    try:
+        async with db_write.transaction() as tx:
+            await delete_scenario_cascade(tx, id_scenario)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Erreur suppression scénario (id_scenario=%d)", id_scenario)
+        raise HTTPException(status_code=500, detail="Erreur suppression scenario.") from e
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "Suppression scénario terminée (id_scenario=%d, duration_ms=%.1f)",
+        id_scenario,
+        duration_ms,
+    )
+    return None
+
+
+@router.post("/{id_scenario}/archive", response_model=ScenarioOut)
+async def archive_scenario(id_scenario: int):
+    """Archive le scénario : transition de statut vers ARCHIVE (retrait réversible).
+
+    Conserve le scénario et ses données ; le scénario archivé devient non modifiable.
+    Pour une suppression définitive, utiliser DELETE /{id_scenario}.
+    """
     start = time.perf_counter()
     logger.info("Début archivage scénario (id_scenario=%d)", id_scenario)
 
@@ -497,7 +534,7 @@ async def update_periodes(id_scenario: int, payload: PeriodeUpdate):
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     new_debut = fields.get("periode_debut", scenario["periode_debut"])
     new_fin = fields.get("periode_fin", scenario["periode_fin"])
@@ -564,7 +601,7 @@ async def update_nb_jours_semaine(id_scenario: int, payload: NbJoursUpdate):
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     try:
         async with db_write.transaction() as tx:
@@ -691,7 +728,8 @@ async def update_est_fige(id_scenario: int, payload: FigeUpdate):
         payload.est_fige,
     )
 
-    await fetch_scenario_or_404(id_scenario)
+    scenario = await fetch_scenario_or_404(id_scenario)
+    assert_not_archive(scenario)
 
     try:
         async with db_write.transaction() as tx:
@@ -729,7 +767,7 @@ async def update_lb_scenario(id_scenario: int, payload: LbScenarioUpdate):
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     try:
         async with db_write.transaction() as tx:

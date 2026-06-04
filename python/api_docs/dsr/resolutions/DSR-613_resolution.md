@@ -51,8 +51,8 @@ python -m pytest tests/test_jours_service.py -q
 ## 8. ➡️ Commentaire Jira
 > `RecupererTrafics` renvoie désormais un bloc `nb_jours` (`nbJoursOuvres`,
 > `nbJoursOuvrables`) calculé par le service `CalculerNbJours` (endpoint dédié
-> `GET /calcl_nbr_jours/get_nb_jours`), avec déduction des fériés nationaux (table
-> `trppu_jours_feries`). Le calcul des jours est résilient (n'empêche pas le renvoi des trafics).
+> `GET /calcl_nbr_jours/get_nb_jours`), avec déduction des jours fériés / fermés
+> récupérés via l'API jours-fermes. Le calcul des jours est résilient (n'empêche pas le renvoi des trafics).
 > **⚠️ À valider PO** : l'exemple du ticket donne 262 jours ouvrés ; le calcul correct
 > (lun-ven, fériés déduits) est **272** sur la période d'exemple — 262 provient d'une
 > erreur de comptage des samedis. Le côté ouvrables (328) est correct.

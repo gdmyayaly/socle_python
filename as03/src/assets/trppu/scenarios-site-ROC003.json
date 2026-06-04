@@ -1,38 +1,22 @@
 [
   {
-    "id": 6,
-    "nom": "Scénario Initial",
-    "dateCreation": "2025-06-01",
-    "statut": "En production",
-    "dateValidation": "2025-06-15",
-    "dateMo": "2025-07-01",
-    "dateProduction": "2025-07-10",
-    "periode": {
-      "dateDebut": "2025-07-01",
-      "dateFin": "2027-06-30"
-    }
-  },
-  {
-    "id": 7,
-    "nom": "Scénario Révision",
-    "dateCreation": "2025-08-03",
-    "statut": "Validé",
-    "dateValidation": "2025-08-20",
-    "dateMo": null,
-    "dateProduction": null,
-    "periode": {
-      "dateDebut": "2025-09-01",
-      "dateFin": "2026-08-31"
-    }
-  },
-  {
-    "id": 8,
-    "nom": "Scénario Pilote",
-    "dateCreation": "2025-09-14",
-    "statut": "Brouillon",
-    "dateValidation": null,
-    "dateMo": null,
-    "dateProduction": null,
-    "periode": null
+    "id_scenario": 6,
+    "co_regate": "REG003",
+    "lb_scenario": "Saint-Charles travaux",
+    "co_roc": "ROC003",
+    "statut": "EN PRODUCTION",
+    "dt_creation": "2026-03-18T08:00:00",
+    "dt_validation": "2026-03-25T11:30:00",
+    "dt_mise_en_prod": "2026-04-01T07:00:00",
+    "periode_debut": "2026-04-01",
+    "periode_fin": "2027-03-31",
+    "periode_realise_debut": "2026-04-01",
+    "periode_realise_fin": "2026-05-20",
+    "periode_prev_debut": "2026-05-21",
+    "periode_prev_fin": "2027-03-31",
+    "nb_jours_semaine": 5,
+    "id_pic_version": 3,
+    "version_scenario": 4,
+    "est_fige": true
   }
 ]

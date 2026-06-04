@@ -1,16 +1,129 @@
 .recap-container {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  background: #f5f5f5;
+  background: #fff;
   border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 12px 20px;
+  border-radius: 10px;
+  padding: 16px 20px;
   margin: 16px 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
-.recap-container p {
-  margin: 0;
+/* ---- En-tête ---- */
+.recap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eceff1;
+}
+
+.recap-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recap-title > mat-icon {
+  color: #3f51b5;
+}
+
+.recap-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #263238;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lock-icon {
+  font-size: 16px;
+  width: 16px;
+  height: 16px;
+  color: #9e9e9e;
+}
+
+/* ---- Grille d'infos ---- */
+.recap-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px 20px;
+  margin-top: 14px;
+}
+
+.recap-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.recap-item-wide {
+  grid-column: span 2;
+}
+
+.recap-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #90a4ae;
+}
+
+.recap-value {
   font-size: 14px;
-  color: #424242;
+  color: #37474f;
+}
+
+/* ---- Badges de statut (cohérent avec la liste) ---- */
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  background: #eceff1;
+  color: #546e7a;
+}
+
+.status-en-cours {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.status-valide {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.status-en-production {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+/* ---- État vide ---- */
+.recap-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #90a4ae;
+  font-size: 14px;
+  font-style: italic;
+}
+
+.recap-empty mat-icon {
+  color: #b0bec5;
+}
+
+@media (max-width: 720px) {
+  .recap-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .recap-item-wide {
+    grid-column: span 2;
+  }
 }

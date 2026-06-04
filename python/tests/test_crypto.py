@@ -39,3 +39,20 @@ def test_entree_vide_rejetee(crypto):
 def test_token_invalide_rejete(crypto):
     with pytest.raises(ValueError):
         crypto.decrypt_id_rh("pas-un-token-fernet")
+
+
+def test_cle_vide_desactive_le_cryptage(monkeypatch):
+    """Clé vide => pass-through : encrypt/decrypt renvoient la valeur en clair."""
+    import app.config as config
+
+    monkeypatch.setattr(config, "ID_RH_CRYPTO_KEY", "", raising=False)
+    import app.security.crypto as crypto_mod
+
+    importlib.reload(crypto_mod)
+    crypto_mod._get_fernet.cache_clear()
+
+    assert crypto_mod.encrypt_id_rh("A123456") == "A123456"
+    assert crypto_mod.decrypt_id_rh("A123456") == "A123456"
+    # Entrée vide toujours rejetée même cryptage désactivé.
+    with pytest.raises(ValueError):
+        crypto_mod.encrypt_id_rh("")

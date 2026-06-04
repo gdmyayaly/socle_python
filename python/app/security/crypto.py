@@ -8,6 +8,8 @@ Clé : variable d'environnement / config `ID_RH_CRYPTO_KEY`.
   utilisée telle quelle.
 - Sinon, une clé Fernet est **dérivée** du secret fourni (SHA-256 -> 32 octets ->
   base64 url-safe). Cela permet d'utiliser n'importe quel secret d'exploitation.
+- **Si la clé est vide** (`ID_RH_CRYPTO_KEY` non définie), le cryptage est **désactivé** :
+  `encrypt_id_rh` / `decrypt_id_rh` renvoient la valeur telle quelle (pass-through).
 
 NB : un token Fernet fait ~100+ caractères ; les colonnes `id_rh*` doivent donc
 être en `VARCHAR(255)` (cf. db_migrations/001_widen_id_rh_columns.sql).
@@ -43,35 +45,45 @@ def _derive_fernet_key(secret: str) -> bytes:
 
 
 @lru_cache(maxsize=1)
-def _get_fernet() -> Fernet:
+def _get_fernet() -> Fernet | None:
+    """Retourne l'instance Fernet, ou `None` si le cryptage est désactivé (clé vide)."""
     if not ID_RH_CRYPTO_KEY:
-        raise RuntimeError(
-            "ID_RH_CRYPTO_KEY non configurée : impossible de (dé)crypter l'id_rh. "
-            "Définir ID_RH_CRYPTO_KEY dans l'environnement (.env)."
+        logger.warning(
+            "ID_RH_CRYPTO_KEY non configurée : cryptage de l'id_rh DÉSACTIVÉ "
+            "(valeurs stockées en clair)."
         )
+        return None
     return Fernet(_derive_fernet_key(ID_RH_CRYPTO_KEY))
 
 
 def encrypt_id_rh(clear: str) -> str:
     """Chiffre un id_rh en clair et retourne un token (str) à stocker en base.
 
-    Lève RuntimeError si la clé n'est pas configurée, ValueError si l'entrée est vide.
+    Si la clé n'est pas configurée, retourne la valeur en clair (cryptage désactivé).
+    Lève ValueError si l'entrée est vide.
     """
     if clear is None or str(clear).strip() == "":
         raise ValueError("id_rh vide : rien à crypter.")
-    token = _get_fernet().encrypt(str(clear).strip().encode("utf-8"))
+    fernet = _get_fernet()
+    if fernet is None:
+        return str(clear).strip()
+    token = fernet.encrypt(str(clear).strip().encode("utf-8"))
     return token.decode("ascii")
 
 
 def decrypt_id_rh(token: str) -> str:
     """Déchiffre un token id_rh stocké en base et retourne l'id_rh en clair.
 
-    Lève RuntimeError si la clé n'est pas configurée, ValueError si le token est invalide.
+    Si la clé n'est pas configurée, retourne la valeur telle quelle (cryptage désactivé).
+    Lève ValueError si le token est vide ou invalide.
     """
     if token is None or str(token).strip() == "":
         raise ValueError("token id_rh vide : rien à décrypter.")
+    fernet = _get_fernet()
+    if fernet is None:
+        return str(token).strip()
     try:
-        clear = _get_fernet().decrypt(str(token).encode("ascii"))
+        clear = fernet.decrypt(str(token).encode("ascii"))
     except InvalidToken as e:
         raise ValueError("Token id_rh invalide ou clé incorrecte.") from e
     return clear.decode("utf-8")

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
 from app.security.crypto import encrypt_id_rh
-from app.routes.trppu_scenario.helpers import assert_not_fige, fetch_scenario_or_404
+from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 
 from .helpers import SELECT_COMPTAGES_SQL, fetch_comptage
 from .schemas import ComptageCreate, ComptageOut, ComptageUpdate
@@ -61,7 +61,7 @@ async def add_comptage(id_scenario: int, payload: ComptageCreate):
         payload.nb_produit,
     )
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     dt_comptage = payload.dt_comptage or date.today()
     id_rh_token = encrypt_id_rh(payload.id_rh)
@@ -115,7 +115,7 @@ async def update_comptage(id_scenario: int, co_produit: str, payload: ComptageUp
         payload.nb_produit,
     )
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     dt_comptage = payload.dt_comptage or date.today()
     id_rh_token = encrypt_id_rh(payload.id_rh)
@@ -161,7 +161,7 @@ async def delete_comptage(id_scenario: int, co_produit: str):
         "Début suppression comptage (id_scenario=%d, co_produit=%s)", id_scenario, co_produit
     )
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     try:
         async with db_write.transaction() as tx:

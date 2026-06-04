@@ -1,25 +1,42 @@
 [
   {
-    "id": 4,
-    "nom": "Scénario Principal",
-    "dateCreation": "2025-02-20",
-    "statut": "Validé",
-    "dateValidation": "2025-03-10",
-    "dateMo": "2025-03-25",
-    "dateProduction": "2025-04-01",
-    "periode": {
-      "dateDebut": "2025-03-01",
-      "dateFin": "2027-02-28"
-    }
+    "id_scenario": 4,
+    "co_regate": "REG002",
+    "lb_scenario": "Montparnasse été 2026",
+    "co_roc": "ROC002",
+    "statut": "EN COURS",
+    "dt_creation": "2026-04-12T09:15:00",
+    "dt_validation": null,
+    "dt_mise_en_prod": null,
+    "periode_debut": "2026-06-01",
+    "periode_fin": "2026-09-30",
+    "periode_realise_debut": "2026-06-01",
+    "periode_realise_fin": "2026-07-15",
+    "periode_prev_debut": "2026-07-16",
+    "periode_prev_fin": "2026-09-30",
+    "nb_jours_semaine": 7,
+    "id_pic_version": 2,
+    "version_scenario": 2,
+    "est_fige": false
   },
   {
-    "id": 5,
-    "nom": "Scénario Test",
-    "dateCreation": "2025-05-12",
-    "statut": "Brouillon",
-    "dateValidation": null,
-    "dateMo": null,
-    "dateProduction": null,
-    "periode": null
+    "id_scenario": 5,
+    "co_regate": "REG002",
+    "lb_scenario": "Montparnasse base",
+    "co_roc": "ROC002",
+    "statut": "VALIDE",
+    "dt_creation": "2026-02-03T14:40:00",
+    "dt_validation": "2026-02-20T10:00:00",
+    "dt_mise_en_prod": null,
+    "periode_debut": "2026-01-01",
+    "periode_fin": "2026-12-31",
+    "periode_realise_debut": "2026-01-01",
+    "periode_realise_fin": "2026-05-01",
+    "periode_prev_debut": "2026-05-02",
+    "periode_prev_fin": "2026-12-31",
+    "nb_jours_semaine": 6,
+    "id_pic_version": 1,
+    "version_scenario": 1,
+    "est_fige": true
   }
 ]

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
-from app.routes.trppu_scenario.helpers import assert_not_fige, fetch_scenario_or_404
+from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 
 from .helpers import SELECT_TMH_ONE_SQL, fetch_tmh, upsert_tmh_rows
 from .schemas import TmhBatchResult, TmhBatchUpdate, TmhOut, TmhVolumeUpdate
@@ -56,7 +56,7 @@ async def upsert_tmh(id_scenario: int, payload: TmhBatchUpdate):
         len(payload.tmh),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     try:
         async with db_write.transaction() as tx:
@@ -91,7 +91,7 @@ async def update_tmh_volume(id_scenario: int, co_produit: str, payload: TmhVolum
         safe_preview(payload.model_dump(mode="json")),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
 
     try:
         async with db_write.transaction() as tx:

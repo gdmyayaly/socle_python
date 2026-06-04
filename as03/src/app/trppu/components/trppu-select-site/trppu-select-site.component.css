@@ -7,6 +7,39 @@
   min-width: 350px;
 }
 
+/* --- Options de l'autocomplete (multi-lignes) --- */
+.site-option {
+  height: auto !important;
+  line-height: normal;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.option-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.option-main {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.option-sub {
+  font-size: 12px;
+  color: #5c6bc0;
+}
+
+/* --- Tooltip multi-lignes ---
+   ::ng-deep nécessaire car le tooltip est rendu hors du composant.
+   Sinon, mets cette règle dans le styles.css global (sans ::ng-deep). */
+::ng-deep .site-tooltip {
+  white-space: pre-line;
+  font-size: 12px;
+}
+
+/* --- Badge récap --- */
 .badge-container {
   display: flex;
   align-items: center;

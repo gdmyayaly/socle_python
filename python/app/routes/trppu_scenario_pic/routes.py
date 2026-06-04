@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
 from app.security.crypto import encrypt_id_rh
-from app.routes.trppu_scenario.helpers import assert_not_fige, fetch_scenario_or_404
+from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 
 from .helpers import (
     DEFAULT_PIC_VERSION,
@@ -88,7 +88,7 @@ async def upsert_pic_coefficient(id_scenario: int, payload: PicCoefUpsert):
         payload.densite,
     )
     scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_fige(scenario)
+    assert_editable(scenario)
     id_rh_token = encrypt_id_rh(payload.id_rh)
 
     try:

@@ -1,6 +1,7 @@
 """Service de calcul des nombres de jours (ouvrés / ouvrables / neutralisés).
 
-Logique **pure** (testable sans base) + accès DB à la table `trppu_jours_feries`.
+Logique **pure** (testable sans dépendance) + récupération des jours fériés via
+l'API jours fermés (cf. `app.services.jours_fermes_client`).
 
 Définitions (cf. DSR-613) :
 - jours ouvrés    = lundi -> vendredi (5/semaine)
@@ -21,57 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from app.db.mysql import db_read
-
-# --- Jours fériés français (logique pure, utilisée pour le seed et les tests) ---
-
-
-def _easter_sunday(year: int) -> date:
-    """Dimanche de Pâques (algorithme de Computus grégorien anonyme)."""
-    a = year % 19
-    b = year // 100
-    c = year % 100
-    d = b // 4
-    e = b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i = c // 4
-    k = c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day = ((h + l - 7 * m + 114) % 31) + 1
-    return date(year, month, day)
-
-
-def compute_french_holidays(year: int) -> dict[date, str]:
-    """Jours fériés nationaux français pour une année (fixes + liés à Pâques)."""
-    easter = _easter_sunday(year)
-    feries: dict[date, str] = {
-        date(year, 1, 1): "Jour de l'an",
-        date(year, 5, 1): "Fête du Travail",
-        date(year, 5, 8): "Victoire 1945",
-        date(year, 7, 14): "Fête nationale",
-        date(year, 8, 15): "Assomption",
-        date(year, 11, 1): "Toussaint",
-        date(year, 11, 11): "Armistice 1918",
-        date(year, 12, 25): "Noël",
-        easter + timedelta(days=1): "Lundi de Pâques",
-        easter + timedelta(days=39): "Ascension",
-        easter + timedelta(days=50): "Lundi de Pentecôte",
-    }
-    return feries
-
-
-def french_holidays_between(debut: date, fin: date) -> set[date]:
-    """Ensemble des fériés FR (national) entre deux dates incluses."""
-    feries: set[date] = set()
-    for year in range(debut.year, fin.year + 1):
-        for d in compute_french_holidays(year):
-            if debut <= d <= fin:
-                feries.add(d)
-    return feries
+from app.services.jours_fermes_client import fetch_feries_between
 
 
 # --- Comptage des jours (logique pure) ---
@@ -135,21 +86,15 @@ def compute_nb_jour_neutralise(
     return c.nb_jours_ouvrables
 
 
-# --- Accès base : table trppu_jours_feries ---
+# --- Récupération des fériés : API jours fermés ---
 
 
 async def load_feries(debut: date, fin: date) -> set[date]:
-    """Charge les fériés nationaux de la table `trppu_jours_feries` sur [debut, fin]."""
-    rows = await db_read.fetch_all(
-        "SELECT dt FROM trppu_jours_feries "
-        "WHERE est_national = 1 AND dt BETWEEN %s AND %s",
-        (debut, fin),
-    )
-    result: set[date] = set()
-    for r in rows:
-        dt = r["dt"]
-        result.add(dt if isinstance(dt, date) else date.fromisoformat(str(dt)))
-    return result
+    """Récupère les jours fermés via l'API jours-fermes sur [debut, fin].
+
+    Lève `JoursFermesAPIError` si l'API est indisponible (cf. jours_fermes_client).
+    """
+    return await fetch_feries_between(debut, fin)
 
 
 async def compute_nb_jours(debut: date, fin: date) -> NbJours:

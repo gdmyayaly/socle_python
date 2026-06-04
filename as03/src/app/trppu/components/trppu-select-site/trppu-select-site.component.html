@@ -1,12 +1,40 @@
 <!-- Mode sélection -->
 <div *ngIf="!selectedSite" class="select-container">
-  <mat-form-field appearance="outline" class="site-select">
-    <mat-label>Sélectionner un site</mat-label>
-    <mat-select (selectionChange)="onSelectionChange($event.value)">
-      <mat-option *ngFor="let site of sites" [value]="site">
-        {{ site.libelleCourt }}{{ site.denomination ? ' — ' + site.denomination : '' }}
-      </mat-option>
-    </mat-select>
+  <mat-form-field class="example-full-width" appearance="fill">
+    <input type="text"
+      placeholder="Sélectionner un site"
+      aria-label="Sélectionner un site"
+      matInput
+      [formControl]="myControl"
+      [matAutocomplete]="auto">
+
+    <mat-spinner *ngIf="loading" diameter="18" matSuffix></mat-spinner>
+
+    <mat-autocomplete #auto="matAutocomplete"
+      (optionSelected)="onSelectionChange($event.option.value)"
+      [displayWith]="displaySite">
+
+      <mat-optgroup *ngFor="let group of filteredGroups | async" [label]="group.type">
+        <mat-option *ngFor="let site of group.sites"
+          [value]="site"
+          class="site-option"
+          [matTooltip]="tooltipFor(site)"
+          matTooltipClass="site-tooltip"
+          matTooltipPosition="right"
+          [matTooltipShowDelay]="300">
+          <div class="option-line">
+            <span class="option-main">
+              {{ site.libelleCourt || site.denomination || site.libelle }}
+            </span>
+            <span class="option-sub">
+              {{ site.codeRoc }} - {{ site.codeRegate }}
+              <ng-container *ngIf="site.dex"> · {{ site.dex }}</ng-container>
+            </span>
+          </div>
+        </mat-option>
+      </mat-optgroup>
+
+    </mat-autocomplete>
   </mat-form-field>
 </div>
 
@@ -14,9 +42,9 @@
 <div *ngIf="selectedSite" class="badge-container">
   <div class="badge-recap">
     <div class="badge-info">
-      <span class="badge-title">{{ selectedSite.denomination || selectedSite.libelleCourt }}</span>
-      <span class="badge-detail">{{ selectedSite.codeRoc }} · {{ selectedSite.codeRegate }}</span>
+      <span class="badge-title">{{ selectedSite.dex || selectedSite.denomination || selectedSite.libelleCourt }}</span>
       <span class="badge-detail">{{ selectedSite.libelle }}</span>
+      <span class="badge-detail">{{ selectedSite.codeRoc }} - {{ selectedSite.codeRegate }}</span>
     </div>
     <button mat-icon-button (click)="clear()" aria-label="Changer de site" class="badge-close">
       <mat-icon>close</mat-icon>

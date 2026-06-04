@@ -5,9 +5,9 @@
   <div class="scenario-col">
     <app-trppu-scenario-list
       [siteId]="selectedSite ? selectedSite.codeRoc : null"
-      (editScenario)="onEditScenario($event)"
+      (selectScenario)="onSelectScenario($event)"
       (removeScenario)="onRemoveScenario($event)"
-      (addScenario)="onAddScenario()">
+      (addScenario)="onAddScenario($event)">
     </app-trppu-scenario-list>
   </div>
 </div>
@@ -24,7 +24,7 @@
     [class.disabled-content]="!selectedScenario"
     [dateMin]="'2015-01-01'"
     [dateMax]="'2031-12-31'"
-    [periode]="selectedScenario ? selectedScenario.periode : null"
+    [periode]="selectedPeriode"
     (periodeValidated)="onPeriodeValidated($event)"
     (refreshNeeded)="onRefreshNeeded()"
     (dirtyChange)="periodeHasChanges = $event">
@@ -37,7 +37,7 @@
   </div>
   <app-trppu-comptage
     [class.disabled-content]="!selectedScenario"
-    [scenarioId]="selectedScenario ? selectedScenario.id : null"
+    [scenarioId]="selectedScenario ? selectedScenario.id_scenario : null"
     (comptagesChange)="onComptagesChange($event)"
     (dirtyChange)="comptageHasChanges = $event">
   </app-trppu-comptage>
@@ -49,7 +49,7 @@
   </div>
   <app-trppu-trafics-calculer
     [class.disabled-content]="!selectedScenario"
-    [scenarioId]="selectedScenario ? selectedScenario.id : null"
+    [scenarioId]="selectedScenario ? selectedScenario.id_scenario : null"
     (joursParSemaineChange)="onJoursParSemaineChange($event)">
   </app-trppu-trafics-calculer>
 </div>

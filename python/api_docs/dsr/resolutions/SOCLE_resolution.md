@@ -1,5 +1,14 @@
 # Résolution — SOCLE transverse (NEW-1 / NEW-2 / NEW-3)
 
+> **MàJ — jours fériés via API** : la table `trppu_jours_feries` et son seed
+> (migrations `003`/`004`, `scripts/gen_jours_feries_sql.py`) ont été **retirés**.
+> Les jours fériés / fermés sont désormais récupérés via l'**API jours-fermes**
+> (`GET {host}/tournees/jours-fermes/v1/get?annee=AAAA`), consommée par
+> `app/services/jours_fermes_client.py` (httpx async, cache par année + TTL). En cas
+> d'indisponibilité de l'API, les routes critiques renvoient `503` (trafics reste
+> résilient : bloc `nb_jours=null`). Les passages ci-dessous sont conservés pour
+> historique.
+
 ## 1. Statut
 **Terminé.** Briques transverses requises par plusieurs tickets : cryptage `id_rh`
 (Fernet réversible), service de calcul des jours (+ table de jours fériés) et

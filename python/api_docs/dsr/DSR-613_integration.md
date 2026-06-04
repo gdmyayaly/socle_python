@@ -69,11 +69,10 @@ nb_jours_ouvres     = ouvres_bruts    - len(feries_hors_we)
 nb_jours_ouvrables  = ouvrables_bruts - len(feries_hors_we) - len(feries_samedi)
 ```
 
-> ⚠️ **Source des jours fériés à arbitrer** (cf. `README_incomprehensions.md`, item *jours fériés*).
-> Deux options : table `trppu_jours_feries` (recommandé, maîtrisé, offline) **ou**
-> bibliothèque Python (`workalendar` / `jours-feries-france`). Les fériés mobiles
-> (Pâques, Ascension, Pentecôte) imposent un calcul ou un référentiel, pas une
-> liste statique.
+> **Source des jours fériés** : API jours-fermes des tournées
+> (`GET {host}/tournees/jours-fermes/v1/get?annee=AAAA`), consommée via
+> `app/services/jours_fermes_client.py` (cache par année + TTL). L'ancienne table
+> `trppu_jours_feries` n'est plus utilisée.
 
 ---
 

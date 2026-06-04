@@ -34,6 +34,11 @@ DATABRICKS_TIMEOUT = int(os.getenv("DATABRICKS_TIMEOUT", "120"))
 DATABRICKS_MAX_RETRIES = int(os.getenv("DATABRICKS_MAX_RETRIES", "3"))
 DATABRICKS_RETRY_DELAY = float(os.getenv("DATABRICKS_RETRY_DELAY", "2.0"))
  
+# API jours fermés (tournées)
+JOURS_FERMES_API_BASE_URL = os.getenv("JOURS_FERMES_API_BASE_URL", "")  # ex: http://host/tournees/jours-fermes/v1
+JOURS_FERMES_API_TIMEOUT = float(os.getenv("JOURS_FERMES_API_TIMEOUT", "10"))
+JOURS_FERMES_CACHE_TTL = int(os.getenv("JOURS_FERMES_CACHE_TTL", "86400"))  # 24h
+
 # Application / Logging
 APP = os.getenv("APP", "dsr")
 APP_ENV = os.getenv("APP_ENV", "sdev")
@@ -43,6 +48,7 @@ LOGS_DIR = os.getenv("LOGS_DIR", "")
 
 # Sécurité : clé de cryptage réversible de l'id_rh (Fernet).
 # Secret arbitraire accepté (dérivé en clé Fernet) ou clé Fernet native (44 car.).
+# Si vide (valeur par défaut) : cryptage DÉSACTIVÉ, l'id_rh est stocké en clair.
 ID_RH_CRYPTO_KEY = os.getenv("ID_RH_CRYPTO_KEY", "")
  
 # Validation

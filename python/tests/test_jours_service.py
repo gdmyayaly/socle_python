@@ -6,17 +6,30 @@ Vérifie les exemples chiffrés des tickets DSR-613 et DSR-645.
 from datetime import date
 
 from app.services.jours_service import (
-    compute_french_holidays,
     compute_nb_jour_neutralise,
     count_jours,
-    french_holidays_between,
 )
+
+# Fériés FR du 01/03/2025 -> 31/03/2026 (cf. DSR-613). Utilisés comme set littéral
+# depuis que la source des fériés est l'API jours-fermes (plus de calcul local).
+FERIES_DSR613 = {
+    date(2025, 4, 21),   # Lundi de Pâques
+    date(2025, 5, 1),    # Fête du Travail
+    date(2025, 5, 8),    # Victoire 1945
+    date(2025, 5, 29),   # Ascension
+    date(2025, 6, 9),    # Lundi de Pentecôte
+    date(2025, 7, 14),   # Fête nationale
+    date(2025, 8, 15),   # Assomption
+    date(2025, 11, 1),   # Toussaint (samedi)
+    date(2025, 11, 11),  # Armistice 1918
+    date(2025, 12, 25),  # Noël
+    date(2026, 1, 1),    # Jour de l'an
+}
 
 
 def test_feries_2025_2026_exemple_dsr613():
     """DSR-613 : 11 fériés sur 01/03/2025 -> 31/03/2026, dont 10 hors WE + 1 samedi."""
-    debut, fin = date(2025, 3, 1), date(2026, 3, 31)
-    feries = french_holidays_between(debut, fin)
+    feries = FERIES_DSR613
     assert len(feries) == 11
     hors_we = sum(1 for f in feries if f.weekday() <= 4)
     samedi = sum(1 for f in feries if f.weekday() == 5)
@@ -34,7 +47,7 @@ def test_count_jours_exemple_dsr613():
     correct. Discrepance à confirmer avec le PO (cf. README_incomprehensions.md).
     """
     debut, fin = date(2025, 3, 1), date(2026, 3, 31)
-    feries = french_holidays_between(debut, fin)
+    feries = FERIES_DSR613
     c = count_jours(debut, fin, feries)
     assert c.nb_jours_total == 396
     assert c.nb_jours_ouvres_bruts == 282
@@ -66,12 +79,3 @@ def test_nb_jour_neutralise_saison_dsr645():
     feries = {date(2026, 8, 15)}  # Assomption (samedi)
     assert compute_nb_jour_neutralise(debut, fin, 5, feries) == 10
     assert compute_nb_jour_neutralise(debut, fin, 6, feries) == 12
-
-
-def test_easter_known_years():
-    """Quelques dates liées à Pâques connues (validation Computus)."""
-    feries_2025 = compute_french_holidays(2025)
-    assert date(2025, 4, 21) in feries_2025  # Lundi de Pâques 2025
-    assert date(2025, 5, 29) in feries_2025  # Ascension 2025
-    feries_2026 = compute_french_holidays(2026)
-    assert date(2026, 4, 6) in feries_2026   # Lundi de Pâques 2026
