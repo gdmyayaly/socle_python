@@ -168,6 +168,12 @@ class _TransactionCursor:
             await cur.execute(query, params)
             return cur.rowcount
 
+    async def execute_many(self, query: str, params_seq) -> int:
+        """Exécute une requête en masse (INSERT/UPDATE) sur la connexion de la transaction."""
+        async with self._conn.cursor() as cur:
+            await cur.executemany(query, params_seq)
+            return cur.rowcount
+
     async def fetch_one(
         self, query: str, params: tuple | None = None
     ) -> dict[str, Any] | None:

@@ -1,13 +1,18 @@
 """Routes de debug MySQL pour explorer le schéma et exécuter des requêtes de diagnostic."""
 
+import base64
 import logging
 import time
+from datetime import date, datetime, time as dtime, timedelta
+from decimal import Decimal
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from app.config import MYSQL_DATABASE
-from app.db.mysql import db_read
+from app.db.mysql import db_read, db_write
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +29,76 @@ def _lc(row: dict | None) -> dict:
     (évite les `KeyError: 'table_name'` constatés en prod).
     """
     return {str(k).lower(): v for k, v in (row or {}).items()}
+
+
+# Marqueur pour transporter des valeurs binaires en JSON (round-trip export -> import).
+_B64_KEY = "__b64__"
+
+
+def _serialize_value(v: Any) -> Any:
+    """Convertit une valeur SQL en valeur JSON-safe et réinjectable à l'identique.
+
+    - datetime/date/time -> chaînes au format MySQL (réacceptées tel quel à l'insert)
+    - Decimal            -> str (préserve la précision)
+    - bytes              -> dict {"__b64__": ...} (réhydraté à l'import)
+    Les autres types (int, float, str, bool, None, str JSON) passent inchangés.
+    """
+    if isinstance(v, (bytes, bytearray)):
+        return {_B64_KEY: base64.b64encode(bytes(v)).decode("ascii")}
+    if isinstance(v, datetime):
+        s = v.strftime("%Y-%m-%d %H:%M:%S")
+        return f"{s}.{v.microsecond:06d}" if v.microsecond else s
+    if isinstance(v, date):
+        return v.isoformat()
+    if isinstance(v, dtime):
+        return v.isoformat()
+    if isinstance(v, timedelta):
+        return str(v)
+    if isinstance(v, Decimal):
+        return str(v)
+    return v
+
+
+def _deserialize_value(v: Any) -> Any:
+    """Inverse de `_serialize_value` pour les valeurs reçues à l'import."""
+    if isinstance(v, dict) and _B64_KEY in v:
+        return base64.b64decode(v[_B64_KEY])
+    return v
+
+
+def _sql_literal(v: Any) -> str:
+    """Représente une valeur sous forme de littéral SQL pour un INSERT copiable."""
+    if v is None:
+        return "NULL"
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, (int, float, Decimal)):
+        return str(v)
+    if isinstance(v, (bytes, bytearray)):
+        return "0x" + bytes(v).hex()
+    if isinstance(v, datetime):
+        return "'" + v.strftime("%Y-%m-%d %H:%M:%S") + "'"
+    if isinstance(v, (date, dtime)):
+        return "'" + v.isoformat() + "'"
+    s = (
+        str(v)
+        .replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+    return "'" + s + "'"
+
+
+async def _table_columns(table: str) -> list[str]:
+    """Retourne la liste ordonnée des colonnes réelles d'une table, ou [] si introuvable."""
+    rows = await db_read.fetch_all(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = %s AND table_name = %s "
+        "ORDER BY ordinal_position",
+        (MYSQL_DATABASE, table),
+    )
+    return [_lc(r)["column_name"] for r in rows]
 
 
 @router.get("/test")
@@ -294,3 +369,149 @@ async def dump_create_sql(
             "sql": sql,
         }
     return PlainTextResponse(content=sql, media_type="text/plain; charset=utf-8")
+
+
+@router.get("/export")
+async def export_table(
+    table: str = Query(..., description="Nom de la table à exporter"),
+    fmt: str = Query(
+        "json",
+        pattern="^(json|sql)$",
+        description="Format : 'json' (réinjectable via POST /mysql/import) ou 'sql' (INSERT copiables).",
+    ),
+    truncate: bool = Query(
+        True,
+        description="fmt=sql uniquement : ajoute un TRUNCATE TABLE avant les INSERT.",
+    ),
+):
+    """Exporte TOUTES les données d'une table.
+
+    - `fmt=json` : payload structuré directement réinjectable via `POST /mysql/import`
+      (on peut renvoyer ce corps tel quel pour recharger la table en dev).
+    - `fmt=sql`  : script `INSERT` text/plain copiable dans un client SQL.
+
+    Les types non sérialisables (datetime, Decimal, bytes) sont normalisés pour un
+    aller-retour fidèle (cf. `_serialize_value`).
+    """
+    start = time.perf_counter()
+
+    columns = await _table_columns(table)
+    if not columns:
+        raise HTTPException(
+            status_code=404, detail=f"Table '{table}' introuvable dans {MYSQL_DATABASE}."
+        )
+
+    try:
+        raw_rows = await db_read.fetch_all(f"SELECT * FROM `{MYSQL_DATABASE}`.`{table}`")
+    except Exception as e:
+        logger.error("Erreur export de %s : %s", table, e)
+        raise HTTPException(status_code=500, detail=f"Erreur export de {table}.") from e
+
+    duration_s = round(time.perf_counter() - start, 3)
+
+    if fmt == "sql":
+        parts: list[str] = [
+            f"-- Données de la table `{MYSQL_DATABASE}`.`{table}` — {len(raw_rows)} ligne(s)",
+            "",
+            "SET FOREIGN_KEY_CHECKS = 0;",
+        ]
+        if truncate:
+            parts.append(f"TRUNCATE TABLE `{table}`;")
+        parts.append("")
+        col_list = ", ".join(f"`{c}`" for c in columns)
+        for row in raw_rows:
+            values = ", ".join(_sql_literal(row.get(c)) for c in columns)
+            parts.append(f"INSERT INTO `{table}` ({col_list}) VALUES ({values});")
+        parts += ["", "SET FOREIGN_KEY_CHECKS = 1;", ""]
+        return PlainTextResponse(
+            content="\n".join(parts), media_type="text/plain; charset=utf-8"
+        )
+
+    rows = [{c: _serialize_value(row.get(c)) for c in columns} for row in raw_rows]
+    return {
+        "execution_time_s": duration_s,
+        "database": MYSQL_DATABASE,
+        "table": table,
+        "columns": columns,
+        "count": len(rows),
+        "rows": rows,
+    }
+
+
+class ImportPayload(BaseModel):
+    """Corps de `POST /mysql/import` — compatible avec la sortie de `GET /mysql/export?fmt=json`."""
+
+    table: str
+    rows: list[dict[str, Any]]
+    columns: list[str] | None = None
+    truncate: bool = True
+
+
+@router.post("/import")
+async def import_table(payload: ImportPayload = Body(...)):
+    """Recharge les données d'une table à partir d'un export JSON.
+
+    Workflow type : `GET /mysql/export?table=X&fmt=json` en prod -> renvoyer le corps
+    obtenu à `POST /mysql/import` en dev pour repeupler la table.
+
+    - `truncate=True` (défaut) : vide la table avant insertion (contrôles FK désactivés
+      le temps de l'opération, le tout dans une transaction atomique).
+    - Seules les colonnes réellement présentes dans la table sont insérées (les clés
+      inconnues du payload sont ignorées, pas d'injection d'identifiant arbitraire).
+    """
+    start = time.perf_counter()
+    table = payload.table
+
+    real_columns = await _table_columns(table)
+    if not real_columns:
+        raise HTTPException(
+            status_code=404, detail=f"Table '{table}' introuvable dans {MYSQL_DATABASE}."
+        )
+
+    # Colonnes à insérer : intersection (en préservant l'ordre réel de la table) entre
+    # les colonnes demandées / présentes dans les lignes et les colonnes réelles.
+    requested = payload.columns or (list(payload.rows[0].keys()) if payload.rows else [])
+    columns = [c for c in real_columns if c in set(requested)]
+    if payload.rows and not columns:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Aucune colonne du payload ne correspond aux colonnes de la table "
+                f"`{table}`. Colonnes attendues : {real_columns}"
+            ),
+        )
+
+    col_list = ", ".join(f"`{c}`" for c in columns)
+    placeholders = ", ".join(["%s"] * len(columns))
+    insert_sql = f"INSERT INTO `{table}` ({col_list}) VALUES ({placeholders})"
+    params_seq = [
+        tuple(_deserialize_value(row.get(c)) for c in columns) for row in payload.rows
+    ]
+
+    inserted = 0
+    try:
+        async with db_write.transaction() as tx:
+            await tx.execute("SET FOREIGN_KEY_CHECKS = 0")
+            if payload.truncate:
+                await tx.execute(f"TRUNCATE TABLE `{MYSQL_DATABASE}`.`{table}`")
+            # Insertion par lots pour éviter un paquet réseau trop volumineux.
+            chunk = 500
+            for i in range(0, len(params_seq), chunk):
+                batch = params_seq[i : i + chunk]
+                if batch:
+                    await tx.execute_many(insert_sql, batch)
+                    inserted += len(batch)
+            await tx.execute("SET FOREIGN_KEY_CHECKS = 1")
+    except Exception as e:
+        logger.error("Erreur import de %s : %s", table, e)
+        raise HTTPException(status_code=500, detail=f"Erreur import de {table} : {e}") from e
+
+    duration_s = round(time.perf_counter() - start, 3)
+    return {
+        "execution_time_s": duration_s,
+        "database": MYSQL_DATABASE,
+        "table": table,
+        "truncated": payload.truncate,
+        "columns": columns,
+        "inserted": inserted,
+    }
