@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
-from app.security.crypto import encrypt_id_rh
 from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 
 from .helpers import SELECT_VARIATIONS_SQL, fetch_variation
@@ -61,7 +60,6 @@ async def upsert_variation(id_scenario: int, co_produit: str, payload: Variation
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
 
-    id_rh_token = encrypt_id_rh(payload.id_rh)
     is_zero = payload.variation_pct == Decimal("0")
 
     try:
@@ -80,17 +78,17 @@ async def upsert_variation(id_scenario: int, co_produit: str, payload: Variation
             elif existing:
                 await tx.execute(
                     "UPDATE trppu_scenario_variations_prev "
-                    "SET variation_pct = %s, dt_creation = NOW(), id_rh = %s "
+                    "SET variation_pct = %s "
                     "WHERE id_scenario = %s AND co_produit = %s",
-                    (payload.variation_pct, id_rh_token, id_scenario, co_produit),
+                    (payload.variation_pct, id_scenario, co_produit),
                 )
                 action = "updated"
             else:
                 await tx.execute(
                     "INSERT INTO trppu_scenario_variations_prev "
-                    "(id_scenario, co_produit, variation_pct, id_rh) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (id_scenario, co_produit, payload.variation_pct, id_rh_token),
+                    "(id_scenario, co_produit, variation_pct) "
+                    "VALUES (%s, %s, %s)",
+                    (id_scenario, co_produit, payload.variation_pct),
                 )
                 action = "created"
     except HTTPException:

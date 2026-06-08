@@ -43,3 +43,9 @@ Puis `GET .../tmh` pour vérifier la cohérence.
 > lignes insérées/modifiées. `dt_calcul` repositionné à chaque MAJ. Refus si scénario figé.
 > **À noter** : l'upsert ne dépend pas d'une contrainte d'unicité (UPDATE puis INSERT si
 > absent), donc aucune migration TMH n'est requise. Recouvre DSR-649.
+
+> **🔄 MAJ 2026-06-08 — Alignement schéma PROD (base de référence) :** la table
+> `trppu_tmh` en prod possède une colonne **`bl_manuel` NOT NULL sans valeur par défaut**.
+> L'INSERT fournit désormais `bl_manuel = 0` (ligne issue d'un calcul, non saisie
+> manuellement) pour éviter l'erreur `Field 'bl_manuel' doesn't have a default value`.
+> Cf. `db_analyse/v2/RAPPORT_COMPARAISON_PROD_LOCAL.md`.

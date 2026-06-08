@@ -222,7 +222,7 @@ async def create_scenario(payload: ScenarioCreate):
             await tx.execute(
                 "INSERT INTO trppu_scenario "
                 "(co_regate, lb_scenario, co_roc, statut, dt_creation, "
-                " dt_mise_en_oeuvre, dt_real_prev, "
+                " dt_mise_en_oeuvre, dt_pivot, "
                 " periode_debut, periode_fin, "
                 " periode_realise_debut, periode_realise_fin, "
                 " periode_prev_debut, periode_prev_fin, "
@@ -288,7 +288,8 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
     """DSR-656 : MAJ d'un scénario EN COURS après actualisation des trafics.
 
     Recalcule serveur les bornes réalisé/prév et les nb_jours (fériés + neutralisations),
-    repositionne dt_real_prev / dt_maj, crypte id_rh_maj, et met à jour le TMH (DSR-659).
+    repositionne dt_pivot (exposé en API comme dt_real_prev) / dt_maj, crypte id_rh_maj,
+    et met à jour le TMH (DSR-659).
     """
     start = time.perf_counter()
     logged = payload.model_dump(mode="json", exclude={"id_rh"})
@@ -322,7 +323,7 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
         "periode_debut = %s", "periode_fin = %s",
         "periode_realise_debut = %s", "periode_realise_fin = %s",
         "periode_prev_debut = %s", "periode_prev_fin = %s",
-        "dt_real_prev = NOW()",
+        "dt_pivot = NOW()",
         "nb_jours_semaine = %s", "nb_jours_ouvres = %s",
         "nb_jours_ouvrables = %s", "nb_jours_scenario = %s",
         "dt_maj = NOW()", "id_rh_maj = %s",

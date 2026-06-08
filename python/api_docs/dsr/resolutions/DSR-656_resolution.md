@@ -51,3 +51,8 @@ PUT /trppu-api/scenarios/{id}  (scénario EN COURS) ; puis GET /{id}/periodes et
 > (ouvrés/ouvrables, scénario = base − jours neutralisés), repositionne dt_real_prev/dt_maj,
 > crypte id_rh_maj, et met à jour les trafics TMH dans la même transaction.
 > **Pré-requis** : migrations 001/003/004 + `ID_RH_CRYPTO_KEY`.
+
+> **🔄 MAJ 2026-06-08 — Alignement schéma PROD (base de référence) :** la colonne
+> renommée **`dt_pivot`** en prod (ex-`dt_real_prev`) est désormais utilisée par l'UPDATE
+> (`dt_pivot = NOW()`) et la lecture (alias `dt_pivot AS dt_real_prev`, **contrat IHM
+> inchangé**). Cf. `db_analyse/v2/RAPPORT_COMPARAISON_PROD_LOCAL.md`.

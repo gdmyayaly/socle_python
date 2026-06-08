@@ -58,3 +58,10 @@ GET .../neutralisations
 > **⚠️ À valider PO** : l'exemple PEAK du ticket (18/28) est arithmétiquement impossible
 > (10 samedis + 11 dimanches sur 40 jours) ; le service calcule les valeurs correctes
 > (28/34). L'exemple SAISON (10/12) est correct.
+
+> **🔄 MAJ 2026-06-08 — Alignement schéma PROD (base de référence) :** en prod la clé
+> primaire de `trppu_neutralisations` est **`id_neutralisation`** (et non `id`). Les
+> requêtes ont été alignées (`SELECT id_neutralisation AS id …`, `WHERE id_neutralisation`).
+> Les colonnes `id_rh` et `dt_creation` existent bien en prod : la traçabilité id_rh
+> chiffrée est **conservée** ici. L'enum `SAISON` (migration `002`) reste requis.
+> Cf. `db_analyse/v2/RAPPORT_COMPARAISON_PROD_LOCAL.md`.

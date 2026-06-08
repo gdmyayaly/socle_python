@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
-from app.security.crypto import encrypt_id_rh
 from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 
 from .helpers import SELECT_COMPTAGES_SQL, fetch_comptage
@@ -64,7 +63,6 @@ async def add_comptage(id_scenario: int, payload: ComptageCreate):
     assert_editable(scenario)
 
     dt_comptage = payload.dt_comptage or date.today()
-    id_rh_token = encrypt_id_rh(payload.id_rh)
 
     try:
         async with db_write.transaction() as tx:
@@ -78,9 +76,9 @@ async def add_comptage(id_scenario: int, payload: ComptageCreate):
                 )
             await tx.execute(
                 "INSERT INTO trppu_scenario_comptages_manuels "
-                "(id_scenario, dt_comptage, co_produit, nb_produit, id_rh) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (id_scenario, dt_comptage, payload.co_produit, payload.nb_produit, id_rh_token),
+                "(id_scenario, dt_comptage, co_produit, nb_produit) "
+                "VALUES (%s, %s, %s, %s)",
+                (id_scenario, dt_comptage, payload.co_produit, payload.nb_produit),
             )
     except HTTPException:
         raise
@@ -118,7 +116,6 @@ async def update_comptage(id_scenario: int, co_produit: str, payload: ComptageUp
     assert_editable(scenario)
 
     dt_comptage = payload.dt_comptage or date.today()
-    id_rh_token = encrypt_id_rh(payload.id_rh)
 
     try:
         async with db_write.transaction() as tx:
@@ -129,9 +126,9 @@ async def update_comptage(id_scenario: int, co_produit: str, payload: ComptageUp
                 )
             await tx.execute(
                 "UPDATE trppu_scenario_comptages_manuels "
-                "SET dt_comptage = %s, nb_produit = %s, id_rh = %s "
+                "SET dt_comptage = %s, nb_produit = %s "
                 "WHERE id_scenario = %s AND co_produit = %s",
-                (dt_comptage, payload.nb_produit, id_rh_token, id_scenario, co_produit),
+                (dt_comptage, payload.nb_produit, id_scenario, co_produit),
             )
     except HTTPException:
         raise

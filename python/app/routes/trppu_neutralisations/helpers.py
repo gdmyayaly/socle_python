@@ -3,7 +3,7 @@
 from .schemas import FeriesBloc, FerieJour, NeutralisationsOut, PeriodeBloc
 
 SELECT_NEUTRALISATIONS_SQL = (
-    "SELECT id, dt_debut, dt_fin, nb_jour, type "
+    "SELECT id_neutralisation AS id, dt_debut, dt_fin, nb_jour, type "
     "FROM trppu_neutralisations WHERE id_scenario = %s ORDER BY type, dt_debut"
 )
 

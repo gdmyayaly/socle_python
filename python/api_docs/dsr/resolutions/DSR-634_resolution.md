@@ -75,3 +75,9 @@ Pré-requis : `ID_RH_CRYPTO_KEY` définie, migrations appliquées.
 > **À valider PO** : (1) convention `id_pic_version` par défaut (0/national vs version
 > existante) et la nécessité de créer une ligne `trppu_pic_version` dès la création ;
 > (2) traitement des bornes réalisé/prév le jour-même (logique actuelle conservée).
+
+> **🔄 MAJ 2026-06-08 — Alignement schéma PROD (base de référence) :** en production la
+> colonne `trppu_scenario` s'appelle **`dt_pivot`** (et non `dt_real_prev`). Le code
+> écrit/lit désormais `dt_pivot` (exposée en API sous l'alias `dt_real_prev` →
+> **aucun changement du contrat IHM**). Le TMH inséré à la création fournit `bl_manuel=0`
+> (colonne prod NOT NULL). Cf. `db_analyse/v2/RAPPORT_COMPARAISON_PROD_LOCAL.md`.

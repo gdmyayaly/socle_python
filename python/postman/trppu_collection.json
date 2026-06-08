@@ -223,6 +223,108 @@
             },
             "description": "Full Schema"
           }
+        },
+        {
+          "name": "GET /mysql/dump",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/dump?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "dump"
+              ],
+              "query": [
+                {
+                  "key": "fmt",
+                  "value": "sql",
+                  "disabled": true,
+                  "description": "Format de sortie : 'sql' (texte brut copiable) ou 'json'."
+                },
+                {
+                  "key": "drop",
+                  "value": "True",
+                  "disabled": true,
+                  "description": "Inclure les DROP TABLE/VIEW IF EXISTS avant chaque CREATE."
+                }
+              ]
+            },
+            "description": "Dump Create Sql"
+          }
+        },
+        {
+          "name": "GET /mysql/export",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/export?table=string",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "export"
+              ],
+              "query": [
+                {
+                  "key": "table",
+                  "value": "string",
+                  "disabled": false,
+                  "description": "Nom de la table à exporter"
+                },
+                {
+                  "key": "fmt",
+                  "value": "json",
+                  "disabled": true,
+                  "description": "Format : 'json' (réinjectable via POST /mysql/import) ou 'sql' (INSERT copiables)."
+                },
+                {
+                  "key": "truncate",
+                  "value": "True",
+                  "disabled": true,
+                  "description": "fmt=sql uniquement : ajoute un TRUNCATE TABLE avant les INSERT."
+                }
+              ]
+            },
+            "description": "Export Table"
+          }
+        },
+        {
+          "name": "POST /mysql/import",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/mysql/import",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mysql",
+                "import"
+              ]
+            },
+            "description": "Import Table",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"table\": \"string\",\n  \"rows\": [\n    {}\n  ],\n  \"columns\": [\n    \"string\"\n  ],\n  \"truncate\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -280,48 +382,17 @@
       "name": "Calcul nombre de jours",
       "item": [
         {
-          "name": "GET /calcl_nbr_jours/get_nbr_jours",
+          "name": "GET /trppu-api/calcl_nbr_jours/get_nb_jours",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/calcl_nbr_jours/get_nbr_jours?",
+              "raw": "{{baseUrl}}/trppu-api/calcl_nbr_jours/get_nb_jours?date_debut=string&date_fin=string",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
-                "calcl_nbr_jours",
-                "get_nbr_jours"
-              ],
-              "query": [
-                {
-                  "key": "date_debut",
-                  "value": "string",
-                  "disabled": true,
-                  "description": "Date de début au format AAAAMMJJ"
-                },
-                {
-                  "key": "date_fin",
-                  "value": "string",
-                  "disabled": true,
-                  "description": "Date de fin au format AAAAMMJJ"
-                }
-              ]
-            },
-            "description": "Get Nbr Jours"
-          }
-        },
-        {
-          "name": "GET /calcl_nbr_jours/get_nb_jours",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/calcl_nbr_jours/get_nb_jours?date_debut=string&date_fin=string",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
+                "trppu-api",
                 "calcl_nbr_jours",
                 "get_nb_jours"
               ],
@@ -1414,6 +1485,26 @@
               ]
             },
             "description": "Get Scenario Edition"
+          }
+        },
+        {
+          "name": "POST /trppu-api/scenarios/{id_scenario}/archive",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/archive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "archive"
+              ]
+            },
+            "description": "Archive Scenario"
           }
         },
         {

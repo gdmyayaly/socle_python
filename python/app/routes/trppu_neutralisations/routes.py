@@ -87,7 +87,7 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
         async with db_write.transaction() as tx:
             if payload.type == "FERIE":
                 exists = await tx.fetch_one(
-                    "SELECT id FROM trppu_neutralisations "
+                    "SELECT id_neutralisation FROM trppu_neutralisations "
                     "WHERE id_scenario = %s AND type = 'FERIE' AND dt_debut = %s",
                     (id_scenario, payload.dt_debut),
                 )
@@ -105,7 +105,7 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
                 action = "created"
             else:
                 existing = await tx.fetch_one(
-                    "SELECT id FROM trppu_neutralisations "
+                    "SELECT id_neutralisation FROM trppu_neutralisations "
                     "WHERE id_scenario = %s AND type = %s",
                     (id_scenario, payload.type),
                 )
@@ -113,8 +113,8 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
                     await tx.execute(
                         "UPDATE trppu_neutralisations "
                         "SET dt_debut = %s, dt_fin = %s, nb_jour = %s, dt_creation = NOW(), id_rh = %s "
-                        "WHERE id = %s",
-                        (payload.dt_debut, payload.dt_fin, nb_jour, id_rh_token, existing["id"]),
+                        "WHERE id_neutralisation = %s",
+                        (payload.dt_debut, payload.dt_fin, nb_jour, id_rh_token, existing["id_neutralisation"]),
                     )
                     action = "updated"
                 else:
@@ -133,7 +133,7 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
                     )
                     action = "created"
             row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
-            new_id = int(row["id"]) if action == "created" else int(existing["id"])
+            new_id = int(row["id"]) if action == "created" else int(existing["id_neutralisation"])
     except HTTPException:
         raise
     except Exception as e:

@@ -49,3 +49,11 @@ Vérifier en base la présence/modification/suppression et `id_rh` chiffré.
 > refuse un doublon (409 → utiliser PUT), `dt_comptage` par défaut = date du jour.
 > Écriture refusée si le scénario est figé. **Pré-requis** : migration `002` (colonne
 > `id_rh`) + `ID_RH_CRYPTO_KEY`.
+
+> **🔄 MAJ 2026-06-08 — Alignement schéma PROD (base de référence) :** ⚠️ la table
+> `trppu_scenario_comptages_manuels` en prod **n'a pas la colonne `id_rh`** (migration
+> `002` non déployée en prod sur cette table). L'écriture de `id_rh` a donc été
+> **retirée** des INSERT/UPDATE pour que l'endpoint fonctionne contre la prod. Le body
+> accepte toujours `id_rh` mais il **n'est plus persisté** → **traçabilité id_rh perdue
+> sur cet endpoint**. Pour la rétablir : ajouter `id_rh` à la prod (migration dédiée).
+> Cf. `db_analyse/v2/RAPPORT_COMPARAISON_PROD_LOCAL.md`.

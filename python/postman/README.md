@@ -1,7 +1,7 @@
 # Collection Postman — TRPPU ys04
 
 `trppu_collection.json` : collection Postman v2.1 **générée depuis le schéma OpenAPI**
-de l'application (70 requêtes, 16 dossiers). Couvre tous les endpoints : scénarios,
+de l'application (73 requêtes, 16 dossiers). Couvre tous les endpoints : scénarios,
 TMH, comptages, variations, neutralisations, rétention PIC, trafics, calcul de jours,
 sites, produits, versions/coefficients PIC, santé, logs, debug MySQL.
 

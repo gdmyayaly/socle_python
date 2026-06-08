@@ -44,3 +44,10 @@ PUT .../variations/OO {variation_pct:25} ; PUT {40} ; PUT {0} (supprime) ; GET .
 > (idempotent : crée/modifie, et **supprime la ligne si le pourcentage repasse à 0 %**),
 > + `DELETE` explicite. Valeurs négatives acceptées, `dt_creation` repositionnée à chaque
 > modif, `id_rh` chiffré. **Pré-requis** : migration `002` + `ID_RH_CRYPTO_KEY`.
+
+> **🔄 MAJ 2026-06-08 — Alignement schéma PROD (base de référence) :** ⚠️ la table
+> `trppu_scenario_variations_prev` en prod **n'a ni `dt_creation` ni `id_rh`** (migration
+> `002` non déployée en prod sur cette table). Ces deux écritures ont été **retirées**
+> des INSERT/UPDATE pour que l'endpoint fonctionne contre la prod → **`dt_creation` non
+> stockée et traçabilité id_rh perdue sur cet endpoint**. Pour les rétablir : ajouter
+> les colonnes à la prod (migration dédiée). Cf. `db_analyse/v2/RAPPORT_COMPARAISON_PROD_LOCAL.md`.

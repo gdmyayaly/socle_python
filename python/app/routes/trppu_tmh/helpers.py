@@ -59,8 +59,8 @@ async def upsert_tmh_row(
     await tx.execute(
         "INSERT INTO trppu_tmh "
         "(id_scenario, co_produit, volume_realise, volume_previsionnel, "
-        " moyenne_journaliere, moyenne_hebdo, dt_calcul, bl_exclu) "
-        "VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)",
+        " moyenne_journaliere, moyenne_hebdo, dt_calcul, bl_exclu, bl_manuel) "
+        "VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, 0)",
         (
             id_scenario,
             co_produit,
