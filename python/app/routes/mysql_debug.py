@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mysql", tags=["MySQL Debug"])
 
 
+def _lc(row: dict | None) -> dict:
+    """Normalise les clés d'une ligne en minuscules.
+
+    `information_schema` renvoie ses colonnes en MAJUSCULES sous MySQL 8.0
+    (vues sur le dictionnaire de données) et en minuscules sous d'autres
+    versions / MariaDB. De même `SHOW CREATE` renvoie 'Create Table' / 'Create
+    View'. On normalise pour un accès stable quelle que soit la plateforme
+    (évite les `KeyError: 'table_name'` constatés en prod).
+    """
+    return {str(k).lower(): v for k, v in (row or {}).items()}
+
+
 @router.get("/test")
 async def mysql_test():
     """Requête de test sur la base MySQL (lecture)."""
@@ -145,14 +157,14 @@ async def full_schema():
     """Retourne le schéma complet : chaque table avec ses colonnes."""
     start = time.perf_counter()
     try:
-        tables = await db_read.fetch_all(
+        rows = await db_read.fetch_all(
             "SELECT table_name, table_rows, table_comment "
             "FROM information_schema.tables "
             "WHERE table_schema = %s ORDER BY table_name",
             (MYSQL_DATABASE,),
         )
         schema = []
-        for t in tables:
+        for t in (_lc(r) for r in rows):
             cols = await db_read.fetch_all(
                 "SELECT column_name, column_type, is_nullable, column_key, column_comment "
                 "FROM information_schema.columns "
@@ -160,7 +172,7 @@ async def full_schema():
                 "ORDER BY ordinal_position",
                 (MYSQL_DATABASE, t["table_name"]),
             )
-            schema.append({**t, "columns": cols})
+            schema.append({**t, "columns": [_lc(c) for c in cols]})
     except Exception as e:
         logger.error("Erreur schema complet : %s", e)
         raise HTTPException(status_code=500, detail="Erreur récupération schema.") from e
@@ -194,36 +206,58 @@ async def dump_create_sql(
     - `fmt=json` : réponse structurée (un objet par table/vue + le SQL complet).
     """
     start = time.perf_counter()
+
+    # 1) Liste des objets (tables d'abord, puis vues qui peuvent en dépendre).
     try:
-        objects = await db_read.fetch_all(
+        rows = await db_read.fetch_all(
             "SELECT table_name, table_type "
             "FROM information_schema.tables "
             "WHERE table_schema = %s "
-            # Tables d'abord, puis vues (qui peuvent dépendre des tables)
             "ORDER BY (table_type = 'VIEW'), table_name",
             (MYSQL_DATABASE,),
         )
-
-        items: list[dict] = []
-        for obj in objects:
-            name = obj["table_name"]
-            is_view = obj["table_type"] == "VIEW"
-            kind = "VIEW" if is_view else "TABLE"
-            row = await db_read.fetch_one(
-                f"SHOW CREATE {kind} `{MYSQL_DATABASE}`.`{name}`"
-            )
-            # SHOW CREATE TABLE -> clé "Create Table" ; SHOW CREATE VIEW -> "Create View"
-            create_key = "Create View" if is_view else "Create Table"
-            create_sql = (row or {}).get(create_key, "")
-            items.append({"name": name, "type": kind, "create_sql": create_sql})
+        objects = [_lc(r) for r in rows]
     except Exception as e:
-        logger.error("Erreur génération dump SQL : %s", e)
+        logger.error("Erreur génération dump SQL (listing objets) : %s", e)
         raise HTTPException(status_code=500, detail="Erreur génération dump SQL.") from e
 
-    # Assemble le script SQL complet
+    # 2) DDL objet par objet : un échec isolé est annoté mais n'interrompt PAS le
+    #    dump (on récupère ainsi toutes les tables même si une vue casse).
+    items: list[dict] = []
+    for obj in objects:
+        name = obj.get("table_name")
+        is_view = str(obj.get("table_type") or "").upper() == "VIEW"
+        kind = "VIEW" if is_view else "TABLE"
+        # SHOW CREATE TABLE -> "Create Table" ; SHOW CREATE VIEW -> "Create View"
+        create_key = "create view" if is_view else "create table"
+        error: str | None = None
+        create_sql = ""
+        try:
+            row = _lc(await db_read.fetch_one(f"SHOW CREATE {kind} `{MYSQL_DATABASE}`.`{name}`"))
+            create_sql = row.get(create_key, "") or ""
+            if not create_sql:
+                error = "DDL vide renvoyé par SHOW CREATE"
+        except Exception as e:
+            logger.error("Erreur SHOW CREATE %s `%s` : %s", kind, name, e)
+            error = str(e)
+        item = {"name": name, "type": kind, "create_sql": create_sql}
+        if error:
+            item["error"] = error
+        items.append(item)
+
+    failed = [it for it in items if it.get("error")]
+
+    # 3) Assemble le script SQL complet
     parts: list[str] = [
         f"-- Dump du schéma de la base `{MYSQL_DATABASE}`",
         f"-- {len(items)} objet(s) — schéma uniquement (sans données)",
+    ]
+    if failed:
+        parts.append(
+            f"-- ATTENTION : {len(failed)} objet(s) en échec "
+            "(voir les commentaires '-- !! ERREUR' ci-dessous)"
+        )
+    parts += [
         "",
         f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DATABASE}`;",
         f"USE `{MYSQL_DATABASE}`;",
@@ -233,6 +267,13 @@ async def dump_create_sql(
     ]
     for item in items:
         parts.append(f"-- ----- {item['type']} `{item['name']}` -----")
+        if item.get("error"):
+            parts.append(
+                f"-- !! ERREUR génération DDL pour {item['type']} "
+                f"`{item['name']}` : {item['error']}"
+            )
+            parts.append("")
+            continue
         if drop:
             parts.append(f"DROP {item['type']} IF EXISTS `{item['name']}`;")
         parts.append(f"{item['create_sql']};")
@@ -248,6 +289,7 @@ async def dump_create_sql(
             "execution_time_s": duration_s,
             "database": MYSQL_DATABASE,
             "object_count": len(items),
+            "failed_count": len(failed),
             "objects": items,
             "sql": sql,
         }

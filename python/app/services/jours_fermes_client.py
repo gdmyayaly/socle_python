@@ -24,7 +24,9 @@ import httpx
 
 from app.config import (
     JOURS_FERMES_API_BASE_URL,
+    JOURS_FERMES_API_PASSWORD,
     JOURS_FERMES_API_TIMEOUT,
+    JOURS_FERMES_API_USERNAME,
     JOURS_FERMES_CACHE_TTL,
 )
 
@@ -72,8 +74,13 @@ async def fetch_feries_annee(annee: int) -> set[date]:
         )
 
     url = f"{JOURS_FERMES_API_BASE_URL.rstrip('/')}/get"
+    auth = (
+        httpx.BasicAuth(JOURS_FERMES_API_USERNAME, JOURS_FERMES_API_PASSWORD)
+        if JOURS_FERMES_API_USERNAME
+        else None
+    )
     try:
-        async with httpx.AsyncClient(timeout=JOURS_FERMES_API_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=JOURS_FERMES_API_TIMEOUT, auth=auth) as client:
             response = await client.get(url, params={"annee": annee})
             response.raise_for_status()
             payload = response.json()

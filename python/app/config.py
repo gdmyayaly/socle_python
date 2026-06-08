@@ -36,6 +36,8 @@ DATABRICKS_RETRY_DELAY = float(os.getenv("DATABRICKS_RETRY_DELAY", "2.0"))
  
 # API jours fermés (tournées)
 JOURS_FERMES_API_BASE_URL = os.getenv("JOURS_FERMES_API_BASE_URL", "")  # ex: http://host/tournees/jours-fermes/v1
+JOURS_FERMES_API_USERNAME = os.getenv("JOURS_FERMES_API_USERNAME", "")  # basic auth
+JOURS_FERMES_API_PASSWORD = os.getenv("JOURS_FERMES_API_PASSWORD", "")  # basic auth
 JOURS_FERMES_API_TIMEOUT = float(os.getenv("JOURS_FERMES_API_TIMEOUT", "10"))
 JOURS_FERMES_CACHE_TTL = int(os.getenv("JOURS_FERMES_CACHE_TTL", "86400"))  # 24h
 
