@@ -39,6 +39,15 @@ JOURS_FERMES_API_BASE_URL = os.getenv("JOURS_FERMES_API_BASE_URL", "")  # ex: ht
 JOURS_FERMES_API_USERNAME = os.getenv("JOURS_FERMES_API_USERNAME", "")  # basic auth
 JOURS_FERMES_API_PASSWORD = os.getenv("JOURS_FERMES_API_PASSWORD", "")  # basic auth
 JOURS_FERMES_API_TIMEOUT = float(os.getenv("JOURS_FERMES_API_TIMEOUT", "10"))
+# Vérification TLS : chemin vers un bundle CA (ex: certif/cacert.pem) pour les
+# environnements derrière un proxy d'inspection TLS. Chemin relatif résolu depuis
+# la racine projet. Vide => bundle par défaut (certifi).
+_jf_ca = os.getenv("JOURS_FERMES_API_CA_BUNDLE", "").strip()
+if _jf_ca and not os.path.isabs(_jf_ca):
+    _jf_ca = str(Path(__file__).resolve().parent.parent / _jf_ca)
+JOURS_FERMES_API_CA_BUNDLE = _jf_ca
+# Désactive complètement la vérification TLS (À ÉVITER en prod : risque MITM).
+JOURS_FERMES_API_VERIFY_SSL = os.getenv("JOURS_FERMES_API_VERIFY_SSL", "true").lower() == "true"
 JOURS_FERMES_CACHE_TTL = int(os.getenv("JOURS_FERMES_CACHE_TTL", "86400"))  # 24h
 
 # Application / Logging

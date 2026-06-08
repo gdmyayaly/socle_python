@@ -24,9 +24,11 @@ import httpx
 
 from app.config import (
     JOURS_FERMES_API_BASE_URL,
+    JOURS_FERMES_API_CA_BUNDLE,
     JOURS_FERMES_API_PASSWORD,
     JOURS_FERMES_API_TIMEOUT,
     JOURS_FERMES_API_USERNAME,
+    JOURS_FERMES_API_VERIFY_SSL,
     JOURS_FERMES_CACHE_TTL,
 )
 
@@ -79,8 +81,17 @@ async def fetch_feries_annee(annee: int) -> set[date]:
         if JOURS_FERMES_API_USERNAME
         else None
     )
+    # verify : False (désactivé) > bundle CA dédié > vérification standard (certifi)
+    if not JOURS_FERMES_API_VERIFY_SSL:
+        verify: bool | str = False
+    elif JOURS_FERMES_API_CA_BUNDLE:
+        verify = JOURS_FERMES_API_CA_BUNDLE
+    else:
+        verify = True
     try:
-        async with httpx.AsyncClient(timeout=JOURS_FERMES_API_TIMEOUT, auth=auth) as client:
+        async with httpx.AsyncClient(
+            timeout=JOURS_FERMES_API_TIMEOUT, auth=auth, verify=verify
+        ) as client:
             response = await client.get(url, params={"annee": annee})
             response.raise_for_status()
             payload = response.json()
