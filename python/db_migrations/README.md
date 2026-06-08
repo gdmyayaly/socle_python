@@ -10,10 +10,12 @@ tickets DSR. Ils ne modifient **pas** `db_analyse/schema_trppu.sql` (fichier
 |---|---------|-------|---------|
 | 001 | `001_widen_id_rh_columns.sql` | `id_rh*` → VARCHAR(255) (token Fernet) | 634, 661 |
 | 002 | `002_add_param_columns.sql` | colonnes `id_rh`/`dt_creation` + enum `SAISON` | 644, 645, 646 |
+| 003 | `003_widen_nb_jours.sql` | `nb_jours_ouvres/ouvrables/scenario` TINYINT → SMALLINT | 634, 656 |
 
 ```bash
 mysql -h <host> -u <user> -p trppu < db_migrations/001_widen_id_rh_columns.sql
 mysql -h <host> -u <user> -p trppu < db_migrations/002_add_param_columns.sql
+mysql -h <host> -u <user> -p trppu < db_migrations/003_widen_nb_jours.sql
 ```
 
 > **Jours fériés / fermés (613, 645)** : ne reposent plus sur une table en base.

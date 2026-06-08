@@ -167,6 +167,23 @@ prod est la base de vérité.
 
 ---
 
+## 6 bis. Cas G — `nb_jours_*` en TINYINT (crash runtime, prod ET local)
+
+Découvert à l'exécution (création de scénario) : `trppu_scenario.nb_jours_ouvres`,
+`nb_jours_ouvrables` et `nb_jours_scenario` sont en **`TINYINT`** (max 127) **en prod comme
+en local**, alors qu'ils comptent les jours sur **toute la période** du scénario. Avec la
+période par défaut (today−1an / today+1an, jusqu'à 730 j), le nombre de jours ouvrés (~520)
+dépasse 127 →
+
+```
+pymysql.err.DataError: (1264, "Out of range value for column 'nb_jours_ouvres' at row 1")
+```
+
+Ce n'est pas une divergence prod/local mais un **type trop petit** : impossible d'« aligner
+le code » (la valeur est légitimement grande). **Correctif = migration** `db_migrations/003_widen_nb_jours.sql`
+(TINYINT → SMALLINT pour les 3 colonnes ; `nb_jours_semaine` reste TINYINT). À appliquer
+**sur la prod** (et intégrée à `run_migrations.py` pour le local).
+
 ## 7. Annexe — points mineurs
 
 - **`lb_scenario` VARCHAR(20)** en local **et** en prod, alors que le code autorise jusqu'à 50

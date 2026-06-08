@@ -4,6 +4,7 @@ Exécute, dans l'ordre :
   1. db_analyse/schema_trppu.sql            (CREATE DATABASE + 19 tables)
   2. db_migrations/001_widen_id_rh_columns.sql
   3. db_migrations/002_add_param_columns.sql
+  4. db_migrations/003_widen_nb_jours.sql
 
 Connexion : SGBD_SERVER_WRITE / SGBD_PORT / SGBD_APP_USER_WRITE / SGBD_APP_PWD_*
 (lus depuis app.config, donc depuis ton .env). Aucun client `mysql` requis.
@@ -37,6 +38,7 @@ FILES = [
     ROOT / "db_analyse" / "schema_trppu.sql",
     ROOT / "db_migrations" / "001_widen_id_rh_columns.sql",
     ROOT / "db_migrations" / "002_add_param_columns.sql",
+    ROOT / "db_migrations" / "003_widen_nb_jours.sql",
 ]
 
 

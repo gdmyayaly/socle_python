@@ -71,6 +71,18 @@ def encrypt_id_rh(clear: str) -> str:
     return token.decode("ascii")
 
 
+def build_fernet(key: str) -> Fernet:
+    """Construit une instance Fernet depuis une clé/secret fourni **explicitement**.
+
+    Indépendant de `ID_RH_CRYPTO_KEY` : utilisé par la route d'audit, qui reçoit la clé
+    de déchiffrement dans la requête. Accepte une clé Fernet native (44 car.) ou un
+    secret arbitraire (dérivé en clé). Lève ValueError si la clé est vide.
+    """
+    if not key or not str(key).strip():
+        raise ValueError("clé de déchiffrement vide.")
+    return Fernet(_derive_fernet_key(str(key).strip()))
+
+
 def decrypt_id_rh(token: str) -> str:
     """Déchiffre un token id_rh stocké en base et retourne l'id_rh en clair.
 

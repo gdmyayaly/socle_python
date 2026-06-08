@@ -34,6 +34,7 @@ from app.routes.trppu_pic_version import router as trppu_pic_version_router
 from app.routes.trppu_produit import router as trppu_produit_router
 from app.routes.trppu_comptages import router as trppu_comptages_router
 from app.routes.trppu_neutralisations import router as trppu_neutralisations_router
+from app.routes.trppu_audit import router as trppu_audit_router
 from app.routes.trppu_scenario import router as trppu_scenario_router
 from app.routes.trppu_scenario_pic import router as trppu_scenario_pic_router
 from app.routes.trppu_site import router as trppu_site_router
@@ -154,6 +155,7 @@ app.include_router(trppu_comptages_router)
 app.include_router(trppu_variations_router)
 app.include_router(trppu_neutralisations_router)
 app.include_router(trppu_scenario_pic_router)
+app.include_router(trppu_audit_router)
 
 if __name__ == "__main__":
     import uvicorn

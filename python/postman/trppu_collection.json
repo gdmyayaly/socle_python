@@ -2180,6 +2180,44 @@
           }
         }
       ]
+    },
+    {
+      "name": "Audit id_rh",
+      "item": [
+        {
+          "name": "POST /trppu-api/audit/actions-id-rh",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/audit/actions-id-rh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "audit",
+                "actions-id-rh"
+              ]
+            },
+            "description": "Actions Id Rh",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_rh\": \"{{id_rh}}\",\n  \"cle\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
