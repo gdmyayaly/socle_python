@@ -12,16 +12,21 @@ appel (option B du doc d'intégration), pour l'édition IHM.
 `GET /trppu-api/scenarios/{id_scenario}/edition` (option `?id_session_ihm=`)
 ```json
 {
-  "scenario": { "...ScenarioOut..." },
+  "scenario": { "...ScenarioOut (dont est_fige, trafic_pdi_calcule, trafic_agrebal_calcule)..." },
   "periodes": { "periode_debut": "...", "nb_jours_semaine": 6, "...": "..." },
   "tmh": [ ... ],
   "comptages": [ ... ],
   "variations": [ ... ],
-  "neutralisations": { "feries": {}, "peak": {}, "saison": {} },
+  "neutralisations": [ { "id": 1, "dt_debut": "2026-11-11", "dt_fin": "2026-11-11", "nb_jour": 1, "motif": "FERIE" } ],
   "pic": { "id_pic_version_defaut": 1, "id_pic_version_scenario": null, "coefficients": [ ... ] }
 }
 ```
 Codes : `200`, `404` scénario inexistant.
+
+> **MAJ 2026-06-10 (alignement db_10_09 + DSR-645)** :
+> - `scenario` expose désormais `trafic_pdi_calcule` / `trafic_agrebal_calcule` (cf. DSR-648).
+> - `neutralisations` est une **liste à plat** (id, dt_debut, dt_fin, nb_jour, motif) suite
+>   au passage de `type` → `motif` (DSR-645) ; le regroupement feries/peak/saison est abandonné.
 
 ## 4. Migrations / dépendances
 Aucune propre ; réutilise les lectures DSR-655/650/653/651/652/660.
@@ -45,7 +50,10 @@ Comparer chaque bloc aux endpoints unitaires correspondants.
 
 ## 8. ➡️ Commentaire Jira
 > Endpoint d'édition `GET /trppu-api/scenarios/{id}/edition` livré : renvoie en un seul
-> appel l'entête scénario, les périodes, le TMH, les comptages, les variations, les
-> neutralisations (regroupées) et les coefficients PIC fusionnés. Pratique pour charger
-> l'écran d'édition d'un coup ; les endpoints unitaires (DSR-650/651/652/653/655/660)
-> restent disponibles.
+> appel l'entête scénario (dont les indicateurs `trafic_pdi_calcule` /
+> `trafic_agrebal_calcule`), les périodes, le TMH, les comptages, les variations, les
+> neutralisations (**liste à plat** avec motif libre) et les coefficients PIC fusionnés.
+> Pratique pour charger l'écran d'édition d'un coup ; les endpoints unitaires
+> (DSR-650/651/652/653/655/660) restent disponibles.
+> **À acter IHM** : le bloc `neutralisations` n'est plus regroupé feries/peak/saison mais
+> renvoyé à plat (conséquence du passage `motif` texte libre, DSR-645).

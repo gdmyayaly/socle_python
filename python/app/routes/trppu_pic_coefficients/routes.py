@@ -2,7 +2,7 @@
 
 import logging
 import time
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
@@ -29,9 +29,9 @@ router = APIRouter(prefix="/trppu-api/pic-coefficients", tags=["PIC Coefficients
 
 
 SELECT_PICC_SQL = (
-    "SELECT id_pic_coef, id_pic_version, co_produit, jour_semaine, "
-    "dt_effet, dt_fin_effet, coef_dense, coef_faible1, coef_faible2, "
-    "dt_creation, dt_maj, id_rh_creation "
+    "SELECT id_pic_coef, id_pic_version, co_produit, jour_semaine, densite, "
+    "dt_effet, dt_fin, coef, "
+    "dt_creation, dt_maj, id_rh "
     "FROM trppu_pic_coefficients"
 )
 
@@ -68,7 +68,7 @@ async def list_pic_coefs(
         where.append("jour_semaine = %s")
         params.append(jour_semaine.value)
     if actif_only:
-        where.append("(dt_fin_effet IS NULL OR dt_fin_effet > CURDATE())")
+        where.append("(dt_fin IS NULL OR dt_fin > NOW())")
 
     sql = SELECT_PICC_SQL
     if where:
@@ -135,22 +135,22 @@ async def get_pic_coef(id_pic_coef: int):
 async def create_pic_coef(payload: PicCoefCreate):
     start = time.perf_counter()
     logger.info(
-        "Début création coefficient PIC (id_pic_version=%d, co_produit=%s, jour_semaine=%s, dt_effet=%s)",
+        "Début création coefficient PIC (id_pic_version=%d, co_produit=%s, jour_semaine=%s, densite=%s)",
         payload.id_pic_version,
         payload.co_produit,
         payload.jour_semaine.value,
-        payload.dt_effet,
+        payload.densite,
     )
 
     duplicate = await db_read.fetch_one(
         "SELECT id_pic_coef FROM trppu_pic_coefficients "
         "WHERE id_pic_version = %s AND co_produit = %s "
-        "AND jour_semaine = %s AND dt_effet = %s",
+        "AND jour_semaine = %s AND densite = %s",
         (
             payload.id_pic_version,
             payload.co_produit,
             payload.jour_semaine.value,
-            payload.dt_effet,
+            payload.densite,
         ),
     )
     if duplicate:
@@ -163,7 +163,7 @@ async def create_pic_coef(payload: PicCoefCreate):
             detail=(
                 f"Un coefficient existe déjà pour (id_pic_version={payload.id_pic_version}, "
                 f"co_produit={payload.co_produit}, jour_semaine={payload.jour_semaine.value}, "
-                f"dt_effet={payload.dt_effet.isoformat()}) — id_pic_coef={duplicate['id_pic_coef']}."
+                f"densite={payload.densite}) — id_pic_coef={duplicate['id_pic_coef']}."
             ),
         )
     logger.info("Vérification clé naturelle OK")
@@ -172,9 +172,8 @@ async def create_pic_coef(payload: PicCoefCreate):
         async with db_write.transaction() as tx:
             await tx.execute(
                 "INSERT INTO trppu_pic_coefficients "
-                "(id_pic_version, co_produit, jour_semaine, dt_effet, dt_fin_effet, "
-                " coef_dense, coef_faible1, coef_faible2) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "(id_pic_version, co_produit, jour_semaine, densite, dt_effet, dt_fin, coef) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 pic_coef_to_upsert_params(payload),
             )
             new_row = await tx.fetch_one(
@@ -210,7 +209,7 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour.")
 
     existing = await db_read.fetch_one(
-        "SELECT id_pic_coef, id_pic_version, co_produit, jour_semaine, dt_effet "
+        "SELECT id_pic_coef, id_pic_version, co_produit, jour_semaine, densite, dt_effet "
         "FROM trppu_pic_coefficients WHERE id_pic_coef = %s",
         (id_pic_coef,),
     )
@@ -223,14 +222,20 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
         )
 
     new_dt_effet = fields.get("dt_effet", existing["dt_effet"])
-    if "dt_fin_effet" in fields and fields["dt_fin_effet"] is not None:
-        if fields["dt_fin_effet"] <= new_dt_effet:
+    # dt_effet en base est un datetime ; on compare sur la partie date.
+    new_dt_effet_date = (
+        new_dt_effet.date() if isinstance(new_dt_effet, datetime) else new_dt_effet
+    )
+    if "dt_fin" in fields and fields["dt_fin"] is not None:
+        if fields["dt_fin"] <= new_dt_effet_date:
             raise HTTPException(
                 status_code=422,
-                detail="dt_fin_effet doit être strictement supérieure à dt_effet.",
+                detail="dt_fin doit être strictement supérieure à dt_effet.",
             )
 
-    nk_changed = any(k in fields for k in ("id_pic_version", "co_produit", "jour_semaine", "dt_effet"))
+    nk_changed = any(
+        k in fields for k in ("id_pic_version", "co_produit", "jour_semaine", "densite")
+    )
     if nk_changed:
         nk = {
             "id_pic_version": fields.get("id_pic_version", existing["id_pic_version"]),
@@ -240,14 +245,14 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
                 if isinstance(fields.get("jour_semaine"), JourSemaineEnum)
                 else fields.get("jour_semaine", existing["jour_semaine"])
             ),
-            "dt_effet": new_dt_effet,
+            "densite": fields.get("densite", existing["densite"]),
         }
         collision = await db_read.fetch_one(
             "SELECT id_pic_coef FROM trppu_pic_coefficients "
             "WHERE id_pic_version = %s AND co_produit = %s "
-            "AND jour_semaine = %s AND dt_effet = %s "
+            "AND jour_semaine = %s AND densite = %s "
             "AND id_pic_coef <> %s",
-            (nk["id_pic_version"], nk["co_produit"], nk["jour_semaine"], nk["dt_effet"], id_pic_coef),
+            (nk["id_pic_version"], nk["co_produit"], nk["jour_semaine"], nk["densite"], id_pic_coef),
         )
         if collision:
             logger.info(
@@ -301,7 +306,7 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
 
 @router.delete("/{id_pic_coef}", response_model=SoftDeleteResult)
 async def soft_delete_pic_coef(id_pic_coef: int):
-    """Soft delete : positionne dt_fin_effet = aujourd'hui (clôt la période)."""
+    """Soft delete : positionne dt_fin = aujourd'hui (clôt la période)."""
     start = time.perf_counter()
     logger.info("Début clôture coefficient PIC (id_pic_coef=%d)", id_pic_coef)
 
@@ -316,21 +321,23 @@ async def soft_delete_pic_coef(id_pic_coef: int):
         )
 
     today = date.today()
-    if today <= existing["dt_effet"]:
+    dt_effet_val = existing["dt_effet"]
+    dt_effet_date = dt_effet_val.date() if isinstance(dt_effet_val, datetime) else dt_effet_val
+    if today <= dt_effet_date:
         logger.info(
             "Clôture refusée : dt_effet >= aujourd'hui (id_pic_coef=%d, dt_effet=%s)",
             id_pic_coef,
-            existing["dt_effet"],
+            dt_effet_val,
         )
         raise HTTPException(
             status_code=422,
             detail="dt_effet est aujourd'hui ou dans le futur — impossible de clore par DELETE. "
-            "Utilisez PUT pour fixer dt_fin_effet explicitement.",
+            "Utilisez PUT pour fixer dt_fin explicitement.",
         )
 
     try:
         rows_affected = await db_write.execute(
-            "UPDATE trppu_pic_coefficients SET dt_fin_effet = %s WHERE id_pic_coef = %s",
+            "UPDATE trppu_pic_coefficients SET dt_fin = %s WHERE id_pic_coef = %s",
             (today, id_pic_coef),
         )
     except Exception as e:
@@ -341,13 +348,13 @@ async def soft_delete_pic_coef(id_pic_coef: int):
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Clôture coefficient PIC terminée (id_pic_coef=%d, dt_fin_effet=%s, duration_ms=%.1f)",
+        "Clôture coefficient PIC terminée (id_pic_coef=%d, dt_fin=%s, duration_ms=%.1f)",
         id_pic_coef,
         today,
         duration_ms,
     )
     return SoftDeleteResult(
-        id_pic_coef=id_pic_coef, dt_fin_effet=today, rows_affected=rows_affected
+        id_pic_coef=id_pic_coef, dt_fin=today, rows_affected=rows_affected
     )
 
 

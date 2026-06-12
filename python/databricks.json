@@ -1,0 +1,63 @@
+{
+    "execution_time_s": 2.785,
+    "co_regate": "400300",
+    "date_debut": "2025-01-01",
+    "date_fin": "2026-12-16",
+    "count": 264,
+    "data": [
+        {
+            "co_niveau_regroupement_operationnel": "SITE",
+            "co_regate": "400300",
+            "lb_entite": "SAINT SEVER PDC1",
+            "co_type_regate": "072",
+            "lb_type_entite_regate_court": "PDC1",
+            "co_departement": "40",
+            "lb_departement": "Landes",
+            "lb_zone_ferie": "METROPOLE",
+            "lb_zone_vacances": "ZoneA",
+            "co_regate_rattachement_eog": "400100",
+            "lb_entite_rattachement_eog": "MONT DE MARSAN PPDC",
+            "co_regate_pic": "337330",
+            "lb_entite_pic": "CESTAS BORDEAUX PIC",
+            "co_regate_animation_fonctionnelle_nationale": "750547",
+            "lb_entite_animation_fonctionnelle_nationale": "PARIS NOUVELLE AQUITAINE DEXC",
+            "lb_type_objet": "COURRIER - OBJETS SIGNALES (OS)",
+            "co_mois_comptage": "2025-01",
+            "co_annee_comptage": 2025,
+            "trafic_constate": 4214,
+            "trafic_prevu": null
+        },
+        {
+            "co_niveau_regroupement_operationnel": "SITE",
+            "co_regate": "400300",
+            "lb_entite": "SAINT SEVER PDC1",
+            "co_type_regate": "072",
+            "lb_type_entite_regate_court": "PDC1",
+            "co_departement": "40",
+            "lb_departement": "Landes",
+            "lb_zone_ferie": "METROPOLE",
+            "lb_zone_vacances": "ZoneA",
+            "co_regate_rattachement_eog": "400100",
+            "lb_entite_rattachement_eog": "MONT DE MARSAN PPDC",
+            "co_regate_pic": "337330",
+            "lb_entite_pic": "CESTAS BORDEAUX PIC",
+            "co_regate_animation_fonctionnelle_nationale": "750547",
+            "lb_entite_animation_fonctionnelle_nationale": "PARIS NOUVELLE AQUITAINE DEXC",
+            "lb_type_objet": "COURRIER - OBJETS SIGNALES (OS)",
+            "co_semaine_comptage": "2026-50",
+            "da_lundi_semaine_comptage": "2026-12-07",
+            "co_annee_comptage": 2026,
+            "trafic_constate": null,
+            "trafic_prevu": 1022
+        }
+    ],
+    "nb_jours": {
+        "nbJoursOuvres": 485,
+        "nbJoursOuvrables": 584
+    },
+    "queries": [
+        "SELECT * FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_mois WHERE co_regate = '400300' AND (co_mois_comptage BETWEEN '2025-01' AND '2026-11')",
+        "SELECT * FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_jour WHERE co_regate = '400300' AND (da_comptage BETWEEN '2026-12-01' AND '2026-12-06' OR da_comptage BETWEEN '2026-12-14' AND '2026-12-16')",
+        "SELECT * FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_semaine WHERE co_regate = '400300' AND (co_semaine_comptage BETWEEN '2026-50' AND '2026-50')"
+    ]
+}

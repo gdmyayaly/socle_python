@@ -18,6 +18,7 @@ class TmhOut(BaseModel):
     moyenne_journaliere: Decimal
     moyenne_hebdo: Decimal
     bl_exclu: bool
+    bl_manuel: bool = False  # ligne saisie/modifiée manuellement (cf. DSR-649/665)
 
 
 class TmhUpsert(BaseModel):
@@ -31,6 +32,9 @@ class TmhUpsert(BaseModel):
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
     exclusion: bool = False
+    manuel: bool = Field(
+        False, description="Ligne ajoutée manuellement (True) ou issue d'un calcul auto (False) → bl_manuel."
+    )
 
 
 class TmhBatchUpdate(BaseModel):
@@ -38,6 +42,9 @@ class TmhBatchUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     tmh: list[TmhUpsert] = Field(..., min_length=1)
+    id_rh: str = Field(
+        ..., min_length=1, description="id_rh en clair de l'utilisateur ; crypté serveur avant stockage."
+    )
 
 
 class TmhBatchResult(BaseModel):

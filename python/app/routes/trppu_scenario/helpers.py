@@ -13,7 +13,8 @@ SELECT_SCENARIO_SQL = (
     "periode_debut, periode_fin, "
     "periode_realise_debut, periode_realise_fin, periode_prev_debut, periode_prev_fin, "
     "nb_jours_semaine, nb_jours_ouvres, nb_jours_ouvrables, nb_jours_scenario, "
-    "id_pic_version, version_scenario, est_fige "
+    "id_pic_version, version_scenario, est_fige, "
+    "trafic_pdi_calcule, trafic_agrebal_calcule "
     "FROM trppu_scenario"
 )
 

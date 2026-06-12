@@ -39,6 +39,7 @@ FILES = [
     ROOT / "db_migrations" / "001_widen_id_rh_columns.sql",
     ROOT / "db_migrations" / "002_add_param_columns.sql",
     ROOT / "db_migrations" / "003_widen_nb_jours.sql",
+    ROOT / "db_migrations" / "004_add_variations_tracabilite.sql",
 ]
 
 

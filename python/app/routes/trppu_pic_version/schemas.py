@@ -18,6 +18,11 @@ class PicVersionBase(BaseModel):
     lb_pic_version: str | None = Field(None, max_length=80)
     niveau: NiveauEnum
     co_regate: str = Field(..., min_length=6, max_length=6, pattern=CO_REGATE_PATTERN)
+    # NOT NULL en base, sans valeur par défaut SQL. Pour une version référentielle
+    # (NATIONAL/DEX/SITE) non rattachée à un scénario, 0 fait office de sentinelle.
+    # (Les versions de niveau SCENARIO sont créées par le module trppu_scenario_pic,
+    # qui renseigne le vrai id_scenario.)
+    id_scenario: int = Field(0, ge=0)
     dt_activation: datetime
     dt_desactivation: datetime | None = None
     motif_desactivation: str | None = Field(None, max_length=255)

@@ -1,13 +1,15 @@
 # Résolution — DSR-646 (Écriture des variations prévisionnelles)
 
 ## 1. Statut
-**Terminé.** Upsert d'une variation par produit ; suppression automatique quand on
-repasse à 0 %. `id_rh` crypté.
+**Terminé + traçabilité restaurée (migration 004, 2026-06-10).** Upsert d'une variation
+par produit ; suppression automatique quand on repasse à 0 %. `id_rh` **crypté et stocké**,
+`dt_creation` renseignée — conformément au ticket et à db_10_09 + migration 004.
 
 ## 2. Fichiers créés / modifiés
 - `app/routes/trppu_variations/{__init__,helpers,schemas,routes}.py`
 - `app/main.py` — enregistrement du routeur.
-- Migration `002` (`dt_creation`, `id_rh`).
+- **Migration `004_add_variations_tracabilite.sql`** : ajoute `dt_creation` + `id_rh` à
+  `trppu_scenario_variations_prev` (enregistrée dans `scripts/run_migrations.py`).
 
 ## 3. Endpoints livrés
 | Méthode | Chemin | Rôle |
@@ -19,7 +21,11 @@ Body PUT : `{ "variation_pct": 25.00, "id_rh": "A123456" }` (négatif autorisé)
 Réponse PUT : `{ "co_produit": "OO", "variation_pct": 25.00, "action": "created|updated|deleted|noop" }`.
 
 ## 4. Migrations / dépendances
-Migration `002` (`dt_creation`, `id_rh`), var d'env `ID_RH_CRYPTO_KEY`.
+**Migration `004`** (`dt_creation` + `id_rh` sur `trppu_scenario_variations_prev`) — à
+appliquer sur la prod. Var d'env `ID_RH_CRYPTO_KEY` (cryptage Fernet de l'id_rh).
+Conformité base : INSERT `(id_scenario, co_produit, variation_pct, id_rh)` (dt_creation par
+défaut NOW) ; UPDATE `variation_pct, id_rh, dt_creation = NOW()` ; unicité `(id_scenario,
+co_produit)`.
 
 ## 5. Hypothèses & écarts
 - `PUT` idempotent couvre ajout + modification + suppression-par-0 (#8/#12).
@@ -39,15 +45,25 @@ PUT .../variations/OO {variation_pct:25} ; PUT {40} ; PUT {0} (supprime) ; GET .
 | OO 25→40 % → modifiée | PUT (updated) |
 | OO 40→0 % → supprimée | PUT (deleted) |
 
-## 8. ➡️ Commentaire Jira
-> Service variations prévisionnelles livré : `PUT /trppu-api/scenarios/{id}/variations/{co_produit}`
-> (idempotent : crée/modifie, et **supprime la ligne si le pourcentage repasse à 0 %**),
-> + `DELETE` explicite. Valeurs négatives acceptées, `dt_creation` repositionnée à chaque
-> modif, `id_rh` chiffré. **Pré-requis** : migration `002` + `ID_RH_CRYPTO_KEY`.
-
-> **🔄 MAJ 2026-06-08 — Alignement schéma PROD (base de référence) :** ⚠️ la table
-> `trppu_scenario_variations_prev` en prod **n'a ni `dt_creation` ni `id_rh`** (migration
-> `002` non déployée en prod sur cette table). Ces deux écritures ont été **retirées**
-> des INSERT/UPDATE pour que l'endpoint fonctionne contre la prod → **`dt_creation` non
-> stockée et traçabilité id_rh perdue sur cet endpoint**. Pour les rétablir : ajouter
-> les colonnes à la prod (migration dédiée). Cf. `db_analyse/v2/RAPPORT_COMPARAISON_PROD_LOCAL.md`.
+## 8. ➡️ Commentaire Jira (à coller)
+> **URL d'appel**
+> `PUT /trppu-api/scenarios/{id_scenario}/variations/{co_produit}` (ajout/modification),
+> `DELETE /trppu-api/scenarios/{id_scenario}/variations/{co_produit}` (suppression explicite).
+>
+> **Données d'entrée** (PUT)
+> - `id_scenario` (path), `co_produit` (path).
+> - `variation_pct` | variation en % (valeurs négatives acceptées).
+> - `id_rh` | id_rh de l'utilisateur, **crypté puis stocké** en base.
+>
+> **Mise à jour en base (trppu_scenario_variations_prev)**
+> - ajout d'une variation => INSERT (`id_scenario`, `co_produit`, `variation_pct`, `id_rh`),
+>   `dt_creation` = date du jour ;
+> - modification => UPDATE `variation_pct`, `id_rh`, `dt_creation` = date du jour ;
+> - repasse à 0 % => DELETE de la ligne (valeur par défaut non stockée).
+>
+> **Données de sortie**
+> `{ co_produit, variation_pct, action: created|updated|deleted|noop }`. DELETE => 204.
+>
+> **Prise en compte db_10_09 + traçabilité** : la table ne possédait ni `dt_creation` ni
+> `id_rh` ; la **migration `004`** les ajoute (à déployer en prod) pour restaurer la
+> traçabilité demandée par le ticket. Cryptage via `ID_RH_CRYPTO_KEY`.

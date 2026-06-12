@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
 from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
+from app.security.crypto import encrypt_id_rh
 
 from .helpers import SELECT_VARIATIONS_SQL, fetch_variation
 from .schemas import VariationOut, VariationUpsert, VariationUpsertResult
@@ -61,6 +62,7 @@ async def upsert_variation(id_scenario: int, co_produit: str, payload: Variation
     assert_editable(scenario)
 
     is_zero = payload.variation_pct == Decimal("0")
+    id_rh_token = encrypt_id_rh(payload.id_rh)  # traçabilité (migration 004)
 
     try:
         async with db_write.transaction() as tx:
@@ -76,19 +78,21 @@ async def upsert_variation(id_scenario: int, co_produit: str, payload: Variation
                 else:
                     action = "noop"  # déjà à 0 % (non stocké) : rien à faire
             elif existing:
+                # dt_creation n'est PAS réécrit : on conserve la date de création d'origine
+                # (la table n'a pas de colonne dt_maj dans le schéma).
                 await tx.execute(
                     "UPDATE trppu_scenario_variations_prev "
-                    "SET variation_pct = %s "
+                    "SET variation_pct = %s, id_rh = %s "
                     "WHERE id_scenario = %s AND co_produit = %s",
-                    (payload.variation_pct, id_scenario, co_produit),
+                    (payload.variation_pct, id_rh_token, id_scenario, co_produit),
                 )
                 action = "updated"
             else:
                 await tx.execute(
                     "INSERT INTO trppu_scenario_variations_prev "
-                    "(id_scenario, co_produit, variation_pct) "
-                    "VALUES (%s, %s, %s)",
-                    (id_scenario, co_produit, payload.variation_pct),
+                    "(id_scenario, co_produit, variation_pct, id_rh) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (id_scenario, co_produit, payload.variation_pct, id_rh_token),
                 )
                 action = "created"
     except HTTPException:

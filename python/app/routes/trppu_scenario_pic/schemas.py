@@ -12,11 +12,12 @@ CO_PRODUIT_PATTERN = r"^[A-Za-z0-9]{1,2}$"
 class PicCoefItem(BaseModel):
     """Un coefficient PIC fusionné (défaut national + surcharge scénario)."""
 
+    id_pic_version: int  # version d'origine de la ligne : défaut (1) ou version scénario
     co_produit: str
     jour_semaine: JourSemaine
     densite: int = Field(..., ge=0, le=2)  # 0=dense, 1=faible1, 2=faible2
     coef: Decimal
-    modifie: bool  # True si surchargé par le scénario
+    modifie: bool  # True si surchargé par le scénario (id_pic_version != défaut)
 
 
 class PicScenarioOut(BaseModel):
@@ -36,7 +37,7 @@ class PicCoefUpsert(BaseModel):
     co_produit: str = Field(..., min_length=1, max_length=2, pattern=CO_PRODUIT_PATTERN)
     jour_semaine: JourSemaine
     densite: int = Field(..., ge=0, le=2)
-    coef: Decimal = Field(..., max_digits=7, decimal_places=4)
+    coef: Decimal = Field(..., ge=0, max_digits=7, decimal_places=4)  # chk_pic_coefs: coef >= 0
     id_rh: str = Field(..., min_length=1)  # crypté en base
 
 

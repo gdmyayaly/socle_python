@@ -25,6 +25,7 @@ from .helpers import (
 )
 from .schemas import (
     DuplicateRequest,
+    FigementParStatutRequest,
     FigeUpdate,
     LbScenarioUpdate,
     NbJoursUpdate,
@@ -40,6 +41,7 @@ from .statuts import (
     apply_transition_side_effects,
     assert_internal_transition_allowed,
     assert_transition_allowed,
+    resolve_fige_from_statut,
 )
 
 logger = logging.getLogger(__name__)
@@ -257,7 +259,9 @@ async def create_scenario(payload: ScenarioCreate):
             if payload.tmh:
                 from app.routes.trppu_tmh.helpers import upsert_tmh_rows
 
-                nb_ins, _ = await upsert_tmh_rows(tx, id_scenario, payload.tmh)
+                nb_ins, _ = await upsert_tmh_rows(
+                    tx, id_scenario, payload.tmh, id_rh=id_rh_token
+                )
                 logger.info(
                     "Lignes TMH insérées à la création (id_scenario=%d, nb=%d)",
                     id_scenario,
@@ -349,7 +353,9 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
             if payload.tmh:
                 from app.routes.trppu_tmh.helpers import upsert_tmh_rows
 
-                nb_ins, nb_upd = await upsert_tmh_rows(tx, id_scenario, payload.tmh)
+                nb_ins, nb_upd = await upsert_tmh_rows(
+                    tx, id_scenario, payload.tmh, id_rh=id_rh_token
+                )
                 logger.info(
                     "TMH mis à jour à la MAJ scénario (id_scenario=%d, insérés=%d, modifiés=%d)",
                     id_scenario,
@@ -390,10 +396,7 @@ async def get_scenario_edition(
 
     # Imports locaux : évite tout cycle d'import entre modules de routes.
     from app.routes.trppu_comptages.helpers import SELECT_COMPTAGES_SQL
-    from app.routes.trppu_neutralisations.helpers import (
-        SELECT_NEUTRALISATIONS_SQL,
-        group_neutralisations,
-    )
+    from app.routes.trppu_neutralisations.helpers import SELECT_NEUTRALISATIONS_SQL
     from app.routes.trppu_scenario_pic.helpers import (
         DEFAULT_PIC_VERSION,
         fetch_coeffs_for_version,
@@ -407,9 +410,8 @@ async def get_scenario_edition(
         tmh = await fetch_tmh(db_read, id_scenario)
         comptages = await db_read.fetch_all(SELECT_COMPTAGES_SQL, (id_scenario,))
         variations = await db_read.fetch_all(SELECT_VARIATIONS_SQL, (id_scenario,))
-        neutralisations = group_neutralisations(
-            await db_read.fetch_all(SELECT_NEUTRALISATIONS_SQL, (id_scenario,))
-        )
+        # DSR-645 (motif libre) : liste à plat des neutralisations (plus de regroupement).
+        neutralisations = await db_read.fetch_all(SELECT_NEUTRALISATIONS_SQL, (id_scenario,))
         defaults = await fetch_coeffs_for_version(db_read, DEFAULT_PIC_VERSION)
         scen_v = await fetch_scenario_pic_version(db_read, id_scenario)
         overrides = (
@@ -758,6 +760,52 @@ async def update_est_fige(id_scenario: int, payload: FigeUpdate):
     return updated
 
 
+@router.patch("/{id_scenario}/figement", response_model=ScenarioOut)
+async def update_figement_par_statut(id_scenario: int, payload: FigementParStatutRequest):
+    """DSR-669 : fige (1) ou défige (0) le scénario selon le statut reçu de l'IHM.
+
+    "validé"/"simulation" -> est_fige=1 ; "en cours" -> est_fige=0 ;
+    tout autre statut -> 422 (paramètre inconnu, aucune action réalisée).
+    Met à jour uniquement le champ est_fige, pas le statut du scénario.
+    """
+    start = time.perf_counter()
+    logger.info(
+        "Début figement par statut (id_scenario=%d, statut=%s)",
+        id_scenario,
+        safe_preview(payload.statut),
+    )
+
+    scenario = await fetch_scenario_or_404(id_scenario)
+    assert_not_archive(scenario)
+    est_fige = resolve_fige_from_statut(payload.statut)  # lève 422 si statut inconnu
+
+    try:
+        async with db_write.transaction() as tx:
+            await tx.execute(
+                "UPDATE trppu_scenario SET est_fige = %s WHERE id_scenario = %s",
+                (1 if est_fige else 0, id_scenario),
+            )
+            await increment_version(tx, id_scenario)
+    except Exception as e:
+        logger.exception(
+            "Erreur figement par statut (id_scenario=%d, statut=%s)",
+            id_scenario,
+            safe_preview(payload.statut),
+        )
+        raise HTTPException(status_code=500, detail="Erreur figement par statut.") from e
+
+    updated = await fetch_scenario_or_404(id_scenario)
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "Figement par statut terminé (id_scenario=%d, statut=%s, est_fige=%s, duration_ms=%.1f)",
+        id_scenario,
+        safe_preview(payload.statut),
+        est_fige,
+        duration_ms,
+    )
+    return updated
+
+
 @router.patch("/{id_scenario}/lb-scenario", response_model=ScenarioOut)
 async def update_lb_scenario(id_scenario: int, payload: LbScenarioUpdate):
     start = time.perf_counter()
@@ -815,8 +863,8 @@ async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest | None 
         if payload and payload.lb_scenario
         else f"{source['lb_scenario']} (copie)"
     )
-    if len(new_lb) > 50:
-        new_lb = new_lb[:50]
+    if len(new_lb) > 20:  # lb_scenario : varchar(20) en base
+        new_lb = new_lb[:20]
     logger.info("Nouveau libellé résolu (lb_scenario=%s)", safe_preview(new_lb))
 
     try:

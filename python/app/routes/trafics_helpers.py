@@ -6,7 +6,12 @@ from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 
-from app.config import MAX_DATE_RANGE_DAYS
+from app.config import (
+    MAX_DATE_RANGE_DAYS,
+    TRAFIC_COL_OBJET,
+    TRAFIC_PRODUIT_MAPPING,
+    TRAFIC_PRODUITS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,3 +174,121 @@ def validate_params(co_regate, date_debut, date_fin):
         )
 
     return dt_debut, dt_fin
+
+
+# ----- DSR-666 : récupération des trafics avec date pivot -----
+
+PARAMETRES_RAPPEL_PIVOT = (
+    "Paramètres attendus : "
+    "co_regate (code régate du site), "
+    "date_debut (format AAAAMMJJ), "
+    "date_fin (format AAAAMMJJ), "
+    "date_pivot (format AAAAMMJJ)."
+)
+
+
+def validate_params_pivot(co_regate, date_debut, date_fin, date_pivot):
+    """DSR-666 : valide les 4 paramètres et retourne (dt_debut, dt_fin, dt_pivot).
+
+    Renvoie un HTTP 400 explicite (paramètres manquants rappelés) si un paramètre
+    manque, si date_debut > date_fin, ou si la période dépasse 2 ans.
+    """
+    manquants = []
+    if not co_regate:
+        manquants.append("co_regate")
+    if not date_debut:
+        manquants.append("date_debut")
+    if not date_fin:
+        manquants.append("date_fin")
+    if not date_pivot:
+        manquants.append("date_pivot")
+    if manquants:
+        msg = f"Paramètre(s) manquant(s) : {', '.join(manquants)}. {PARAMETRES_RAPPEL_PIVOT}"
+        logger.warning(msg)
+        raise HTTPException(
+            status_code=400,
+            detail={"error": True, "message": msg, "code": 400},
+        )
+
+    dt_debut = parse_date(date_debut, "date_debut")
+    dt_fin = parse_date(date_fin, "date_fin")
+    dt_pivot = parse_date(date_pivot, "date_pivot")
+
+    if dt_debut > dt_fin:
+        msg = f"date_debut doit être antérieure ou égale à date_fin. {PARAMETRES_RAPPEL_PIVOT}"
+        logger.warning(msg)
+        raise HTTPException(
+            status_code=400,
+            detail={"error": True, "message": msg, "code": 400},
+        )
+
+    ecart = (dt_fin - dt_debut).days
+    if ecart > MAX_DATE_RANGE_DAYS:
+        msg = (
+            f"La période dépasse les 2 ans d'interrogation permis ({MAX_DATE_RANGE_DAYS} jours). "
+            f"Écart actuel : {ecart} jours. {PARAMETRES_RAPPEL_PIVOT}"
+        )
+        logger.warning(msg)
+        raise HTTPException(
+            status_code=400,
+            detail={"error": True, "message": msg, "code": 400},
+        )
+
+    return dt_debut, dt_fin, dt_pivot
+
+
+def split_by_pivot(dt_debut, dt_fin, dt_pivot):
+    """Découpe la période en (plage réelle, plage prévisionnelle) autour du pivot.
+
+    - réel : dates **strictement antérieures** au pivot -> [dt_debut, min(dt_fin, pivot-1j)]
+    - prév : dates **>= pivot**                          -> [max(dt_debut, pivot), dt_fin]
+
+    Découper en amont (au jour près) évite toute granularité mois/semaine à cheval
+    sur le pivot. Retourne (reel, prev), chacun None si la plage correspondante est
+    vide (période entièrement future -> reel=None ; entièrement passée -> prev=None).
+    """
+    reel = None
+    prev = None
+
+    reel_fin = min(dt_fin, dt_pivot - timedelta(days=1))
+    if dt_debut <= reel_fin:
+        reel = (dt_debut, reel_fin)
+
+    prev_debut = max(dt_debut, dt_pivot)
+    if prev_debut <= dt_fin:
+        prev = (prev_debut, dt_fin)
+
+    return reel, prev
+
+
+def map_produit(objet_label):
+    """Mappe un libellé `lb_type_objet` Databricks vers un code produit (ou None)."""
+    if objet_label is None:
+        return None
+    return TRAFIC_PRODUIT_MAPPING.get(str(objet_label).strip())
+
+
+def empty_trafics_accumulator():
+    """Initialise l'accumulateur {produit: {trafic_brut, trafic_previsionnel}}.
+
+    Les 6 objets sont toujours présents (hydratés à 0), même sans trafic.
+    """
+    return {
+        produit: {"trafic_brut": 0, "trafic_previsionnel": 0} for produit in TRAFIC_PRODUITS
+    }
+
+
+def accumulate_trafics(rows, value_col, target_key, acc):
+    """Ajoute la somme de `value_col` (par produit) dans `acc[produit][target_key]`.
+
+    Les lignes dont l'objet n'est pas mappé (ou hors des 6 produits) sont ignorées ;
+    les valeurs nulles comptent pour 0.
+    """
+    for row in rows:
+        produit = map_produit(row.get(TRAFIC_COL_OBJET))
+        if produit is None or produit not in acc:
+            continue
+        valeur = row.get(value_col)
+        if valeur is None:
+            continue
+        acc[produit][target_key] += valeur

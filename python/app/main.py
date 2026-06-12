@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.docs import (
@@ -110,6 +112,25 @@ async def _jours_fermes_unavailable(request: Request, exc: JoursFermesAPIError):
     return JSONResponse(
         status_code=503,
         content={"detail": "Service jours fermés indisponible"},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError):
+    """Trace les paramètres invalides/manquants (DSR-661 critère 4) avant de renvoyer le
+    422 standard. `id_session_ihm` (query) repris si présent pour le regroupement Kibana.
+    """
+    id_session_ihm = request.query_params.get("id_session_ihm")
+    log.warning(
+        "Validation des paramètres échouée (%s %s, id_session_ihm=%s) : %s",
+        request.method,
+        request.url.path,
+        id_session_ihm,
+        exc.errors(),
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors())},
     )
 
 

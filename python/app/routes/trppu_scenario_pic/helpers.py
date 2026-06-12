@@ -7,7 +7,7 @@ from typing import Any
 # Version PIC par défaut (national) — cf. DSR-660.
 DEFAULT_PIC_VERSION = 1
 
-_COEF_COLS = "co_produit, jour_semaine, densite, coef"
+_COEF_COLS = "id_pic_version, co_produit, jour_semaine, densite, coef"
 
 
 async def fetch_coeffs_for_version(db, id_pic_version: int) -> list[dict[str, Any]]:
@@ -40,6 +40,7 @@ def merge_coeffs(defaults: list[dict], overrides: list[dict]) -> list[dict]:
     merged: dict[tuple, dict] = {}
     for r in defaults:
         merged[_key(r)] = {
+            "id_pic_version": int(r["id_pic_version"]),
             "co_produit": r["co_produit"],
             "jour_semaine": r["jour_semaine"],
             "densite": int(r["densite"]),
@@ -48,11 +49,12 @@ def merge_coeffs(defaults: list[dict], overrides: list[dict]) -> list[dict]:
         }
     for r in overrides:
         merged[_key(r)] = {
+            "id_pic_version": int(r["id_pic_version"]),
             "co_produit": r["co_produit"],
             "jour_semaine": r["jour_semaine"],
             "densite": int(r["densite"]),
             "coef": r["coef"],
-            "modifie": True,
+            "modifie": True,  # surchargé par le scénario (id_pic_version != défaut)
         }
     return sorted(
         merged.values(),

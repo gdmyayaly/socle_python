@@ -10,6 +10,7 @@ id_rh (schéma de PROD = référence) :
 - `trppu_pic_coefficients`: id_rh (ECRITURE)
 - `trppu_neutralisations` : id_rh (ECRITURE)
 - `trppu_tmh`             : id_rh (ECRITURE)
+- `trppu_scenario_variations_prev` : id_rh (ECRITURE)
 """
 
 from __future__ import annotations
@@ -110,7 +111,7 @@ async def collect_actions(db, fernet: Fernet, target_clear: str) -> list[dict[st
 
     # 4. trppu_neutralisations — ajout/MAJ d'une neutralisation.
     rows = await db.fetch_all(
-        "SELECT id_neutralisation, id_scenario, type, dt_debut, dt_fin, dt_creation, id_rh "
+        "SELECT id_neutralisation, id_scenario, motif, dt_debut, dt_fin, dt_creation, id_rh "
         "FROM trppu_neutralisations WHERE id_rh IS NOT NULL"
     )
     for r in rows:
@@ -118,7 +119,7 @@ async def collect_actions(db, fernet: Fernet, target_clear: str) -> list[dict[st
             actions.append({
                 "ressource": "trppu_neutralisations", "action": "NEUTRALISATION",
                 "id": r["id_neutralisation"], "id_scenario": r["id_scenario"], "date": r["dt_creation"],
-                "details": {"type": r["type"], "dt_debut": str(r["dt_debut"]),
+                "details": {"motif": r["motif"], "dt_debut": str(r["dt_debut"]),
                             "dt_fin": str(r["dt_fin"])},
             })
 
@@ -133,6 +134,20 @@ async def collect_actions(db, fernet: Fernet, target_clear: str) -> list[dict[st
                 "ressource": "trppu_tmh", "action": "ECRITURE_TMH",
                 "id": r["id_tmh"], "id_scenario": r["id_scenario"], "date": r["dt_calcul"],
                 "details": {"co_produit": r["co_produit"]},
+            })
+
+    # 6. trppu_scenario_variations_prev — écriture d'une variation prévisionnelle.
+    rows = await db.fetch_all(
+        "SELECT id_variation, id_scenario, co_produit, variation_pct, dt_creation, id_rh "
+        "FROM trppu_scenario_variations_prev WHERE id_rh IS NOT NULL"
+    )
+    for r in rows:
+        if _match(fernet, r["id_rh"], target_clear):
+            actions.append({
+                "ressource": "trppu_scenario_variations_prev", "action": "ECRITURE_VARIATION",
+                "id": r["id_variation"], "id_scenario": r["id_scenario"], "date": r["dt_creation"],
+                "details": {"co_produit": r["co_produit"],
+                            "variation_pct": str(r["variation_pct"])},
             })
 
     return actions

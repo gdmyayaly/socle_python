@@ -29,11 +29,12 @@ class ScenarioTmhItem(BaseModel):
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
     exclusion: bool = False
+    manuel: bool = False  # → bl_manuel (ligne saisie manuellement vs calcul auto)
 
 
 class ScenarioBase(BaseModel):
     co_regate: str = Field(..., min_length=6, max_length=6, pattern=CO_REGATE_PATTERN)
-    lb_scenario: str = Field(..., min_length=1, max_length=50)
+    lb_scenario: str = Field(..., min_length=1, max_length=20)
     co_roc: str = Field(..., min_length=6, max_length=6, pattern=CO_REGATE_PATTERN)
 
 
@@ -103,6 +104,8 @@ class ScenarioOut(BaseModel):
     id_pic_version: int
     version_scenario: int
     est_fige: bool
+    trafic_pdi_calcule: bool = False  # 0 = trafic PDI non calculé, 1 = calculé
+    trafic_agrebal_calcule: bool = False  # 0 = trafic agrebal non calculé, 1 = calculé
 
 
 class ScenarioPeriodesOut(BaseModel):
@@ -176,13 +179,24 @@ class FigeUpdate(BaseModel):
     est_fige: bool
 
 
+class FigementParStatutRequest(BaseModel):
+    """Body PATCH /{id}/figement (DSR-669) : statut IHM pilotant le figement.
+
+    Statut libre (libellé IHM, ex. "validé"/"simulation"/"en cours") ; le mapping
+    vers est_fige est résolu serveur (cf. statuts.resolve_fige_from_statut).
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    statut: str = Field(..., min_length=1)
+
+
 class LbScenarioUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    lb_scenario: str = Field(..., min_length=1, max_length=50)
+    lb_scenario: str = Field(..., min_length=1, max_length=20)
 
 
 class DuplicateRequest(BaseModel):
     """Body optionnel pour POST /duplicate : permet d'écraser le libellé du clone."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    lb_scenario: Optional[str] = Field(None, min_length=1, max_length=50)
+    lb_scenario: Optional[str] = Field(None, min_length=1, max_length=20)

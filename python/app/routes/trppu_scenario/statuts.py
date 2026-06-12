@@ -1,10 +1,44 @@
 """Machine à états des scénarios + effets de bord automatiques."""
 
+import unicodedata
 from typing import Any
 
 from fastapi import HTTPException
 
 STATUTS = ("EN COURS", "VALIDE", "EN PRODUCTION", "ARCHIVE")
+
+# DSR-669 : mapping d'un statut IHM reçu vers le flag de figement (est_fige).
+# "validé"/"simulation" -> figé (True) ; "en cours" -> défigé (False).
+# Clés normalisées (majuscules, sans accent) — cf. _normalize_statut.
+FIGE_PAR_STATUT: dict[str, bool] = {
+    "VALIDE": True,
+    "SIMULATION": True,
+    "EN COURS": False,
+}
+
+
+def _normalize_statut(statut: str) -> str:
+    """Normalise un libellé de statut : majuscules, sans accent, espaces compactés."""
+    sans_accent = "".join(
+        c for c in unicodedata.normalize("NFD", statut) if unicodedata.category(c) != "Mn"
+    )
+    return " ".join(sans_accent.upper().split())
+
+
+def resolve_fige_from_statut(statut: str) -> bool:
+    """DSR-669 : déduit le figement (True/False) à partir du statut reçu.
+
+    Insensible à la casse et aux accents. Lève HTTP 422 si le statut n'est pas
+    reconnu (paramètre 'inconnu'), sans réaliser aucune action.
+    """
+    cle = _normalize_statut(statut)
+    if cle not in FIGE_PAR_STATUT:
+        attendus = ", ".join(sorted(FIGE_PAR_STATUT))
+        raise HTTPException(
+            status_code=422,
+            detail=f"Statut '{statut}' inconnu. Valeurs acceptées : {attendus}.",
+        )
+    return FIGE_PAR_STATUT[cle]
 
 # Transitions accessibles via PATCH /statut.
 # La transition VALIDE -> EN PRODUCTION est volontairement absente : elle passe

@@ -26,9 +26,9 @@ REQUIRED_HEADERS = ["niveau", "co_regate", "dt_activation"]
 
 INSERT_SQL = (
     "INSERT INTO trppu_pic_version "
-    "(lb_pic_version, niveau, co_regate, dt_activation, dt_desactivation, "
+    "(lb_pic_version, niveau, co_regate, id_scenario, dt_activation, dt_desactivation, "
     " motif_desactivation, commentaire, est_par_defaut) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
 
 
@@ -158,6 +158,7 @@ def pic_version_to_insert_params(p: PicVersionCreate) -> tuple:
         p.lb_pic_version,
         p.niveau.value,
         p.co_regate,
+        p.id_scenario,
         p.dt_activation,
         p.dt_desactivation,
         p.motif_desactivation,

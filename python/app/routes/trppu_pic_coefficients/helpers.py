@@ -1,4 +1,8 @@
-"""Utilitaires pour trppu_pic_coefficients : parsing Excel, normalisation, requêtes SQL."""
+"""Utilitaires pour trppu_pic_coefficients : parsing Excel, normalisation, requêtes SQL.
+
+Aligné sur le schéma réel : colonnes coef / densite / dt_effet / dt_fin,
+clé naturelle UNIQUE (id_pic_version, co_produit, jour_semaine, densite).
+"""
 
 from __future__ import annotations
 
@@ -15,34 +19,30 @@ EXPECTED_HEADERS = [
     "id_pic_version",
     "co_produit",
     "jour_semaine",
+    "densite",
     "dt_effet",
-    "dt_fin_effet",
-    "coef_dense",
-    "coef_faible1",
-    "coef_faible2",
+    "dt_fin",
+    "coef",
 ]
 REQUIRED_HEADERS = [
     "id_pic_version",
     "co_produit",
     "jour_semaine",
+    "densite",
     "dt_effet",
-    "coef_dense",
-    "coef_faible1",
-    "coef_faible2",
+    "coef",
 ]
 
 
 # Upsert sur la natural key (UNIQUE uq_picc) — id_pic_coef est auto-généré.
 UPSERT_SQL = (
     "INSERT INTO trppu_pic_coefficients "
-    "(id_pic_version, co_produit, jour_semaine, dt_effet, dt_fin_effet, "
-    " coef_dense, coef_faible1, coef_faible2) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+    "(id_pic_version, co_produit, jour_semaine, densite, dt_effet, dt_fin, coef) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
     "ON DUPLICATE KEY UPDATE "
-    "dt_fin_effet = VALUES(dt_fin_effet), "
-    "coef_dense = VALUES(coef_dense), "
-    "coef_faible1 = VALUES(coef_faible1), "
-    "coef_faible2 = VALUES(coef_faible2)"
+    "dt_effet = VALUES(dt_effet), "
+    "dt_fin = VALUES(dt_fin), "
+    "coef = VALUES(coef)"
 )
 
 
@@ -138,11 +138,10 @@ def parse_excel_pic_coefs(
                 "id_pic_version": _normalize_int(raw.get("id_pic_version"), "id_pic_version"),
                 "co_produit": _normalize_co_produit(raw.get("co_produit")),
                 "jour_semaine": _normalize_jour_semaine(raw.get("jour_semaine")),
+                "densite": _normalize_int(raw.get("densite"), "densite"),
                 "dt_effet": _normalize_date(raw.get("dt_effet")),
-                "dt_fin_effet": _normalize_date(raw.get("dt_fin_effet")),
-                "coef_dense": _normalize_float(raw.get("coef_dense"), "coef_dense"),
-                "coef_faible1": _normalize_float(raw.get("coef_faible1"), "coef_faible1"),
-                "coef_faible2": _normalize_float(raw.get("coef_faible2"), "coef_faible2"),
+                "dt_fin": _normalize_date(raw.get("dt_fin")),
+                "coef": _normalize_float(raw.get("coef"), "coef"),
             }
             picc = PicCoefCreate.model_validate(payload)
             valid.append(picc)
@@ -159,11 +158,10 @@ def pic_coef_to_upsert_params(p: PicCoefCreate) -> tuple:
         p.id_pic_version,
         p.co_produit,
         p.jour_semaine.value,
+        p.densite,
         p.dt_effet,
-        p.dt_fin_effet,
-        p.coef_dense,
-        p.coef_faible1,
-        p.coef_faible2,
+        p.dt_fin,
+        p.coef,
     )
 
 

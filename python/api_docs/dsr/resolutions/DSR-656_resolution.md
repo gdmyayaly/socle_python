@@ -32,6 +32,10 @@ Migration `001` (id_rh élargi) + `003/004` (fériés). `ID_RH_CRYPTO_KEY`. Modu
 - TMH (bloc `tmh[]`) mis à jour **dans la même transaction** (atomicité scénario+TMH).
 - « Seules les dates changées sauvegardées » : on réécrit l'ensemble des champs dérivés
   de façon cohérente (optimisation par diff non implémentée) — cf. `README_incomprehensions.md` #7.
+- **Alignement db_10_09 (2026-06-10)** : l'UPDATE ne touche **pas** `trafic_pdi_calcule` /
+  `trafic_agrebal_calcule` (gérés par les services de calcul PDI/agrebal, cf. DSR-648) ;
+  la réponse `ScenarioOut` les expose toutefois. Le calcul `nb_jours_scenario` somme
+  `nb_jour` des neutralisations (aucune dépendance à l'ex-colonne `type`, cf. DSR-645).
 
 ## 6. Comment tester
 ```

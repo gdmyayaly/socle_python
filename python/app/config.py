@@ -1,8 +1,9 @@
 """Configuration centralisée de l'application, chargée depuis les variables d'environnement."""
- 
+
+import json
 import os
 from pathlib import Path
- 
+
 from dotenv import load_dotenv
  
 # Chemin absolu vers le .env à la racine du projet (ys04/.env)
@@ -62,6 +63,42 @@ LOGS_DIR = os.getenv("LOGS_DIR", "")
 # Si vide (valeur par défaut) : cryptage DÉSACTIVÉ, l'id_rh est stocké en clair.
 ID_RH_CRYPTO_KEY = os.getenv("ID_RH_CRYPTO_KEY", "")
  
+# ----- DSR-666 : récupération des trafics avec date pivot -----
+# Les 6 objets/produits restitués par le service (ordre = ordre de sortie).
+TRAFIC_PRODUITS = tuple(
+    p.strip()
+    for p in os.getenv("TRAFIC_PRODUITS", "OO,OS,PRESSE,PPI,COLIS,IP").split(",")
+    if p.strip()
+)
+
+# Mapping du champ Databricks `lb_type_objet` (libellé long de l'objet) vers le code
+# produit restitué. VARIABILISÉ : surchargeable via la variable d'env
+# TRAFIC_PRODUIT_MAPPING au format JSON {"<lb_type_objet>": "<produit>"}.
+# Relation **N -> 1** : plusieurs libellés peuvent pointer vers le même produit, leurs
+# trafics sont alors FUSIONNÉS (sommés) sur ce produit (cf. accumulate_trafics).
+# Seul "OS" est connu via l'exemple Databricks ; les autres libellés sont à CONFIRMER
+# (d'où la variabilisation : aucun changement de code pour les ajuster/fusionner).
+_TRAFIC_PRODUIT_MAPPING_DEFAUT = {
+    "COURRIER - OBJETS ORDINAIRES (OO)": "OO",
+    "COURRIER - OBJETS SIGNALES (OS)": "OS",
+    "PRESSE": "PRESSE",
+    "PETITS PAQUETS INTERNATIONAUX (PPI)": "PPI",
+    "COLIS": "COLIS",
+    "IMPRIMES PUBLICITAIRES (IP)": "IP",
+}
+try:
+    _mapping_env = json.loads(os.getenv("TRAFIC_PRODUIT_MAPPING", "") or "{}")
+    TRAFIC_PRODUIT_MAPPING = _mapping_env if _mapping_env else _TRAFIC_PRODUIT_MAPPING_DEFAUT
+except json.JSONDecodeError:
+    TRAFIC_PRODUIT_MAPPING = _TRAFIC_PRODUIT_MAPPING_DEFAUT
+
+# Nom du champ objet servant de clé au mapping ci-dessus.
+TRAFIC_COL_OBJET = os.getenv("TRAFIC_COL_OBJET", "lb_type_objet")
+# Colonnes sources des trafics : noms du ticket par défaut. Surchargeables car le
+# JSON Databricks réel expose `trafic_constate` / `trafic_prevu` (divergence à lever).
+TRAFIC_COL_CONSTATE = os.getenv("TRAFIC_COL_CONSTATE", "nb_objet_retenu")
+TRAFIC_COL_PREVISIONNEL = os.getenv("TRAFIC_COL_PREVISIONNEL", "nb_objet_prevu_recadre_bu")
+
 # Validation
 MAX_DATE_RANGE_DAYS = 730 # SOIT 365 * 2
  

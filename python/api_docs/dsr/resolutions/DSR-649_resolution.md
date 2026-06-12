@@ -13,7 +13,9 @@ moyennes). Cas particulier de DSR-659.
 ```json
 { "volume_realise": 120000, "moyenne_journaliere": 4000.00, "moyenne_hebdo": 24000.00 }
 ```
-Met à jour `volume_realise`, `moyenne_journaliere`, `moyenne_hebdo`, `dt_calcul=NOW()`.
+Met à jour `volume_realise`, `moyenne_journaliere`, `moyenne_hebdo`, `dt_calcul=NOW()` et
+**force `bl_manuel = 1`** : une modification ciblée d'un trafic initial est par nature une
+saisie manuelle (cf. DSR-665/648). `bl_manuel` n'est pas un paramètre reçu (positionné serveur).
 **Ne touche pas** `volume_previsionnel` ni `bl_exclu` (différence avec DSR-659).
 Codes : `200` (renvoie la ligne), `404` ligne TMH introuvable, `409` figé.
 
@@ -34,9 +36,25 @@ PATCH /trppu-api/scenarios/12/tmh/OO   body = { "volume_realise": 120000, ... }
 | ------- | ---------- |
 | trppu_tmh correct pour les produits modifiés, en phase IHM | UPDATE ciblé + relecture |
 
-## 8. ➡️ Commentaire Jira
-> Endpoint `PATCH /trppu-api/scenarios/{id}/tmh/{co_produit}` livré : met à jour le
-> volume réalisé et les moyennes (journalière/hebdo) d'un produit, avec `dt_calcul`
-> repositionné. `volume_previsionnel` et `bl_exclu` ne sont pas modifiés (MAJ ciblée).
-> 404 si la ligne n'existe pas encore. **À noter** : ce besoin est un sous-ensemble de
-> DSR-659 (même module/table) — envisager de mutualiser côté IHM.
+## 8. ➡️ Commentaire Jira (à coller)
+> **URL d'appel**
+> `PATCH /trppu-api/scenarios/{id_scenario}/tmh/{co_produit}`
+>
+> **Données d'entrée**
+> - `id_scenario` (path) | scénario concerné.
+> - `co_produit` (path) | produit dont le trafic a changé.
+> - `volume_realise` | nouveau volume de trafic.
+> - `moyenne_journaliere` | moyenne du trafic sur une journée.
+> - `moyenne_hebdo` | moyenne du trafic sur une semaine.
+>
+> **Mise à jour en base (trppu_tmh)**
+> `volume_realise`, `moyenne_journaliere`, `moyenne_hebdo`, `dt_calcul` = date du jour,
+> et `bl_manuel` = 1 (la ligne est marquée « saisie manuelle », puisqu'il s'agit d'une
+> modification manuelle d'un trafic initial). `volume_previsionnel` et `bl_exclu` ne sont
+> pas modifiés.
+>
+> **Données de sortie**
+> la ligne TMH à jour du produit. 404 si la ligne n'existe pas ; 409 si le scénario est
+> figé/archivé.
+>
+> **À noter** : ce besoin est un sous-ensemble de DSR-659 (même module/table).

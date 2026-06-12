@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
 from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
+from app.security.crypto import encrypt_id_rh
 
 from .helpers import SELECT_TMH_ONE_SQL, fetch_tmh, upsert_tmh_rows
 from .schemas import TmhBatchResult, TmhBatchUpdate, TmhOut, TmhVolumeUpdate
@@ -58,9 +59,12 @@ async def upsert_tmh(id_scenario: int, payload: TmhBatchUpdate):
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
 
+    id_rh_token = encrypt_id_rh(payload.id_rh)
     try:
         async with db_write.transaction() as tx:
-            nb_inserted, nb_updated = await upsert_tmh_rows(tx, id_scenario, payload.tmh)
+            nb_inserted, nb_updated = await upsert_tmh_rows(
+                tx, id_scenario, payload.tmh, id_rh=id_rh_token
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -95,9 +99,11 @@ async def update_tmh_volume(id_scenario: int, co_produit: str, payload: TmhVolum
 
     try:
         async with db_write.transaction() as tx:
+            # DSR-649 : modification manuelle d'un trafic initial -> la ligne devient
+            # "manuelle" (bl_manuel = 1), cf. DSR-665/648.
             rc = await tx.execute(
                 "UPDATE trppu_tmh SET volume_realise = %s, moyenne_journaliere = %s, "
-                "moyenne_hebdo = %s, dt_calcul = NOW() "
+                "moyenne_hebdo = %s, bl_manuel = 1, dt_calcul = NOW() "
                 "WHERE id_scenario = %s AND co_produit = %s",
                 (
                     payload.volume_realise,
