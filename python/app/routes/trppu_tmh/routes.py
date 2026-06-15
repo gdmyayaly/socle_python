@@ -11,7 +11,13 @@ from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or
 from app.security.crypto import encrypt_id_rh
 
 from .helpers import SELECT_TMH_ONE_SQL, fetch_tmh, upsert_tmh_rows
-from .schemas import TmhBatchResult, TmhBatchUpdate, TmhOut, TmhVolumeUpdate
+from .schemas import (
+    TmhBatchResult,
+    TmhBatchUpdate,
+    TmhExclusionUpdate,
+    TmhOut,
+    TmhVolumeUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +139,60 @@ async def update_tmh_volume(id_scenario: int, co_produit: str, payload: TmhVolum
         "MAJ TMH ciblée terminée (id_scenario=%d, co_produit=%s, rowcount=%s, duration_ms=%.1f)",
         id_scenario,
         co_produit,
+        rc,
+        duration_ms,
+    )
+    return row
+
+
+@router.patch("/{id_scenario}/tmh/{co_produit}/exclusion", response_model=TmhOut)
+async def toggle_tmh_exclusion(
+    id_scenario: int, co_produit: str, payload: TmhExclusionUpdate
+):
+    """Switch de l'exclusion d'un produit TMH (bl_exclu) du calcul du scénario."""
+    start = time.perf_counter()
+    logger.info(
+        "Début switch exclusion TMH (id_scenario=%d, co_produit=%s, bl_exclu=%s)",
+        id_scenario,
+        co_produit,
+        payload.bl_exclu,
+    )
+    scenario = await fetch_scenario_or_404(id_scenario)
+    assert_editable(scenario)
+
+    try:
+        async with db_write.transaction() as tx:
+            rc = await tx.execute(
+                "UPDATE trppu_tmh SET bl_exclu = %s, dt_calcul = NOW() "
+                "WHERE id_scenario = %s AND co_produit = %s",
+                (1 if payload.bl_exclu else 0, id_scenario, co_produit),
+            )
+            row = await tx.fetch_one(SELECT_TMH_ONE_SQL, (id_scenario, co_produit))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Erreur switch exclusion TMH (id_scenario=%d, co_produit=%s)",
+            id_scenario,
+            co_produit,
+        )
+        raise HTTPException(
+            status_code=500, detail="Erreur mise à jour exclusion TMH."
+        ) from e
+
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ligne TMH introuvable (scénario {id_scenario}, produit {co_produit}).",
+        )
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "Switch exclusion TMH terminé (id_scenario=%d, co_produit=%s, bl_exclu=%s, "
+        "rowcount=%s, duration_ms=%.1f)",
+        id_scenario,
+        co_produit,
+        payload.bl_exclu,
         rc,
         duration_ms,
     )

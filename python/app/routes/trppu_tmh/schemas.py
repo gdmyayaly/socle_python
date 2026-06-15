@@ -60,3 +60,12 @@ class TmhVolumeUpdate(BaseModel):
     volume_realise: int = Field(..., ge=0)
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
+
+
+class TmhExclusionUpdate(BaseModel):
+    """Body PATCH du switch d'exclusion d'un produit TMH (bl_exclu)."""
+
+    model_config = ConfigDict(extra="forbid")
+    bl_exclu: bool = Field(
+        ..., description="True = produit exclu du calcul, False = inclus."
+    )
