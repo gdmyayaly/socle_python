@@ -12,13 +12,15 @@ from app.config import (
     DATABRICKS_SCHEMA,
     DEBUG_SHOW_QUERY,
     TRAFIC_COL_CONSTATE,
+    TRAFIC_COL_OBJET,
     TRAFIC_COL_PREVISIONNEL,
-    TRAFIC_PRODUITS,
 )
 from app.db.databricks import databricks
 from app.routes.trafics_helpers import (
     DATE_COLUMN_PERIODE,
     TABLES_PERIODE,
+    TRAFIC_OBJET_LABELS,
+    TRAFIC_PRODUITS,
     accumulate_trafics,
     decompose_auto,
     empty_trafics_accumulator,
@@ -40,8 +42,13 @@ def build_query(
     co_regate: str,
     ranges: list[tuple[datetime, datetime]],
     limit: int | None = None,
+    objet_labels: list[str] | None = None,
 ) -> tuple[str, dict]:
-    """Construit un SELECT * sur la table de la période, couvrant toutes les plages."""
+    """Construit un SELECT * sur la table de la période, couvrant toutes les plages.
+
+    Si `objet_labels` est fourni (et non vide), restreint la requête aux libellés
+    via `lb_type_objet IN (...)` (utilisé par le pivot pour ne ramener que les
+    objets mappés)."""
     table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
     date_col = DATE_COLUMN_PERIODE[periode]
 
@@ -58,6 +65,13 @@ def build_query(
         f"WHERE co_regate = :co_regate "
         f"AND ({' OR '.join(conditions)})"
     )
+    if objet_labels:
+        objet_keys: list[str] = []
+        for j, label in enumerate(objet_labels):
+            o_key = f"objet_{j}"
+            params[o_key] = label
+            objet_keys.append(f":{o_key}")
+        sql += f" AND {TRAFIC_COL_OBJET} IN ({', '.join(objet_keys)})"
     if limit is not None:
         sql += f" LIMIT {int(limit)}"
     return sql, params
@@ -68,6 +82,7 @@ def build_period_queries(
     dt_debut: datetime,
     dt_fin: datetime,
     limit: int | None = None,
+    objet_labels: list[str] | None = None,
 ) -> list[tuple[str, dict]]:
     """Découpe [dt_debut, dt_fin] en segments mois/semaines/jours et regroupe en
     une requête par table (max 3 requêtes)."""
@@ -75,7 +90,10 @@ def build_period_queries(
     grouped: dict[str, list[tuple[datetime, datetime]]] = {}
     for periode, s, e in segments:
         grouped.setdefault(periode, []).append((s, e))
-    return [build_query(p, co_regate, ranges, limit) for p, ranges in grouped.items()]
+    return [
+        build_query(p, co_regate, ranges, limit, objet_labels)
+        for p, ranges in grouped.items()
+    ]
 
 
 @router.get("/get_trafics")
@@ -174,7 +192,9 @@ async def get_trafics_pivot(
     start = time.perf_counter()
     try:
         for (rg_debut, rg_fin), value_col, target_key in plan:
-            for sql, params in build_period_queries(co_regate, rg_debut, rg_fin):
+            for sql, params in build_period_queries(
+                co_regate, rg_debut, rg_fin, objet_labels=list(TRAFIC_OBJET_LABELS)
+            ):
                 rows = await run_in_threadpool(databricks.fetch_all, sql, params)
                 accumulate_trafics(rows, value_col, target_key, acc)
                 executed.append((sql, params))

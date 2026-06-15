@@ -1,6 +1,8 @@
 """Constantes et helpers partagés pour la route trafics (mode auto)."""
 
+import json
 import logging
+import os
 from calendar import monthrange
 from datetime import datetime, timedelta
 
@@ -9,11 +11,29 @@ from fastapi import HTTPException
 from app.config import (
     MAX_DATE_RANGE_DAYS,
     TRAFIC_COL_OBJET,
-    TRAFIC_PRODUIT_MAPPING,
-    TRAFIC_PRODUITS,
 )
 
 logger = logging.getLogger(__name__)
+
+_TRAFIC_PRODUIT_MAPPING_DEFAUT = {
+ "COURRIER - OBJETS ORDINAIRES MENAGE": "OO",
+ "COURRIER - OBJETS ORDINAIRES CEDEX": "OO",
+ "COURRIER - OBJETS SIGNALES (OS)": "OS",
+ "PRESSE": "PR",
+ "PPI / E-PAQ": "PP",
+ "COLIS": "CO",
+ "IMPRIMÉS PUBLICITAIRES (IP)": "IP",
+}
+try:
+    _mapping_env = json.loads(os.getenv("TRAFIC_PRODUIT_MAPPING", "") or "{}")
+    TRAFIC_PRODUIT_MAPPING = _mapping_env if _mapping_env else _TRAFIC_PRODUIT_MAPPING_DEFAUT
+except json.JSONDecodeError:
+    TRAFIC_PRODUIT_MAPPING = _TRAFIC_PRODUIT_MAPPING_DEFAUT
+
+
+TRAFIC_PRODUITS = tuple(dict.fromkeys(TRAFIC_PRODUIT_MAPPING.values()))
+
+TRAFIC_OBJET_LABELS = tuple(TRAFIC_PRODUIT_MAPPING.keys())
 
 TABLES_PERIODE = {
     "jours": "g_trppu_trafics_jour",
@@ -175,8 +195,6 @@ def validate_params(co_regate, date_debut, date_fin):
 
     return dt_debut, dt_fin
 
-
-# ----- DSR-666 : récupération des trafics avec date pivot -----
 
 PARAMETRES_RAPPEL_PIVOT = (
     "Paramètres attendus : "

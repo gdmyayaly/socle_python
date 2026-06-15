@@ -1,6 +1,5 @@
 """Configuration centralisée de l'application, chargée depuis les variables d'environnement."""
 
-import json
 import os
 from pathlib import Path
 
@@ -64,35 +63,10 @@ LOGS_DIR = os.getenv("LOGS_DIR", "")
 ID_RH_CRYPTO_KEY = os.getenv("ID_RH_CRYPTO_KEY", "")
  
 # ----- DSR-666 : récupération des trafics avec date pivot -----
-# Les 6 objets/produits restitués par le service (ordre = ordre de sortie).
-TRAFIC_PRODUITS = tuple(
-    p.strip()
-    for p in os.getenv("TRAFIC_PRODUITS", "OO,OS,PRESSE,PPI,COLIS,IP").split(",")
-    if p.strip()
-)
+# Le mapping lb_type_objet -> co_produit et la liste des produits restitués vivent
+# désormais dans app/routes/trafics_helpers.py (à côté de map_produit / accumulate_trafics).
 
-# Mapping du champ Databricks `lb_type_objet` (libellé long de l'objet) vers le code
-# produit restitué. VARIABILISÉ : surchargeable via la variable d'env
-# TRAFIC_PRODUIT_MAPPING au format JSON {"<lb_type_objet>": "<produit>"}.
-# Relation **N -> 1** : plusieurs libellés peuvent pointer vers le même produit, leurs
-# trafics sont alors FUSIONNÉS (sommés) sur ce produit (cf. accumulate_trafics).
-# Seul "OS" est connu via l'exemple Databricks ; les autres libellés sont à CONFIRMER
-# (d'où la variabilisation : aucun changement de code pour les ajuster/fusionner).
-_TRAFIC_PRODUIT_MAPPING_DEFAUT = {
-    "COURRIER - OBJETS ORDINAIRES (OO)": "OO",
-    "COURRIER - OBJETS SIGNALES (OS)": "OS",
-    "PRESSE": "PRESSE",
-    "PETITS PAQUETS INTERNATIONAUX (PPI)": "PPI",
-    "COLIS": "COLIS",
-    "IMPRIMES PUBLICITAIRES (IP)": "IP",
-}
-try:
-    _mapping_env = json.loads(os.getenv("TRAFIC_PRODUIT_MAPPING", "") or "{}")
-    TRAFIC_PRODUIT_MAPPING = _mapping_env if _mapping_env else _TRAFIC_PRODUIT_MAPPING_DEFAUT
-except json.JSONDecodeError:
-    TRAFIC_PRODUIT_MAPPING = _TRAFIC_PRODUIT_MAPPING_DEFAUT
-
-# Nom du champ objet servant de clé au mapping ci-dessus.
+# Nom du champ objet servant de clé au mapping produit (défini dans trafics_helpers).
 TRAFIC_COL_OBJET = os.getenv("TRAFIC_COL_OBJET", "lb_type_objet")
 # Colonnes sources des trafics : noms du ticket par défaut. Surchargeables car le
 # JSON Databricks réel expose `trafic_constate` / `trafic_prevu` (divergence à lever).
