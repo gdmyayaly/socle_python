@@ -5,7 +5,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
  
-# Chemin absolu vers le .env à la racine du projet (ys04/.env)
 _env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=_env_path)
 # MySQL
@@ -40,13 +39,11 @@ JOURS_FERMES_API_USERNAME = os.getenv("JOURS_FERMES_API_USERNAME", "")  # basic 
 JOURS_FERMES_API_PASSWORD = os.getenv("JOURS_FERMES_API_PASSWORD", "")  # basic auth
 JOURS_FERMES_API_TIMEOUT = float(os.getenv("JOURS_FERMES_API_TIMEOUT", "10"))
 # Vérification TLS : chemin vers un bundle CA (ex: certif/cacert.pem) pour les
-# environnements derrière un proxy d'inspection TLS. Chemin relatif résolu depuis
-# la racine projet. Vide => bundle par défaut (certifi).
 _jf_ca = os.getenv("JOURS_FERMES_API_CA_BUNDLE", "").strip()
 if _jf_ca and not os.path.isabs(_jf_ca):
     _jf_ca = str(Path(__file__).resolve().parent.parent / _jf_ca)
 JOURS_FERMES_API_CA_BUNDLE = _jf_ca
-# Désactive complètement la vérification TLS (À ÉVITER en prod : risque MITM).
+# Désactive complètement la vérification TLS Urgence only pour l'usage.
 JOURS_FERMES_API_VERIFY_SSL = os.getenv("JOURS_FERMES_API_VERIFY_SSL", "true").lower() == "true"
 JOURS_FERMES_CACHE_TTL = int(os.getenv("JOURS_FERMES_CACHE_TTL", "86400"))  # 24h
 
@@ -58,20 +55,8 @@ APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 LOGS_DIR = os.getenv("LOGS_DIR", "")
 
 # Sécurité : clé de cryptage réversible de l'id_rh (Fernet).
-# Secret arbitraire accepté (dérivé en clé Fernet) ou clé Fernet native (44 car.).
 # Si vide (valeur par défaut) : cryptage DÉSACTIVÉ, l'id_rh est stocké en clair.
 ID_RH_CRYPTO_KEY = os.getenv("ID_RH_CRYPTO_KEY", "")
- 
-# ----- DSR-666 : récupération des trafics avec date pivot -----
-# Le mapping lb_type_objet -> co_produit et la liste des produits restitués vivent
-# désormais dans app/routes/trafics_helpers.py (à côté de map_produit / accumulate_trafics).
-
-# Nom du champ objet servant de clé au mapping produit (défini dans trafics_helpers).
-TRAFIC_COL_OBJET = os.getenv("TRAFIC_COL_OBJET", "lb_type_objet")
-# Colonnes sources des trafics : noms du ticket par défaut. Surchargeables car le
-# JSON Databricks réel expose `trafic_constate` / `trafic_prevu` (divergence à lever).
-TRAFIC_COL_CONSTATE = os.getenv("TRAFIC_COL_CONSTATE", "nb_objet_retenu")
-TRAFIC_COL_PREVISIONNEL = os.getenv("TRAFIC_COL_PREVISIONNEL", "nb_objet_prevu_recadre_bu")
 
 # Validation
 MAX_DATE_RANGE_DAYS = 730 # SOIT 365 * 2

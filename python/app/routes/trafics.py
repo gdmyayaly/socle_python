@@ -1,5 +1,6 @@
 """Route de récupération des trafics depuis Databricks (mode auto)."""
 
+import json
 import logging
 import time
 from datetime import datetime
@@ -11,14 +12,14 @@ from app.config import (
     DATABRICKS_CATALOG,
     DATABRICKS_SCHEMA,
     DEBUG_SHOW_QUERY,
-    TRAFIC_COL_CONSTATE,
-    TRAFIC_COL_OBJET,
-    TRAFIC_COL_PREVISIONNEL,
 )
 from app.db.databricks import databricks
 from app.routes.trafics_helpers import (
     DATE_COLUMN_PERIODE,
     TABLES_PERIODE,
+    TRAFIC_COL_CONSTATE,
+    TRAFIC_COL_OBJET,
+    TRAFIC_COL_PREVISIONNEL,
     TRAFIC_OBJET_LABELS,
     TRAFIC_PRODUITS,
     accumulate_trafics,
@@ -133,7 +134,6 @@ async def get_trafics(
     duration_s = round(time.perf_counter() - start, 3)
 
     # DSR-613 : RecupererTrafics renvoie aussi le nb de jours ouvrés / ouvrables.
-    # Résilient : un échec du calcul des jours n'invalide pas la réponse trafics.
     nb_jours = None
     try:
         nbj = await compute_nb_jours(dt_debut.date(), dt_fin.date())
@@ -171,7 +171,7 @@ async def get_trafics_pivot(
 
     - dates < pivot  -> trafic réel (constaté/brut) ; prévisionnel = 0
     - dates >= pivot -> trafic prévisionnel ; réel = 0
-    Renvoie une ligne par objet (les 6 produits, hydratés à 0) avec la somme des
+    Renvoie une ligne par objet (les 6 produits cf _TRAFIC_PRODUIT_MAPPING_DEFAUT du helper) avec la somme des
     trafics sur la période et le site. Paramètres au format AAAAMMJJ ; période <= 2 ans.
     """
     dt_debut, dt_fin, dt_pivot = validate_params_pivot(
@@ -188,6 +188,7 @@ async def get_trafics_pivot(
 
     acc = empty_trafics_accumulator()
     executed: list[tuple[str, dict]] = []
+    raw_rows: list[dict] = []
 
     start = time.perf_counter()
     try:
@@ -196,6 +197,7 @@ async def get_trafics_pivot(
                 co_regate, rg_debut, rg_fin, objet_labels=list(TRAFIC_OBJET_LABELS)
             ):
                 rows = await run_in_threadpool(databricks.fetch_all, sql, params)
+                raw_rows.extend(rows)
                 accumulate_trafics(rows, value_col, target_key, acc)
                 executed.append((sql, params))
     except Exception as e:
@@ -211,6 +213,14 @@ async def get_trafics_pivot(
         raise HTTPException(status_code=500, detail=detail) from e
     duration_s = round(time.perf_counter() - start, 3)
 
+    # Réponse non transformée : lignes brutes renvoyées par Databricks (avant mapping/agrégation).
+    logger.info(
+        "Trafics pivot (co_regate=%s) — réponse non transformée (%d lignes) : %s",
+        co_regate,
+        len(raw_rows),
+        json.dumps(raw_rows, ensure_ascii=False, default=str),
+    )
+
     trafics = [
         {
             "co_produit": produit,
@@ -220,7 +230,14 @@ async def get_trafics_pivot(
         for produit in TRAFIC_PRODUITS
     ]
 
-    # nb_jours (DSR-613) — résilient : un échec n'invalide pas la réponse trafics.
+    # Réponse transformée : trafics agrégés par produit (après mapping/fusion).
+    logger.info(
+        "Trafics pivot (co_regate=%s) — réponse transformée : %s",
+        co_regate,
+        json.dumps(trafics, ensure_ascii=False, default=str),
+    )
+
+    # nb_jours (DSR-613) 
     nb_jours = None
     try:
         nbj = await compute_nb_jours(dt_debut.date(), dt_fin.date())

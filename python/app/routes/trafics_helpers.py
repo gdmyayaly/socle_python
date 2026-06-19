@@ -10,10 +10,15 @@ from fastapi import HTTPException
 
 from app.config import (
     MAX_DATE_RANGE_DAYS,
-    TRAFIC_COL_OBJET,
 )
 
 logger = logging.getLogger(__name__)
+
+# Noms des champs trafic (clé objet du mapping produit + colonnes de valeurs).
+# Définis ici en dur pour faciliter la modification, sans passer par l'env.
+TRAFIC_COL_OBJET = "lb_type_objet"
+TRAFIC_COL_CONSTATE = "trafic_constate"
+TRAFIC_COL_PREVISIONNEL = "trafic_prevu"
 
 _TRAFIC_PRODUIT_MAPPING_DEFAUT = {
  "COURRIER - OBJETS ORDINAIRES MENAGE": "OO",
@@ -289,7 +294,7 @@ def map_produit(objet_label):
 def empty_trafics_accumulator():
     """Initialise l'accumulateur {produit: {trafic_brut, trafic_previsionnel}}.
 
-    Les 6 objets sont toujours présents (hydratés à 0), même sans trafic.
+    Les 6 objets cf _TRAFIC_PRODUIT_MAPPING_DEFAUT sont toujours présents (hydratés à 0), même sans trafic.
     """
     return {
         produit: {"trafic_brut": 0, "trafic_previsionnel": 0} for produit in TRAFIC_PRODUITS
