@@ -84,10 +84,18 @@ def build_period_queries(
     dt_fin: datetime,
     limit: int | None = None,
     objet_labels: list[str] | None = None,
+    force_jours: bool = False,
 ) -> list[tuple[str, dict]]:
     """Découpe [dt_debut, dt_fin] en segments mois/semaines/jours et regroupe en
-    une requête par table (max 3 requêtes)."""
-    segments = decompose_auto(dt_debut, dt_fin)
+    une requête par table (max 3 requêtes).
+
+    Si `force_jours` est vrai, on court-circuite le découpage auto : un unique
+    segment jour couvre toute la période, et la requête se fait donc uniquement
+    sur la table jour (`g_trppu_trafics_jour`)."""
+    if force_jours:
+        segments = [("jours", dt_debut, dt_fin)]
+    else:
+        segments = decompose_auto(dt_debut, dt_fin)
     grouped: dict[str, list[tuple[datetime, datetime]]] = {}
     for periode, s, e in segments:
         grouped.setdefault(periode, []).append((s, e))
@@ -166,6 +174,7 @@ async def get_trafics_pivot(
     date_debut: str | None = None,
     date_fin: str | None = None,
     date_pivot: str | None = None,
+    is_day: bool = False,
 ):
     """DSR-666 : trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot.
 
@@ -194,7 +203,11 @@ async def get_trafics_pivot(
     try:
         for (rg_debut, rg_fin), value_col, target_key in plan:
             for sql, params in build_period_queries(
-                co_regate, rg_debut, rg_fin, objet_labels=list(TRAFIC_OBJET_LABELS)
+                co_regate,
+                rg_debut,
+                rg_fin,
+                objet_labels=list(TRAFIC_OBJET_LABELS),
+                force_jours=is_day,
             ):
                 rows = await run_in_threadpool(databricks.fetch_all, sql, params)
                 raw_rows.extend(rows)
@@ -256,6 +269,7 @@ async def get_trafics_pivot(
         "date_debut": fmt_date(dt_debut),
         "date_fin": fmt_date(dt_fin),
         "date_pivot": fmt_date(dt_pivot),
+        "is_day": is_day,
         "count": len(trafics),
         "trafics": trafics,
         "nb_jours": nb_jours,
