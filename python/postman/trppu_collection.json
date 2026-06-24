@@ -250,6 +250,12 @@
                   "value": "True",
                   "disabled": true,
                   "description": "Inclure les DROP TABLE/VIEW IF EXISTS avant chaque CREATE."
+                },
+                {
+                  "key": "data",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "Inclure aussi les données (INSERT) de chaque table après son CREATE."
                 }
               ]
             },
@@ -413,6 +419,12 @@
                 {
                   "key": "date_pivot",
                   "value": "string",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "is_day",
+                  "value": "False",
                   "disabled": true,
                   "description": ""
                 }
@@ -1328,7 +1340,7 @@
             "description": "Create Scenario",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"co_regate\": \"{{co_regate}}\",\n  \"lb_scenario\": \"Scénario test\",\n  \"co_roc\": \"{{co_roc}}\",\n  \"lb_regate\": \"PARIS PDC\",\n  \"type_site\": \"PDC\",\n  \"nb_jours_semaine\": 6,\n  \"id_pic_version\": 1,\n  \"periode_debut\": \"2026-01-01\",\n  \"periode_fin\": \"2026-12-31\",\n  \"dt_mise_en_oeuvre\": \"2026-06-01\",\n  \"id_rh\": \"{{id_rh}}\",\n  \"tmh\": [\n    {\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false,\n      \"manuel\": false\n    }\n  ]\n}",
+              "raw": "{\n  \"co_regate\": \"{{co_regate}}\",\n  \"lb_scenario\": \"Scénario test\",\n  \"co_roc\": \"{{co_roc}}\",\n  \"lb_regate\": \"PARIS PDC\",\n  \"type_site\": \"PDC\",\n  \"nb_jours_semaine\": 6,\n  \"id_pic_version\": 1,\n  \"periode_debut\": \"2026-01-01\",\n  \"periode_fin\": \"2026-12-31\",\n  \"dt_mise_en_oeuvre\": \"2026-06-01\",\n  \"id_rh\": \"{{id_rh}}\",\n  \"tmh\": [\n    {\n      \"id_tmh\": 0,\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false,\n      \"manuel\": false,\n      \"motif\": \"string\"\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1414,7 +1426,7 @@
             "description": "Update Scenario",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"periode_debut\": \"2026-01-01\",\n  \"periode_fin\": \"2026-12-31\",\n  \"nb_jours_semaine\": 6,\n  \"dt_mise_en_oeuvre\": \"2026-06-01\",\n  \"id_rh\": \"{{id_rh}}\",\n  \"tmh\": [\n    {\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false,\n      \"manuel\": false\n    }\n  ]\n}",
+              "raw": "{\n  \"periode_debut\": \"2026-01-01\",\n  \"periode_fin\": \"2026-12-31\",\n  \"nb_jours_semaine\": 6,\n  \"dt_mise_en_oeuvre\": \"2026-06-01\",\n  \"id_rh\": \"{{id_rh}}\",\n  \"tmh\": [\n    {\n      \"id_tmh\": 0,\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false,\n      \"manuel\": false,\n      \"motif\": \"string\"\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1810,6 +1822,40 @@
           }
         },
         {
+          "name": "POST /trppu-api/scenarios/{id_scenario}/tmh",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/tmh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "tmh"
+              ]
+            },
+            "description": "Create Tmh",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"co_produit\": \"{{co_produit}}\",\n  \"volume_realise\": 120000,\n  \"volume_previsionnel\": 130000,\n  \"moyenne_journaliere\": 4000.0,\n  \"moyenne_hebdo\": 24000.0,\n  \"exclusion\": false,\n  \"manuel\": false,\n  \"motif\": \"string\",\n  \"id_rh\": \"{{id_rh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "PUT /trppu-api/scenarios/{id_scenario}/tmh",
           "request": {
             "method": "PUT",
@@ -1834,7 +1880,7 @@
             "description": "Upsert Tmh",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tmh\": [\n    {\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false,\n      \"manuel\": false\n    }\n  ],\n  \"id_rh\": \"{{id_rh}}\"\n}",
+              "raw": "{\n  \"tmh\": [\n    {\n      \"co_produit\": \"{{co_produit}}\",\n      \"volume_realise\": 120000,\n      \"volume_previsionnel\": 130000,\n      \"moyenne_journaliere\": 4000.0,\n      \"moyenne_hebdo\": 24000.0,\n      \"exclusion\": false,\n      \"manuel\": false,\n      \"motif\": \"string\",\n      \"id_tmh\": 0\n    }\n  ],\n  \"id_rh\": \"{{id_rh}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1844,7 +1890,7 @@
           }
         },
         {
-          "name": "PATCH /trppu-api/scenarios/{id_scenario}/tmh/{co_produit}",
+          "name": "PATCH /trppu-api/scenarios/{id_scenario}/tmh/{id_tmh}",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1854,7 +1900,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/tmh/{{co_produit}}",
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/tmh/{{id_tmh}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -1863,13 +1909,78 @@
                 "scenarios",
                 "{{id_scenario}}",
                 "tmh",
-                "{{co_produit}}"
+                "{{id_tmh}}"
               ]
             },
             "description": "Update Tmh Volume",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"volume_realise\": 120000,\n  \"moyenne_journaliere\": 4000.0,\n  \"moyenne_hebdo\": 24000.0\n}",
+              "raw": "{\n  \"volume_realise\": 120000,\n  \"moyenne_journaliere\": 4000.0,\n  \"moyenne_hebdo\": 24000.0,\n  \"motif\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /trppu-api/scenarios/{id_scenario}/tmh/{id_tmh}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/tmh/{{id_tmh}}?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "tmh",
+                "{{id_tmh}}"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Delete Tmh"
+          }
+        },
+        {
+          "name": "PATCH /trppu-api/scenarios/{id_scenario}/tmh/{id_tmh}/exclusion",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/tmh/{{id_tmh}}/exclusion",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "tmh",
+                "{{id_tmh}}",
+                "exclusion"
+              ]
+            },
+            "description": "Toggle Tmh Exclusion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bl_exclu\": false,\n  \"motif\": \"string\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

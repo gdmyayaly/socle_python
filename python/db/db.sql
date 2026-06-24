@@ -355,7 +355,7 @@ CREATE TABLE `trppu_tmh` (
   `id_rh` varchar(255) DEFAULT NULL,
   `motif` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id_tmh`),
-  UNIQUE KEY `uq_tmh` (`id_scenario`,`co_produit`),
+  UNIQUE KEY `uq_tmh` (`id_tmh`,`id_scenario`,`co_produit`),
   KEY `idx_tmh_produit` (`co_produit`,`id_scenario`),
   CONSTRAINT `fk_tmh_produit` FOREIGN KEY (`co_produit`) REFERENCES `trppu_produit` (`co_produit`) ON DELETE RESTRICT,
   CONSTRAINT `fk_tmh_scen` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`) ON DELETE CASCADE,

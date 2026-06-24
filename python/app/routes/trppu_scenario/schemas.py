@@ -19,10 +19,16 @@ class ScenarioTmhItem(BaseModel):
     Mirroir de `app.routes.trppu_tmh.schemas.TmhUpsert` (défini ici pour éviter un
     import circulaire entre les modules scénario et TMH). Mêmes noms d'attributs :
     consommé par `trppu_tmh.helpers.upsert_tmh_rows` (duck typing).
+
+    `id_tmh` présent → MAJ de la ligne ciblée ; absent → insertion (un produit peut
+    apparaître plusieurs fois pour un scénario, cf. migration 24/06/2026).
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    id_tmh: Optional[int] = Field(
+        None, gt=0, description="Présent = MAJ de cette ligne ; absent = nouvelle ligne."
+    )
     co_produit: str = Field(..., min_length=1, max_length=2, pattern=CO_PRODUIT_PATTERN)
     volume_realise: Optional[int] = Field(None, ge=0)
     volume_previsionnel: Optional[int] = Field(None, ge=0)

@@ -1,4 +1,10 @@
-"""Schémas Pydantic v2 pour le module TMH (table trppu_tmh)."""
+"""Schémas Pydantic v2 pour le module TMH (table trppu_tmh).
+
+Depuis la migration du 24/06/2026, la contrainte d'unicité `uq_tmh` porte sur
+(`id_tmh`, `id_scenario`, `co_produit`) : un même produit peut donc apparaître
+plusieurs fois pour un scénario. La clé fonctionnelle d'une ligne devient
+`id_tmh` (et non plus `co_produit`).
+"""
 
 from decimal import Decimal
 
@@ -12,6 +18,7 @@ class TmhOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    id_tmh: int  # identifiant unique de la ligne (clé fonctionnelle)
     co_produit: str
     volume_realise: int | None = None
     volume_previsionnel: int | None = None
@@ -22,8 +29,8 @@ class TmhOut(BaseModel):
     motif: str | None = None  # justification d'une modif manuelle / exclusion
 
 
-class TmhUpsert(BaseModel):
-    """Un produit du tableau TMH à enregistrer (DSR-659 / création DSR-634)."""
+class _TmhFields(BaseModel):
+    """Champs métier communs d'une ligne TMH en écriture."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -38,6 +45,26 @@ class TmhUpsert(BaseModel):
     )
     motif: str | None = Field(
         None, max_length=255, description="Justification d'une modif manuelle / exclusion (→ motif)."
+    )
+
+
+class TmhUpsert(_TmhFields):
+    """Un produit du tableau TMH à enregistrer en lot (DSR-659 / création DSR-634).
+
+    `id_tmh` présent → MAJ de la ligne ciblée ; absent → insertion d'une nouvelle
+    ligne (un même produit peut être présent plusieurs fois sur un scénario).
+    """
+
+    id_tmh: int | None = Field(
+        None, gt=0, description="Présent = MAJ de cette ligne ; absent = nouvelle ligne."
+    )
+
+
+class TmhCreate(_TmhFields):
+    """Body POST : création d'une nouvelle ligne TMH (produit éventuellement déjà présent)."""
+
+    id_rh: str = Field(
+        ..., min_length=1, description="id_rh en clair de l'utilisateur ; crypté serveur avant stockage."
     )
 
 
@@ -58,7 +85,7 @@ class TmhBatchResult(BaseModel):
 
 
 class TmhVolumeUpdate(BaseModel):
-    """Body PATCH ciblé d'un trafic initial modifié (DSR-649)."""
+    """Body PATCH ciblé d'un trafic initial modifié (DSR-649), par id_tmh."""
 
     model_config = ConfigDict(extra="forbid")
     volume_realise: int = Field(..., ge=0)
@@ -70,7 +97,7 @@ class TmhVolumeUpdate(BaseModel):
 
 
 class TmhExclusionUpdate(BaseModel):
-    """Body PATCH du switch d'exclusion d'un produit TMH (bl_exclu)."""
+    """Body PATCH du switch d'exclusion d'une ligne TMH (bl_exclu), par id_tmh."""
 
     model_config = ConfigDict(extra="forbid")
     bl_exclu: bool = Field(
