@@ -1,219 +1,31 @@
-/* ===================== Tableau ===================== */
-.scenario-table-wrapper {
-  border: 1px solid #e0e0e0;
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-}
-
-.scenario-table {
+table {
   width: 100%;
 }
 
-.scenario-table th.mat-header-cell {
-  background: #fafafa;
-  color: #455a64;
-  font-weight: 600;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+.scenario-toolbar {
+  margin-bottom: 12px;
 }
 
-/* Lignes cliquables */
-.scenario-row {
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.scenario-row:hover {
-  background-color: #f5f7fa;
-}
-
-/* Ligne sélectionnée : nettement différenciée */
-.scenario-row.selected-row {
-  background-color: #e8eaf6;
-  box-shadow: inset 3px 0 0 #3f51b5;
-}
-
-.scenario-row.selected-row .scenario-name {
-  color: #3f51b5;
-  font-weight: 600;
-}
-
-.col-select {
-  width: 48px;
-  text-align: center;
-}
-
-.col-actions {
-  width: 80px;
-  text-align: center;
-}
-
-.scenario-name {
-  vertical-align: middle;
-}
-
-.lock-icon {
-  font-size: 16px;
-  width: 16px;
-  height: 16px;
-  vertical-align: middle;
-  margin-left: 6px;
-  color: #9e9e9e;
-}
-
-/* ===================== Badges de statut ===================== */
-.status-badge {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-  background: #eceff1;
-  color: #546e7a;
-}
-
-.status-en-cours {
-  background: #fff3e0;
-  color: #e65100;
-}
-
-.status-valide {
-  background: #e3f2fd;
-  color: #1565c0;
-}
-
-.status-en-production {
-  background: #e8f5e9;
-  color: #2e7d32;
-}
-
-/* ===================== Ligne d'ajout ===================== */
-.add-row td {
-  padding: 0;
-  border-top: 1px dashed #cfd8dc;
-}
-
-.add-row-btn {
-  width: 100%;
+.empty-add {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px;
-  border: none;
-  background: #fafafa;
-  color: #3f51b5;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.empty-add span {
+  color: #616161;
   font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
 }
 
-.add-row-btn:hover {
-  background: #e8eaf6;
+.empty-add button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.add-row-btn mat-icon {
-  font-size: 20px;
-  width: 20px;
-  height: 20px;
-}
-
-/* ===================== Messages vides ===================== */
 .empty-hint {
   color: #9e9e9e;
   font-style: italic;
   margin-top: 12px;
-}
-
-/* ===================== Modales ===================== */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(38, 50, 56, 0.45);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: overlay-in 0.18s ease;
-}
-
-.modal-card {
-  background: #fff;
-  border-radius: 14px;
-  padding: 28px 28px 20px;
-  width: 100%;
-  max-width: 420px;
-  margin: 16px;
-  text-align: center;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
-  animation: card-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.modal-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 16px;
-}
-
-.modal-icon mat-icon {
-  font-size: 30px;
-  width: 30px;
-  height: 30px;
-}
-
-.modal-icon-danger {
-  background: #ffebee;
-  color: #d32f2f;
-}
-
-.modal-icon-primary {
-  background: #e8eaf6;
-  color: #3f51b5;
-}
-
-.modal-title {
-  margin: 0 0 8px;
-  font-size: 19px;
-  font-weight: 600;
-  color: #263238;
-}
-
-.modal-text {
-  margin: 0 0 20px;
-  font-size: 14px;
-  line-height: 1.5;
-  color: #607d8b;
-}
-
-.modal-field {
-  width: 100%;
-  text-align: left;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-@keyframes overlay-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes card-in {
-  from { opacity: 0; transform: translateY(12px) scale(0.97); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
 }

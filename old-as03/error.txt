@@ -1,0 +1,441 @@
+ ng serve
+'wmic.exe' n'est pas reconnu en tant que commande interne
+ou externe, un programme ex�cutable ou un fichier de commandes.
+'wmic.exe' n'est pas reconnu en tant que commande interne
+ou externe, un programme ex�cutable ou un fichier de commandes.
+✔ Browser application bundle generation complete.
+
+Initial Chunk Files   | Names         |  Raw Size
+vendor.js             | vendor        |   2.04 MB |
+polyfills.js          | polyfills     | 238.11 kB |
+styles.css, styles.js | styles        | 130.15 kB |
+main.js               | main          |  50.16 kB |
+runtime.js            | runtime       |   6.49 kB |
+
+                      | Initial Total |   2.46 MB
+
+Build at: 2026-04-13T22:05:01.057Z - Hash: 27742816303f1d2e - Time: 14255ms
+
+Error: node_modules/@types/node/child_process.d.ts:256:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+256         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/child_process.d.ts:256:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+256         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/dgram.d.ts:531:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+531         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/dgram.d.ts:531:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+531         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/events.d.ts:545:91 - error TS2304: Cannot find name 'Disposable'.
+
+545         function addAbortListener(signal: AbortSignal, resource: (event: Event) => void): Disposable;
+                                                                                              ~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:310:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+310         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:310:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+310         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:316:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+316         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:316:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+316         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:637:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+637         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:637:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+637         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:2135:41 - error TS2304: Cannot find name 'Disposable'.
+
+2135     interface DisposableTempDir extends Disposable {
+                                             ~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:2147:9 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+2147         [Symbol.dispose](): void;
+             ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs.d.ts:2147:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+2147         [Symbol.dispose](): void;
+                     ~~~~~~~
+
+
+Error: node_modules/@types/node/fs/promises.d.ts:486:9 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+486         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs/promises.d.ts:486:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+486         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs/promises.d.ts:972:41 - error TS2304: Cannot find name 'AsyncDisposable'.
+
+972     interface DisposableTempDir extends AsyncDisposable {
+                                            ~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs/promises.d.ts:984:9 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+984         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/fs/promises.d.ts:984:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+984         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/inspector.d.ts:44:66 - error TS2304: Cannot find name 'Disposable'.
+
+44     function open(port?: number, host?: string, wait?: boolean): Disposable;
+                                                                    ~~~~~~~~~~
+
+
+Error: node_modules/@types/node/net.d.ts:654:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+654         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/net.d.ts:654:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+654         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/perf_hooks.d.ts:430:9 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+430         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/perf_hooks.d.ts:430:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+430         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/quic.d.ts:414:35 - error TS2304: Cannot find name 'AsyncDisposable'.
+
+414     class QuicEndpoint implements AsyncDisposable {
+                                      ~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/quic.d.ts:481:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+481         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/quic.d.ts:481:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+481         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/quic.d.ts:570:34 - error TS2304: Cannot find name 'AsyncDisposable'.
+
+570     class QuicSession implements AsyncDisposable {
+                                     ~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/quic.d.ts:675:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+675         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/quic.d.ts:675:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+675         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/readline.d.ts:28:46 - error TS2304: Cannot find name 'Disposable'.
+
+28     class Interface implements EventEmitter, Disposable {
+                                                ~~~~~~~~~~
+
+
+Error: node_modules/@types/node/readline.d.ts:189:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+189         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/readline.d.ts:189:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+189         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/sqlite.d.ts:219:35 - error TS2304: Cannot find name 'Disposable'.
+
+219     class DatabaseSync implements Disposable {
+                                      ~~~~~~~~~~
+
+
+Error: node_modules/@types/node/sqlite.d.ts:548:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+548         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/sqlite.d.ts:548:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+548         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/sqlite.d.ts:582:9 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+582         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/sqlite.d.ts:582:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+582         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/stream.d.ts:659:13 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+659             [Symbol.asyncDispose](): Promise<void>;
+                ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/stream.d.ts:659:21 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+659             [Symbol.asyncDispose](): Promise<void>;
+                        ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/stream.d.ts:1014:13 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+1014             [Symbol.asyncDispose](): Promise<void>;
+                 ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/stream.d.ts:1014:21 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+1014             [Symbol.asyncDispose](): Promise<void>;
+                         ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/stream.d.ts:1562:17 - error TS5084: Tuple members must all have names or all not have names.
+
+1562                 ...[PipelineSource<any>, ...PipelineTransform<any, any>[], PipelineDestination<any, any>],
+                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/stream/promises.d.ts:202:13 - error TS5084: Tuple members must all have names or all not have names.
+
+202             PipelineSource<any>,
+                ~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/test.d.ts:2149:13 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+2149             [Symbol.dispose](): void;
+                 ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/test.d.ts:2149:21 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+2149             [Symbol.dispose](): void;
+                         ~~~~~~~
+
+
+Error: node_modules/@types/node/timers.d.ts:24:53 - error TS2304: Cannot find name 'Disposable'.
+
+24             interface Immediate extends RefCounted, Disposable {
+                                                       ~~~~~~~~~~
+
+
+Error: node_modules/@types/node/timers.d.ts:54:17 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+54                 [Symbol.dispose](): void;
+                   ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/timers.d.ts:54:25 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+54                 [Symbol.dispose](): void;
+                           ~~~~~~~
+
+
+Error: node_modules/@types/node/timers.d.ts:76:51 - error TS2304: Cannot find name 'Disposable'.
+
+76             interface Timeout extends RefCounted, Disposable, Timer {
+                                                     ~~~~~~~~~~
+
+
+Error: node_modules/@types/node/timers.d.ts:134:17 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+134                 [Symbol.dispose](): void;
+                    ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/timers.d.ts:134:25 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+134                 [Symbol.dispose](): void;
+                            ~~~~~~~
+
+
+Error: node_modules/@types/node/ts5.6/index.d.ts:29:21 - error TS2726: Cannot find lib definition for 'esnext.disposable'.
+
+29 /// <reference lib="esnext.disposable" />
+                       ~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/v8.d.ts:413:9 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+413         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/v8.d.ts:413:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+413         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/v8.d.ts:429:9 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+429         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/v8.d.ts:429:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+429         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/v8.d.ts:445:9 - error TS1169: A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+445         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/v8.d.ts:445:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+445         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/v8.d.ts:736:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+736         [Symbol.dispose](): void;
+            ~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/v8.d.ts:736:17 - error TS2339: Property 'dispose' does not exist on type 'SymbolConstructor'.
+
+736         [Symbol.dispose](): void;
+                    ~~~~~~~
+
+
+Error: node_modules/@types/node/web-globals/streams.d.ts:40:9 - error TS2502: 'CompressionStream' is referenced directly or indirectly in its own type annotation.
+
+40     var CompressionStream: typeof globalThis extends {
+           ~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/web-globals/streams.d.ts:51:9 - error TS2502: 'DecompressionStream' is referenced directly or indirectly in its own type annotation.
+
+51     var DecompressionStream: typeof globalThis extends {
+           ~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/web-globals/streams.d.ts:60:9 - error TS2502: 'ReadableByteStreamController' is referenced directly or indirectly in its own type annotation.
+
+60     var ReadableByteStreamController: typeof globalThis extends
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/web-globals/streams.d.ts:68:9 - error TS2502: 'ReadableStreamBYOBReader' is referenced directly or indirectly in its own type annotation.
+
+68     var ReadableStreamBYOBReader: typeof globalThis extends { onmessage: any; ReadableStreamBYOBReader: infer T } ? T
+           ~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/web-globals/streams.d.ts:72:9 - error TS2502: 'ReadableStreamBYOBRequest' is referenced directly or indirectly in its own type annotation.
+
+72     var ReadableStreamBYOBRequest: typeof globalThis extends { onmessage: any; ReadableStreamBYOBRequest: infer T } ? T
+           ~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/worker_threads.d.ts:338:9 - error TS1165: A computed property name in an ambient context must refer to an expression whose type is a literal type or a 'unique symbol' type.
+
+338         [Symbol.asyncDispose](): Promise<void>;
+            ~~~~~~~~~~~~~~~~~~~~~
+
+
+Error: node_modules/@types/node/worker_threads.d.ts:338:17 - error TS2339: Property 'asyncDispose' does not exist on type 'SymbolConstructor'.
+
+338         [Symbol.asyncDispose](): Promise<void>;
+                    ~~~~~~~~~~~~
+
+
+Error: node_modules/typescript/lib/lib.dom.d.ts:14003:11 - error TS2430: Interface 'TextEncoder' incorrectly extends interface 'import("node:util").TextEncoder'.
+  The types of 'encodeInto(...).read' are incompatible between these types.
+    Type 'number | undefined' is not assignable to type 'number'.
+      Type 'undefined' is not assignable to type 'number'.
+
+14003 interface TextEncoder extends TextEncoderCommon {
+                ~~~~~~~~~~~
+
+
+
+
+** Angular Live Development Server is listening on localhost:4200, open your browser on http://localhost:4200/ **
+
+
+× Failed to compile.

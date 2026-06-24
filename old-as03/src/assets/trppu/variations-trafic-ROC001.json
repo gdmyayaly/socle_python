@@ -1,0 +1,8 @@
+[
+  { "categorie": "OO", "min": -50, "max": 50, "valeur": 0 },
+  { "categorie": "OS", "min": -50, "max": 50, "valeur": 5 },
+  { "categorie": "Presse", "min": -50, "max": 50, "valeur": -10 },
+  { "categorie": "Colis", "min": -50, "max": 50, "valeur": 0 },
+  { "categorie": "PPI", "min": -50, "max": 50, "valeur": 15 },
+  { "categorie": "IP", "min": -50, "max": 50, "valeur": -5 }
+]

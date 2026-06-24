@@ -1,0 +1,8 @@
+[
+  { "id": 1, "code": "LR", "libelle": "Lettre Recommandée", "exclu": false },
+  { "id": 2, "code": "CP", "libelle": "Colis Postaux", "exclu": true },
+  { "id": 3, "code": "PR", "libelle": "Presse", "exclu": false },
+  { "id": 4, "code": "PPI", "libelle": "PPI Standard", "exclu": true },
+  { "id": 5, "code": "IP", "libelle": "International Prioritaire", "exclu": false },
+  { "id": 6, "code": "EC", "libelle": "E-Commerce", "exclu": false }
+]

@@ -130,8 +130,12 @@ def assert_editable(scenario: dict[str, Any]) -> None:
     assert_not_fige(scenario)
 
 
-# Tables détenant des données opérationnelles rattachées à un scénario (aucune
-# contrainte FK en base : le nettoyage est explicite à la suppression).
+# Tables détenant des données opérationnelles rattachées à un scénario.
+# Note : db.sql définit des FK sur id_scenario, certaines ON DELETE CASCADE
+# (trppu_neutralisations, trppu_tmh, trppu_scenario_variations_prev) et d'autres
+# en RESTRICT (comptages, exclusions, scenario_pic_coeffs, trafic_agrebal,
+# pic_version). On supprime donc explicitement les enfants avant le parent : ça
+# couvre les RESTRICT et reste sûr pour les CASCADE (idempotent).
 # Les tables de logs (trppu_api_log, trppu_recalcul_log) sont volontairement
 # exclues pour préserver la traçabilité.
 SCENARIO_CHILD_TABLES = (
@@ -150,8 +154,9 @@ SCENARIO_CHILD_TABLES = (
 async def delete_scenario_cascade(tx, id_scenario: int) -> None:
     """Supprime définitivement un scénario et toutes ses données rattachées.
 
-    Aucune contrainte FK n'existe en base : on supprime explicitement les lignes
-    des tables enfants (cf. SCENARIO_CHILD_TABLES) avant le scénario lui-même.
+    On supprime explicitement les lignes des tables enfants (cf.
+    SCENARIO_CHILD_TABLES) avant le scénario lui-même : nécessaire pour les FK
+    en ON DELETE RESTRICT, et sans effet de bord pour celles en CASCADE.
     """
     for table in SCENARIO_CHILD_TABLES:
         await tx.execute(f"DELETE FROM {table} WHERE id_scenario = %s", (id_scenario,))

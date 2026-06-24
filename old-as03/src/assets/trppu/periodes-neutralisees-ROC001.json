@@ -1,0 +1,5 @@
+[
+  { "id": 1, "dateDebut": "2026-01-01", "dateFin": "2026-01-02", "motif": "Jour férié" },
+  { "id": 2, "dateDebut": "2026-05-01", "dateFin": "2026-05-01", "motif": "Fête du travail" },
+  { "id": 3, "dateDebut": "2026-12-25", "dateFin": "2026-12-26", "motif": "Noël" }
+]

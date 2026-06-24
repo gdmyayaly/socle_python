@@ -1,0 +1,51 @@
+<div class="section-container">
+  <div class="section-header">
+    <mat-icon class="header-icon">low_priority</mat-icon>
+    <h3>Neutralisation secondaire</h3>
+  </div>
+
+  <table mat-table [dataSource]="periodes">
+
+    <ng-container matColumnDef="dateDebut">
+      <th mat-header-cell *matHeaderCellDef>Date début</th>
+      <td mat-cell *matCellDef="let row">{{ row.dateDebut }}</td>
+      <td mat-footer-cell *matFooterCellDef>
+        <input type="date" [(ngModel)]="newDateDebut" class="inline-date" />
+      </td>
+    </ng-container>
+
+    <ng-container matColumnDef="dateFin">
+      <th mat-header-cell *matHeaderCellDef>Date fin</th>
+      <td mat-cell *matCellDef="let row">{{ row.dateFin }}</td>
+      <td mat-footer-cell *matFooterCellDef>
+        <input type="date" [(ngModel)]="newDateFin" class="inline-date" />
+      </td>
+    </ng-container>
+
+    <ng-container matColumnDef="motif">
+      <th mat-header-cell *matHeaderCellDef>Motif</th>
+      <td mat-cell *matCellDef="let row">{{ row.motif || '—' }}</td>
+      <td mat-footer-cell *matFooterCellDef>
+        <input type="text" [(ngModel)]="newMotif" placeholder="Motif (optionnel)" class="inline-text" />
+      </td>
+    </ng-container>
+
+    <ng-container matColumnDef="actions">
+      <th mat-header-cell *matHeaderCellDef>Actions</th>
+      <td mat-cell *matCellDef="let row">
+        <button mat-icon-button color="warn" (click)="onRemove(row)" aria-label="Supprimer">
+          <mat-icon>delete</mat-icon>
+        </button>
+      </td>
+      <td mat-footer-cell *matFooterCellDef>
+        <button mat-icon-button color="primary" [disabled]="!canAdd" (click)="onAdd()" aria-label="Ajouter">
+          <mat-icon>add_circle</mat-icon>
+        </button>
+      </td>
+    </ng-container>
+
+    <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+    <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+    <tr mat-footer-row *matFooterRowDef="displayedColumns" class="add-row"></tr>
+  </table>
+</div>

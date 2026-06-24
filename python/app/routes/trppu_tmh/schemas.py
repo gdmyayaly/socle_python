@@ -19,6 +19,7 @@ class TmhOut(BaseModel):
     moyenne_hebdo: Decimal
     bl_exclu: bool
     bl_manuel: bool = False  # ligne saisie/modifiée manuellement (cf. DSR-649/665)
+    motif: str | None = None  # justification d'une modif manuelle / exclusion
 
 
 class TmhUpsert(BaseModel):
@@ -34,6 +35,9 @@ class TmhUpsert(BaseModel):
     exclusion: bool = False
     manuel: bool = Field(
         False, description="Ligne ajoutée manuellement (True) ou issue d'un calcul auto (False) → bl_manuel."
+    )
+    motif: str | None = Field(
+        None, max_length=255, description="Justification d'une modif manuelle / exclusion (→ motif)."
     )
 
 
@@ -60,6 +64,9 @@ class TmhVolumeUpdate(BaseModel):
     volume_realise: int = Field(..., ge=0)
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
+    motif: str | None = Field(
+        None, max_length=255, description="Justification de la modification manuelle (→ motif)."
+    )
 
 
 class TmhExclusionUpdate(BaseModel):
@@ -68,4 +75,7 @@ class TmhExclusionUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     bl_exclu: bool = Field(
         ..., description="True = produit exclu du calcul, False = inclus."
+    )
+    motif: str | None = Field(
+        None, max_length=255, description="Justification de l'exclusion / réintégration (→ motif)."
     )

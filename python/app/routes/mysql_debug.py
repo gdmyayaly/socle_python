@@ -271,11 +271,16 @@ async def dump_create_sql(
         True,
         description="Inclure les DROP TABLE/VIEW IF EXISTS avant chaque CREATE.",
     ),
+    data: bool = Query(
+        False,
+        description="Inclure aussi les données (INSERT) de chaque table après son CREATE.",
+    ),
 ):
     """Retourne le DDL complet (CREATE) de la base, copiable pour la recréer.
 
     Reconstruit le SQL via `SHOW CREATE TABLE` / `SHOW CREATE VIEW` pour chaque
-    objet de la base. La sortie n'inclut PAS les données (schéma uniquement).
+    objet de la base. Par défaut la sortie n'inclut PAS les données (schéma
+    uniquement) ; passer `data=true` ajoute les `INSERT` de chaque table.
 
     - `fmt=sql`  : réponse text/plain prête à copier-coller dans un client SQL.
     - `fmt=json` : réponse structurée (un objet par table/vue + le SQL complet).
@@ -318,6 +323,21 @@ async def dump_create_sql(
         item = {"name": name, "type": kind, "create_sql": create_sql}
         if error:
             item["error"] = error
+        # Données : uniquement pour les tables (les vues n'en stockent pas).
+        if data and not is_view and not error:
+            try:
+                cols = await _table_columns(name)
+                raw_rows = await db_read.fetch_all(
+                    f"SELECT * FROM `{MYSQL_DATABASE}`.`{name}`"
+                )
+                item["columns"] = cols
+                item["rows"] = [
+                    {c: _serialize_value(r.get(c)) for c in cols} for r in raw_rows
+                ]
+                item["_raw_rows"] = raw_rows  # interne : sert à générer les INSERT SQL
+            except Exception as e:
+                logger.error("Erreur export données de `%s` : %s", name, e)
+                item["data_error"] = str(e)
         items.append(item)
 
     failed = [it for it in items if it.get("error")]
@@ -325,7 +345,8 @@ async def dump_create_sql(
     # 3) Assemble le script SQL complet
     parts: list[str] = [
         f"-- Dump du schéma de la base `{MYSQL_DATABASE}`",
-        f"-- {len(items)} objet(s) — schéma uniquement (sans données)",
+        f"-- {len(items)} objet(s) — "
+        + ("schéma + données" if data else "schéma uniquement (sans données)"),
     ]
     if failed:
         parts.append(
@@ -353,6 +374,24 @@ async def dump_create_sql(
             parts.append(f"DROP {item['type']} IF EXISTS `{item['name']}`;")
         parts.append(f"{item['create_sql']};")
         parts.append("")
+        # INSERT des données si demandées (tables uniquement).
+        if data and item.get("_raw_rows") is not None:
+            cols = item["columns"]
+            raw_rows = item["_raw_rows"]
+            if raw_rows:
+                col_list = ", ".join(f"`{c}`" for c in cols)
+                parts.append(f"-- Données de `{item['name']}` — {len(raw_rows)} ligne(s)")
+                for row in raw_rows:
+                    values = ", ".join(_sql_literal(row.get(c)) for c in cols)
+                    parts.append(
+                        f"INSERT INTO `{item['name']}` ({col_list}) VALUES ({values});"
+                    )
+                parts.append("")
+        elif data and item.get("data_error"):
+            parts.append(
+                f"-- !! ERREUR export données pour `{item['name']}` : {item['data_error']}"
+            )
+            parts.append("")
     parts.append("SET FOREIGN_KEY_CHECKS = 1;")
     parts.append("")
     sql = "\n".join(parts)
@@ -360,12 +399,17 @@ async def dump_create_sql(
     duration_s = round(time.perf_counter() - start, 3)
 
     if fmt == "json":
+        # Retire la clé interne `_raw_rows` (valeurs SQL brutes non sérialisables) ;
+        # `rows` (déjà sérialisé via `_serialize_value`) reste exposé.
+        json_objects = [
+            {k: v for k, v in item.items() if k != "_raw_rows"} for item in items
+        ]
         return {
             "execution_time_s": duration_s,
             "database": MYSQL_DATABASE,
             "object_count": len(items),
             "failed_count": len(failed),
-            "objects": items,
+            "objects": json_objects,
             "sql": sql,
         }
     return PlainTextResponse(content=sql, media_type="text/plain; charset=utf-8")

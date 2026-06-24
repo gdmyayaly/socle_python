@@ -12,7 +12,7 @@ Clé : variable d'environnement / config `ID_RH_CRYPTO_KEY`.
   `encrypt_id_rh` / `decrypt_id_rh` renvoient la valeur telle quelle (pass-through).
 
 NB : un token Fernet fait ~100+ caractères ; les colonnes `id_rh*` doivent donc
-être en `VARCHAR(255)` (cf. db_migrations/001_widen_id_rh_columns.sql).
+être en `VARCHAR(255)` (cf. colonnes `id_rh*` dans db.sql).
 """
 
 from __future__ import annotations

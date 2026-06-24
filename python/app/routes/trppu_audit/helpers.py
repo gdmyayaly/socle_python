@@ -125,7 +125,7 @@ async def collect_actions(db, fernet: Fernet, target_clear: str) -> list[dict[st
 
     # 5. trppu_tmh — écriture des trafics.
     rows = await db.fetch_all(
-        "SELECT id_tmh, id_scenario, co_produit, dt_calcul, id_rh "
+        "SELECT id_tmh, id_scenario, co_produit, motif, dt_calcul, id_rh "
         "FROM trppu_tmh WHERE id_rh IS NOT NULL"
     )
     for r in rows:
@@ -133,7 +133,7 @@ async def collect_actions(db, fernet: Fernet, target_clear: str) -> list[dict[st
             actions.append({
                 "ressource": "trppu_tmh", "action": "ECRITURE_TMH",
                 "id": r["id_tmh"], "id_scenario": r["id_scenario"], "date": r["dt_calcul"],
-                "details": {"co_produit": r["co_produit"]},
+                "details": {"co_produit": r["co_produit"], "motif": r["motif"]},
             })
 
     # 6. trppu_scenario_variations_prev — écriture d'une variation prévisionnelle.

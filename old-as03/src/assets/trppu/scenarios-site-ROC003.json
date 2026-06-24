@@ -1,0 +1,22 @@
+[
+  {
+    "id_scenario": 6,
+    "co_regate": "REG003",
+    "lb_scenario": "Saint-Charles travaux",
+    "co_roc": "ROC003",
+    "statut": "EN PRODUCTION",
+    "dt_creation": "2026-03-18T08:00:00",
+    "dt_validation": "2026-03-25T11:30:00",
+    "dt_mise_en_prod": "2026-04-01T07:00:00",
+    "periode_debut": "2026-04-01",
+    "periode_fin": "2027-03-31",
+    "periode_realise_debut": "2026-04-01",
+    "periode_realise_fin": "2026-05-20",
+    "periode_prev_debut": "2026-05-21",
+    "periode_prev_fin": "2027-03-31",
+    "nb_jours_semaine": 5,
+    "id_pic_version": 3,
+    "version_scenario": 4,
+    "est_fige": true
+  }
+]

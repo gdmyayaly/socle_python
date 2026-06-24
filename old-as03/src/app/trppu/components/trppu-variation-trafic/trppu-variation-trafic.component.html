@@ -1,0 +1,24 @@
+<div class="section-container">
+  <div class="section-header">
+    <mat-icon class="header-icon">tune</mat-icon>
+    <h3>Variation de trafic</h3>
+  </div>
+
+  <div class="variation-list">
+    <div class="variation-row" *ngFor="let v of variations">
+      <span class="variation-label">{{ v.categorie }}</span>
+      <mat-slider
+        [min]="v.min"
+        [max]="v.max"
+        [step]="1"
+        [value]="v.valeur"
+        (input)="onSliderChange(v, $event.value || 0)"
+        thumbLabel
+        class="variation-slider">
+      </mat-slider>
+      <span class="variation-value" [class.positive]="v.valeur > 0" [class.negative]="v.valeur < 0">
+        {{ v.valeur > 0 ? '+' : '' }}{{ v.valeur }}%
+      </span>
+    </div>
+  </div>
+</div>

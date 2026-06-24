@@ -4,18 +4,11 @@ import {
 } from '@angular/core';
 import { Periode } from '../../models/periode.model';
 
+/** Pas d'écart du slider en millisecondes (1 jour par défaut) */
+const STEP_MS = 1 * 24 * 60 * 60 * 1000;
+
 /** Écart maximum autorisé entre début et fin (en années) */
 const MAX_RANGE_YEARS = 2;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Granularité d'accroche du slider */
-type Granularity = 'jour' | 'semaine' | 'mois' | 'annee';
-
-interface GranularityOption {
-  value: Granularity;
-  label: string;
-}
 
 interface Notification {
   message: string;
@@ -44,21 +37,8 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
   startTs = 0;
   endTs = 0;
 
-  /** Curseur "date du jour" déplaçable, frontière réalisé / prévisionnel */
-  cursorTs = 0;
-
   startDateStr = '';
   endDateStr = '';
-  cursorDateStr = '';
-
-  /** Granularité d'accroche courante */
-  granularity: Granularity = 'jour';
-  readonly granularities: GranularityOption[] = [
-    { value: 'jour', label: 'Jours' },
-    { value: 'semaine', label: 'Semaines' },
-    { value: 'mois', label: 'Mois' },
-    { value: 'annee', label: 'Année' }
-  ];
 
   editingStart = false;
   editingEnd = false;
@@ -69,7 +49,7 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
   isDirty = false;
   isValidated = false;
   notifications: Notification[] = [];
-  dragging: 'start' | 'end' | 'cursor' | null = null;
+  dragging: 'start' | 'end' | null = null;
 
   /** Notifications en attente pendant le drag, émises au relâchement */
   private pendingNotifications: Notification[] = [];
@@ -110,10 +90,6 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
       this.enforceMaxRange('end');
     }
 
-    // Curseur = aujourd'hui, ramené dans la fourchette [début, fin]
-    this.cursorTs = this.clamp(this.snap(this.getTodayTs()));
-    this.cursorTs = Math.min(Math.max(this.cursorTs, this.startTs), this.endTs);
-
     this.syncStrings();
     this.isDirty = false;
     this.isValidated = false;
@@ -134,70 +110,32 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
     return this.endPercent - this.startPercent;
   }
 
-  /** true quand les bulles début/fin sont trop proches pour ne pas se chevaucher */
-  get tooltipsClose(): boolean {
-    if (this.trackWidth > 0) {
-      const gapPx = (this.rangePercent / 100) * this.trackWidth;
-      return gapPx < 150;
-    }
-    return this.rangePercent < 22;
+  /** Position du marqueur "Aujourd'hui" : suit la borne début si avant, ou la borne fin si après */
+  get todayPercent(): number {
+    const todayTs = this.getTodayTs();
+    if (todayTs < this.startTs) return this.toPercent(this.startTs);
+    if (todayTs > this.endTs) return this.toPercent(this.endTs);
+    return this.toPercent(todayTs);
   }
 
-  // ── Curseur "date du jour" ──
-
-  get cursorPercent(): number {
-    return this.toPercent(this.cursorTs);
+  /** true si aujourd'hui est avant la période sélectionnée */
+  get todayBeforePeriode(): boolean {
+    return this.getTodayTs() < this.startTs;
   }
 
-  /** Largeur du segment réalisé (début → curseur) */
-  get realiseWidthPercent(): number {
-    return this.cursorPercent - this.startPercent;
-  }
-
-  /** Largeur du segment prévisionnel (curseur → fin) */
-  get prevWidthPercent(): number {
-    return this.endPercent - this.cursorPercent;
-  }
-
-  /** Durée du réalisé (partie grise) exprimée dans l'unité de l'écart courant */
-  get realiseSpanLabel(): string {
-    return this.formatSpan(this.startTs, this.cursorTs);
-  }
-
-  /** Durée du prévisionnel exprimée dans l'unité de l'écart courant */
-  get prevSpanLabel(): string {
-    return this.formatSpan(this.cursorTs, this.endTs);
-  }
-
-  /** Formate une durée selon la granularité (jour / semaine / mois / année) */
-  private formatSpan(fromTs: number, toTs: number): string {
-    const from = new Date(fromTs);
-    const to = new Date(toTs);
-
-    switch (this.granularity) {
-      case 'semaine': {
-        const w = Math.round((toTs - fromTs) / (7 * DAY_MS));
-        return `${w} sem.`;
-      }
-      case 'mois': {
-        const m = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
-        return `${m} mois`;
-      }
-      case 'annee': {
-        const y = to.getFullYear() - from.getFullYear();
-        return `${y} an${y > 1 ? 's' : ''}`;
-      }
-      case 'jour':
-      default: {
-        const d = Math.round((toTs - fromTs) / DAY_MS);
-        return `${d} j`;
-      }
-    }
+  /** true si aujourd'hui est après la période sélectionnée */
+  get todayAfterPeriode(): boolean {
+    return this.getTodayTs() > this.endTs;
   }
 
   private getTodayTs(): number {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  }
+
+  get todayStr(): string {
+    const now = new Date();
+    return this.toDateStr(now.getTime());
   }
 
   get selectedDays(): number {
@@ -233,7 +171,7 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
 
   // ── Drag ──
 
-  onThumbMouseDown(event: MouseEvent, which: 'start' | 'end' | 'cursor'): void {
+  onThumbMouseDown(event: MouseEvent, which: 'start' | 'end'): void {
     event.preventDefault();
     this.dragging = which;
     this.updateTrackDimensions();
@@ -241,7 +179,7 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
     document.addEventListener('mouseup', this.boundMouseUp);
   }
 
-  onThumbTouchStart(event: TouchEvent, which: 'start' | 'end' | 'cursor'): void {
+  onThumbTouchStart(event: TouchEvent, which: 'start' | 'end'): void {
     this.dragging = which;
     this.updateTrackDimensions();
     document.addEventListener('touchmove', this.boundTouchMove, { passive: false });
@@ -284,42 +222,18 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
   private handleDrag(clientX: number): void {
     const ratio = (clientX - this.trackLeft) / this.trackWidth;
     const rawTs = this.minTs + ratio * (this.maxTs - this.minTs);
-    const snapped = this.clamp(this.snap(rawTs));
+    const snapped = this.snap(this.clamp(rawTs));
 
     if (this.dragging === 'start') {
       this.startTs = Math.min(snapped, this.endTs);
       this.enforceMaxRange('start');
-      this.cursorTs = Math.max(this.cursorTs, this.startTs);
-    } else if (this.dragging === 'end') {
+    } else {
       this.endTs = Math.max(snapped, this.startTs);
       this.enforceMaxRange('end');
-      this.cursorTs = Math.min(this.cursorTs, this.endTs);
-    } else {
-      this.dragCursor(snapped);
     }
 
     this.syncStrings();
     this.markDirty();
-  }
-
-  /**
-   * Déplace le curseur dans la fourchette. S'il atteint une borne, il la pousse,
-   * sans toutefois dépasser l'écart maximum autorisé.
-   */
-  private dragCursor(snapped: number): void {
-    let t = snapped;
-
-    if (t > this.endTs) {
-      const maxEnd = this.clamp(this.addYears(this.startTs, MAX_RANGE_YEARS));
-      t = Math.min(t, maxEnd);
-      this.endTs = t;
-    } else if (t < this.startTs) {
-      const minStart = this.clamp(this.addYears(this.endTs, -MAX_RANGE_YEARS));
-      t = Math.max(t, minStart);
-      this.startTs = t;
-    }
-
-    this.cursorTs = t;
   }
 
   // ── Édition directe ──
@@ -372,7 +286,6 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
 
     this.startTs = this.snap(newTs);
     this.enforceMaxRange('start');
-    this.cursorTs = Math.max(this.cursorTs, this.startTs);
     this.syncStrings();
     this.editingStart = false;
     this.editStartValue = '';
@@ -401,7 +314,6 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
 
     this.endTs = this.snap(newTs);
     this.enforceMaxRange('end');
-    this.cursorTs = Math.min(this.cursorTs, this.endTs);
     this.syncStrings();
     this.editingEnd = false;
     this.editEndValue = '';
@@ -409,28 +321,6 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
 
     if (adjusted) {
       this.addNotification('La date de fin a été ajustée pour rester dans les limites.', 'warn');
-    }
-  }
-
-  // ── Granularité ──
-
-  setGranularity(g: Granularity): void {
-    if (this.granularity === g) return;
-    this.granularity = g;
-
-    const prevStart = this.startTs;
-    const prevEnd = this.endTs;
-    const prevCursor = this.cursorTs;
-
-    this.startTs = this.clamp(this.snap(this.startTs));
-    this.endTs = this.clamp(this.snap(this.endTs));
-    this.cursorTs = this.clamp(this.snap(this.cursorTs));
-    this.cursorTs = Math.min(Math.max(this.cursorTs, this.startTs), this.endTs);
-
-    this.syncStrings();
-
-    if (prevStart !== this.startTs || prevEnd !== this.endTs || prevCursor !== this.cursorTs) {
-      this.markDirty();
     }
   }
 
@@ -518,51 +408,14 @@ export class TrppuPeriodeScenarioComponent implements OnChanges, AfterViewInit {
     }
   }
 
-  /** Accroche un timestamp à la granularité courante (jour / semaine / mois / année). */
+  /** Arrondi au pas le plus proche */
   private snap(ts: number): number {
-    const d = new Date(ts);
-
-    switch (this.granularity) {
-      case 'semaine': {
-        const base = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-        const dow = (base.getDay() + 6) % 7; // lundi = 0
-        const monday = new Date(base);
-        monday.setDate(base.getDate() - dow);
-        const nextMonday = new Date(monday);
-        nextMonday.setDate(monday.getDate() + 7);
-        return (ts - monday.getTime() <= nextMonday.getTime() - ts)
-          ? monday.getTime()
-          : nextMonday.getTime();
-      }
-      case 'mois': {
-        const first = new Date(d.getFullYear(), d.getMonth(), 1);
-        const nextFirst = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-        return (ts - first.getTime() <= nextFirst.getTime() - ts)
-          ? first.getTime()
-          : nextFirst.getTime();
-      }
-      case 'annee': {
-        const first = new Date(d.getFullYear(), 0, 1);
-        const nextFirst = new Date(d.getFullYear() + 1, 0, 1);
-        return (ts - first.getTime() <= nextFirst.getTime() - ts)
-          ? first.getTime()
-          : nextFirst.getTime();
-      }
-      case 'jour':
-      default:
-        return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    }
-  }
-
-  private addYears(ts: number, years: number): number {
-    const d = new Date(ts);
-    return new Date(d.getFullYear() + years, d.getMonth(), d.getDate()).getTime();
+    return Math.round((ts - this.minTs) / STEP_MS) * STEP_MS + this.minTs;
   }
 
   private syncStrings(): void {
     this.startDateStr = this.toDateStr(this.startTs);
     this.endDateStr = this.toDateStr(this.endTs);
-    this.cursorDateStr = this.toDateStr(this.cursorTs);
   }
 
   private toPercent(ts: number): number {

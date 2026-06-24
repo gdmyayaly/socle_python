@@ -30,6 +30,9 @@ class ScenarioTmhItem(BaseModel):
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
     exclusion: bool = False
     manuel: bool = False  # → bl_manuel (ligne saisie manuellement vs calcul auto)
+    motif: Optional[str] = Field(
+        None, max_length=255, description="Justification d'une modif manuelle / exclusion (→ motif)."
+    )
 
 
 class ScenarioBase(BaseModel):

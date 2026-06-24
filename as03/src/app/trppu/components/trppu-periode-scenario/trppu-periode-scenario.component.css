@@ -54,53 +54,6 @@
   color: #e65100;
 }
 
-/* ── Sélecteur de granularité ── */
-.granularity-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.granularity-label {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #90a4ae;
-}
-
-.granularity-options {
-  display: inline-flex;
-  background: #f0f1f5;
-  border-radius: 8px;
-  padding: 3px;
-  gap: 2px;
-}
-
-.granularity-btn {
-  border: none;
-  background: transparent;
-  padding: 5px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #607d8b;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.granularity-btn:hover {
-  color: #3f51b5;
-}
-
-.granularity-btn.active {
-  background: #ffffff;
-  color: #3f51b5;
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-}
-
 /* ── Bornes extrêmes ── */
 .extremes {
   display: flex;
@@ -129,7 +82,7 @@
 /* ── Slider wrapper ── */
 .slider-wrapper {
   position: relative;
-  padding: 60px 14px 44px;
+  padding: 60px 14px 16px;
 }
 
 /* ── Floating tooltips ── */
@@ -138,21 +91,7 @@
   top: 0;
   transform: translateX(-50%);
   z-index: 3;
-  transition: left 0.05s linear, transform 0.15s ease;
-}
-
-/* Quand début et fin se rapprochent : on décale les bulles de part et d'autre
-   de leur point d'ancrage pour éviter qu'elles se superposent. */
-.tooltip-start.is-close {
-  transform: translateX(calc(-100% - 8px));
-}
-
-.tooltip-end.is-close {
-  transform: translateX(8px);
-}
-
-.floating-tooltip.is-close .tooltip-arrow {
-  display: none;
+  transition: left 0.05s linear;
 }
 
 .tooltip-content {
@@ -244,22 +183,12 @@
   cursor: pointer;
 }
 
-/* ── Segments réalisé / prévisionnel ── */
-.track-realise {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  background: linear-gradient(90deg, #90a4ae, #b0bec5);
-  border-radius: 3px 0 0 3px;
-  transition: background 0.3s;
-}
-
-.track-prev {
+.track-active {
   position: absolute;
   top: 0;
   height: 100%;
   background: linear-gradient(90deg, #3f51b5, #7986cb);
-  border-radius: 0 3px 3px 0;
+  border-radius: 3px;
   transition: background 0.3s;
 }
 
@@ -271,69 +200,40 @@
   filter: blur(4px);
 }
 
-/* ── Curseur "date du jour" déplaçable ── */
-.cursor {
+/* ── Marqueur Aujourd'hui ── */
+.today-marker {
   position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  height: 60px;
+  top: -28px;
+  transform: translateX(-50%);
+  z-index: 1;
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  cursor: grab;
-  z-index: 4;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: none;
 }
 
-.cursor:active {
-  cursor: grabbing;
-}
-
-.cursor-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-top: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  color: #ffffff;
-  background: #e53935;
-  padding: 2px 7px;
-  border-radius: 5px;
-  white-space: nowrap;
-  box-shadow: 0 2px 5px rgba(229, 57, 53, 0.35);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.cursor-label mat-icon {
-  font-size: 12px;
-  width: 12px;
-  height: 12px;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.cursor-line {
+.today-line {
   width: 2px;
-  flex: 1;
+  height: 48px;
   background: #e53935;
   border-radius: 1px;
-  opacity: 0.75;
+  opacity: 0.7;
 }
 
-.cursor:hover .cursor-label {
-  transform: scale(1.06);
+.today-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #e53935;
+  background: #ffebee;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  margin-top: 2px;
 }
 
-.cursor-dragging .cursor-label {
-  transform: scale(1.12);
-  box-shadow: 0 4px 12px rgba(229, 57, 53, 0.5);
-}
-
-.cursor-dragging .cursor-line {
-  width: 3px;
-  opacity: 1;
+.today-label-outside {
+  background: #fce4ec;
+  border: 1px dashed #e53935;
 }
 
 /* ── Thumbs ── */
@@ -420,49 +320,6 @@
   font-size: 13px;
   color: #757575;
   font-style: italic;
-}
-
-/* ── Répartition réalisé / prévisionnel ── */
-.range-breakdown {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.breakdown-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 12px;
-  border-radius: 16px;
-}
-
-.breakdown-chip .dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-}
-
-.chip-realise {
-  background: #eceff1;
-  color: #546e7a;
-}
-
-.chip-realise .dot {
-  background: #90a4ae;
-}
-
-.chip-prev {
-  background: #e8eaf6;
-  color: #3f51b5;
-}
-
-.chip-prev .dot {
-  background: #3f51b5;
 }
 
 /* ── Notifications ── */

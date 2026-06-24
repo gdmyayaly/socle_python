@@ -109,12 +109,13 @@ async def update_tmh_volume(id_scenario: int, co_produit: str, payload: TmhVolum
             # "manuelle" (bl_manuel = 1), cf. DSR-665/648.
             rc = await tx.execute(
                 "UPDATE trppu_tmh SET volume_realise = %s, moyenne_journaliere = %s, "
-                "moyenne_hebdo = %s, bl_manuel = 1, dt_calcul = NOW() "
+                "moyenne_hebdo = %s, motif = %s, bl_manuel = 1, dt_calcul = NOW() "
                 "WHERE id_scenario = %s AND co_produit = %s",
                 (
                     payload.volume_realise,
                     payload.moyenne_journaliere,
                     payload.moyenne_hebdo,
+                    payload.motif,
                     id_scenario,
                     co_produit,
                 ),
@@ -163,9 +164,9 @@ async def toggle_tmh_exclusion(
     try:
         async with db_write.transaction() as tx:
             rc = await tx.execute(
-                "UPDATE trppu_tmh SET bl_exclu = %s, dt_calcul = NOW() "
+                "UPDATE trppu_tmh SET bl_exclu = %s, motif = %s, dt_calcul = NOW() "
                 "WHERE id_scenario = %s AND co_produit = %s",
-                (1 if payload.bl_exclu else 0, id_scenario, co_produit),
+                (1 if payload.bl_exclu else 0, payload.motif, id_scenario, co_produit),
             )
             row = await tx.fetch_one(SELECT_TMH_ONE_SQL, (id_scenario, co_produit))
     except HTTPException:
