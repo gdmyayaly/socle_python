@@ -8,11 +8,6 @@
   </div>
 
   <div class="param-sections" [class.disabled-content]="!selectedSite">
-    <app-trppu-periode-neutraliser
-      [siteId]="selectedSite ? selectedSite.codeRoc : null"
-      (periodesChange)="onPeriodesNeutraliseesChange($event)">
-    </app-trppu-periode-neutraliser>
-
     <app-trppu-variation-trafic
       [siteId]="selectedSite ? selectedSite.codeRoc : null"
       (variationsChange)="onVariationsChange($event)">

@@ -181,3 +181,58 @@ async def delete_neutralisation(
         duration_ms,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/{id_scenario}/neutralisations/{id_neutralisation}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_neutralisation_by_id(id_scenario: int, id_neutralisation: int):
+    """Supprime une neutralisation via son identifiant (id_neutralisation).
+
+    Variante de la suppression par période : cible une ligne précise par son id,
+    bornée au scénario (contrôle d'appartenance).
+    """
+    start = time.perf_counter()
+    logger.info(
+        "Début suppression neutralisation par id (id_scenario=%d, id_neutralisation=%d)",
+        id_scenario,
+        id_neutralisation,
+    )
+    scenario = await fetch_scenario_or_404(id_scenario)
+    assert_editable(scenario)
+
+    try:
+        async with db_write.transaction() as tx:
+            rc = await tx.execute(
+                "DELETE FROM trppu_neutralisations "
+                "WHERE id_neutralisation = %s AND id_scenario = %s",
+                (id_neutralisation, id_scenario),
+            )
+    except Exception as e:
+        logger.exception(
+            "Erreur suppression neutralisation par id (id_scenario=%d, id_neutralisation=%d)",
+            id_scenario,
+            id_neutralisation,
+        )
+        raise HTTPException(
+            status_code=500, detail="Erreur suppression neutralisation."
+        ) from e
+
+    if not rc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Aucune neutralisation (id {id_neutralisation}) à supprimer "
+                f"pour le scénario {id_scenario}."
+            ),
+        )
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "Suppression neutralisation par id terminée (id_scenario=%d, id_neutralisation=%d, duration_ms=%.1f)",
+        id_scenario,
+        id_neutralisation,
+        duration_ms,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

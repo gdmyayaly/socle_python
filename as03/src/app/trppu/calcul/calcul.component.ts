@@ -3,6 +3,7 @@ import { Site } from '../models/site.model';
 import { Scenario } from '../models/scenario.model';
 import { Periode } from '../models/periode.model';
 import { Comptage } from '../models/comptage.model';
+import { Neutralisation } from '../models/neutralisation.model';
 import { JoursParSemaine } from '../components/trppu-trafics-calculer/trppu-trafics-calculer.component';
 
 @Component({
@@ -20,6 +21,7 @@ export class CalculComponent {
   currentComptages: Comptage[] = [];
   currentPeriode: Periode | null = null;
   currentJoursParSemaine: JoursParSemaine = 7;
+  currentNeutralisations: Neutralisation[] = [];
 
   onSiteSelected(site: Site | null): void {
     if (this.periodeHasChanges) {
@@ -72,5 +74,10 @@ export class CalculComponent {
   onJoursParSemaineChange(jours: JoursParSemaine): void {
     this.currentJoursParSemaine = jours;
     console.log('[CalculComponent] jours/semaine reçus du fils:', jours);
+  }
+
+  onPeriodesNeutraliseesChange(list: Neutralisation[]): void {
+    this.currentNeutralisations = list;
+    console.log('[CalculComponent] neutralisations reçues du fils:', list);
   }
 }

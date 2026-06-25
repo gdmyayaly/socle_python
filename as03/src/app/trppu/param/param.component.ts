@@ -6,7 +6,6 @@ import { VariationTrafic } from '../models/variation-trafic.model';
 
 export interface ParamPayload {
   site: Site | null;
-  periodesNeutralisees: PeriodeNeutralisee[];
   variationsTrafic: VariationTrafic[];
   neutralisationsPeak: PeriodeNeutralisee[];
   neutralisationsSecondaires: PeriodeNeutralisee[];
@@ -22,7 +21,6 @@ export class ParamComponent {
 
   selectedSite: Site | null = null;
 
-  currentPeriodesNeutralisees: PeriodeNeutralisee[] = [];
   currentVariationsTrafic: VariationTrafic[] = [];
   currentNeutralisationsPeak: PeriodeNeutralisee[] = [];
   currentNeutralisationsSecondaires: PeriodeNeutralisee[] = [];
@@ -33,10 +31,6 @@ export class ParamComponent {
   onSiteSelected(site: Site | null): void {
     this.selectedSite = site;
     this.resetChildrenState();
-  }
-
-  onPeriodesNeutraliseesChange(periodes: PeriodeNeutralisee[]): void {
-    this.currentPeriodesNeutralisees = periodes;
   }
 
   onVariationsChange(variations: VariationTrafic[]): void {
@@ -58,7 +52,6 @@ export class ParamComponent {
   onValidate(): void {
     const payload: ParamPayload = {
       site: this.selectedSite,
-      periodesNeutralisees: this.currentPeriodesNeutralisees,
       variationsTrafic: this.currentVariationsTrafic,
       neutralisationsPeak: this.currentNeutralisationsPeak,
       neutralisationsSecondaires: this.currentNeutralisationsSecondaires,
@@ -69,7 +62,6 @@ export class ParamComponent {
   }
 
   private resetChildrenState(): void {
-    this.currentPeriodesNeutralisees = [];
     this.currentVariationsTrafic = [];
     this.currentNeutralisationsPeak = [];
     this.currentNeutralisationsSecondaires = [];

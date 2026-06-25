@@ -2301,6 +2301,27 @@
             },
             "description": "Delete Neutralisation"
           }
+        },
+        {
+          "name": "DELETE /trppu-api/scenarios/{id_scenario}/neutralisations/{id_neutralisation}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/neutralisations/{{id_neutralisation}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "neutralisations",
+                "{{id_neutralisation}}"
+              ]
+            },
+            "description": "Delete Neutralisation By Id"
+          }
         }
       ]
     },

@@ -33,6 +33,17 @@
 
 <div class="overlay-wrapper">
   <div class="overlay-block" *ngIf="!selectedScenario">
+    <span>Sélectionnez un scénario pour accéder aux périodes à neutraliser.</span>
+  </div>
+  <app-trppu-periode-neutraliser
+    [class.disabled-content]="!selectedScenario"
+    [scenario]="selectedScenario"
+    (periodesChange)="onPeriodesNeutraliseesChange($event)">
+  </app-trppu-periode-neutraliser>
+</div>
+
+<div class="overlay-wrapper">
+  <div class="overlay-block" *ngIf="!selectedScenario">
     <span>Sélectionnez un scénario pour accéder aux comptages.</span>
   </div>
   <app-trppu-comptage

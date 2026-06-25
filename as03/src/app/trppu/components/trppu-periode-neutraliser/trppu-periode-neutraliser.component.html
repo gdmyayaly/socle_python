@@ -4,21 +4,41 @@
     <h3>Périodes à neutraliser</h3>
   </div>
 
-  <table mat-table [dataSource]="periodes">
+  <table mat-table [dataSource]="rows">
 
     <ng-container matColumnDef="dateDebut">
       <th mat-header-cell *matHeaderCellDef>Date début</th>
-      <td mat-cell *matCellDef="let row">{{ row.dateDebut }}</td>
+      <td mat-cell *matCellDef="let row">{{ formatDateFr(row.dt_debut) }}</td>
       <td mat-footer-cell *matFooterCellDef>
-        <input type="date" [(ngModel)]="newDateDebut" class="inline-date" />
+        <mat-form-field appearance="outline" class="inline-field">
+          <input matInput
+                 [matDatepicker]="pickerDebut"
+                 [matDatepickerFilter]="dateFilter"
+                 [min]="dateMin"
+                 [max]="dateMax"
+                 [(ngModel)]="newDebut"
+                 placeholder="jj/mm/aaaa" />
+          <mat-datepicker-toggle matIconSuffix [for]="pickerDebut"></mat-datepicker-toggle>
+          <mat-datepicker #pickerDebut></mat-datepicker>
+        </mat-form-field>
       </td>
     </ng-container>
 
     <ng-container matColumnDef="dateFin">
       <th mat-header-cell *matHeaderCellDef>Date fin</th>
-      <td mat-cell *matCellDef="let row">{{ row.dateFin }}</td>
+      <td mat-cell *matCellDef="let row">{{ formatDateFr(row.dt_fin) }}</td>
       <td mat-footer-cell *matFooterCellDef>
-        <input type="date" [(ngModel)]="newDateFin" class="inline-date" />
+        <mat-form-field appearance="outline" class="inline-field">
+          <input matInput
+                 [matDatepicker]="pickerFin"
+                 [matDatepickerFilter]="dateFilter"
+                 [min]="newDebut || dateMin"
+                 [max]="dateMax"
+                 [(ngModel)]="newFin"
+                 placeholder="jj/mm/aaaa" />
+          <mat-datepicker-toggle matIconSuffix [for]="pickerFin"></mat-datepicker-toggle>
+          <mat-datepicker #pickerFin></mat-datepicker>
+        </mat-form-field>
       </td>
     </ng-container>
 
@@ -26,7 +46,17 @@
       <th mat-header-cell *matHeaderCellDef>Motif</th>
       <td mat-cell *matCellDef="let row">{{ row.motif || '—' }}</td>
       <td mat-footer-cell *matFooterCellDef>
-        <input type="text" [(ngModel)]="newMotif" placeholder="Motif (optionnel)" class="inline-text" />
+        <mat-form-field appearance="outline" class="inline-field motif-field">
+          <input matInput [(ngModel)]="newMotif" placeholder="Motif" maxlength="255" />
+        </mat-form-field>
+      </td>
+    </ng-container>
+
+    <ng-container matColumnDef="nbJour">
+      <th mat-header-cell *matHeaderCellDef>Jours ouvrés</th>
+      <td mat-cell *matCellDef="let row">{{ row.nb_jour ?? '—' }}</td>
+      <td mat-footer-cell *matFooterCellDef>
+        <span class="nb-jour-preview">{{ computeNbJour(newDebut, newFin) }}</span>
       </td>
     </ng-container>
 
@@ -38,8 +68,12 @@
         </button>
       </td>
       <td mat-footer-cell *matFooterCellDef>
-        <button mat-icon-button color="primary" [disabled]="!canAdd" (click)="onAdd()" aria-label="Ajouter">
-          <mat-icon>add_circle</mat-icon>
+        <button mat-raised-button
+                color="primary"
+                [disabled]="!canSave"
+                (click)="onEnregistrer()">
+          <mat-icon>save</mat-icon>
+          Enregistrer
         </button>
       </td>
     </ng-container>
@@ -48,4 +82,8 @@
     <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
     <tr mat-footer-row *matFooterRowDef="displayedColumns" class="add-row"></tr>
   </table>
+
+  <p class="error-message" *ngIf="errorMessage">
+    <mat-icon>error_outline</mat-icon> {{ errorMessage }}
+  </p>
 </div>

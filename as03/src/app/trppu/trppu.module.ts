@@ -10,6 +10,8 @@ import { MatInputModule } from '@angular/material/input';
 import { MatTableModule } from '@angular/material/table';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatSliderModule } from '@angular/material/slider';
+import { MatDatepickerModule } from '@angular/material/datepicker';
+import { MatNativeDateModule, MAT_DATE_LOCALE } from '@angular/material/core';
 import { TrppuComponent } from './trppu.component';
 import { TrppuSelectSiteComponent } from './components/trppu-select-site/trppu-select-site.component';
 import { TrppuScenarioListComponent } from './components/trppu-scenario-list/trppu-scenario-list.component';
@@ -68,7 +70,12 @@ const routes: Routes = [
     MatInputModule,
     MatTableModule,
     MatCheckboxModule,
-    MatSliderModule
+    MatSliderModule,
+    MatDatepickerModule,
+    MatNativeDateModule
+  ],
+  providers: [
+    { provide: MAT_DATE_LOCALE, useValue: 'fr-FR' }
   ]
 })
 export class TrppuModule { }
