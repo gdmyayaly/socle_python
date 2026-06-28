@@ -165,11 +165,24 @@ export class TrppuPeriodeNeutraliserComponent implements OnChanges {
   get canSave(): boolean {
     return (
       !this.saving &&
-      !!this.newDebut &&
-      !!this.newFin &&
-      this.newDebut <= this.newFin &&
+      this.isSelectableDate(this.newDebut) &&
+      this.isSelectableDate(this.newFin) &&
+      this.newDebut! <= this.newFin! &&
       this.newMotif.trim().length > 0
     );
+  }
+
+  /**
+   * Vrai si `d` est une date saisissable : Date valide, jour ouvré non férié
+   * (cf. dateFilter), et dans les bornes de la période du scénario.
+   * Double les contrôles du datepicker pour bloquer toute saisie clavier invalide.
+   */
+  private isSelectableDate(d: Date | null): boolean {
+    if (!(d instanceof Date) || isNaN(d.getTime())) return false;
+    if (!this.dateFilter(d)) return false;
+    if (this.dateMin && d < this.dateMin) return false;
+    if (this.dateMax && d > this.dateMax) return false;
+    return true;
   }
 
   onEnregistrer(): void {

@@ -17,9 +17,13 @@
                  [min]="dateMin"
                  [max]="dateMax"
                  [(ngModel)]="newDebut"
-                 placeholder="jj/mm/aaaa" />
-          <mat-datepicker-toggle matIconSuffix [for]="pickerDebut"></mat-datepicker-toggle>
+                 #debutCtrl="ngModel"
+                 placeholder="JJ/MM/AAAA" />
+          <mat-datepicker-toggle matSuffix [for]="pickerDebut"></mat-datepicker-toggle>
           <mat-datepicker #pickerDebut></mat-datepicker>
+          <mat-error *ngIf="debutCtrl.hasError('matDatepickerParse')">Format attendu : JJ/MM/AAAA</mat-error>
+          <mat-error *ngIf="debutCtrl.hasError('matDatepickerFilter')">Jour férié ou week-end non autorisé.</mat-error>
+          <mat-error *ngIf="debutCtrl.hasError('matDatepickerMin') || debutCtrl.hasError('matDatepickerMax')">Hors période du scénario.</mat-error>
         </mat-form-field>
       </td>
     </ng-container>
@@ -35,9 +39,13 @@
                  [min]="newDebut || dateMin"
                  [max]="dateMax"
                  [(ngModel)]="newFin"
-                 placeholder="jj/mm/aaaa" />
-          <mat-datepicker-toggle matIconSuffix [for]="pickerFin"></mat-datepicker-toggle>
+                 #finCtrl="ngModel"
+                 placeholder="JJ/MM/AAAA" />
+          <mat-datepicker-toggle matSuffix [for]="pickerFin"></mat-datepicker-toggle>
           <mat-datepicker #pickerFin></mat-datepicker>
+          <mat-error *ngIf="finCtrl.hasError('matDatepickerParse')">Format attendu : JJ/MM/AAAA</mat-error>
+          <mat-error *ngIf="finCtrl.hasError('matDatepickerFilter')">Jour férié ou week-end non autorisé.</mat-error>
+          <mat-error *ngIf="finCtrl.hasError('matDatepickerMin') || finCtrl.hasError('matDatepickerMax')">Hors période du scénario / antérieure au début.</mat-error>
         </mat-form-field>
       </td>
     </ng-container>

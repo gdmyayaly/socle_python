@@ -11,7 +11,8 @@ import { MatTableModule } from '@angular/material/table';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatSliderModule } from '@angular/material/slider';
 import { MatDatepickerModule } from '@angular/material/datepicker';
-import { MatNativeDateModule, MAT_DATE_LOCALE } from '@angular/material/core';
+import { MatNativeDateModule, MAT_DATE_LOCALE, DateAdapter, MAT_DATE_FORMATS } from '@angular/material/core';
+import { AppDateAdapter, APP_DATE_FORMATS } from './date/app-date-adapter';
 import { TrppuComponent } from './trppu.component';
 import { TrppuSelectSiteComponent } from './components/trppu-select-site/trppu-select-site.component';
 import { TrppuScenarioListComponent } from './components/trppu-scenario-list/trppu-scenario-list.component';
@@ -75,7 +76,9 @@ const routes: Routes = [
     MatNativeDateModule
   ],
   providers: [
-    { provide: MAT_DATE_LOCALE, useValue: 'fr-FR' }
+    { provide: MAT_DATE_LOCALE, useValue: 'fr-FR' },
+    { provide: DateAdapter, useClass: AppDateAdapter },
+    { provide: MAT_DATE_FORMATS, useValue: APP_DATE_FORMATS }
   ]
 })
 export class TrppuModule { }
