@@ -1,10 +1,5 @@
 -- Dump du schéma de la base `dsr_mercure_aa`
 -- 20 objet(s) — schéma uniquement (sans données)
---
--- Source de vérité unique du schéma TRPPU.
--- Le nom de base ci-dessous reste fidèle au dump prod (`dsr_mercure_aa`).
--- Le bootstrap `scripts/run_migrations.py` recrée/utilise le nom lu depuis .env
--- (SGBD_DB_NAME, `trppu` en local). Les CREATE DATABASE/USE sont alors ignorés.
 
 CREATE DATABASE IF NOT EXISTS `dsr_mercure_aa`;
 USE `dsr_mercure_aa`;
@@ -75,14 +70,14 @@ CREATE TABLE `trppu_agrebal_pdi` (
   `agrebal_event` varchar(40) DEFAULT NULL,
   `agrebal_createdAt` datetime NOT NULL,
   `agrebal_updatedAt` datetime NOT NULL,
-  `agrebal_deleteddAt` datetime NOT NULL,
+  `agrebal_deleteddAt` datetime DEFAULT NULL,
   `agrebal_pdi_ids` json GENERATED ALWAYS AS (ifnull(json_extract(`agrebal_pdiList`,_utf8mb4'$[*].pdi_id'),json_array())) STORED,
   PRIMARY KEY (`agrebal_id_pdi`),
   UNIQUE KEY `uq_agrpdi_courant` (`agrebal_id`,`agrebal_code_regate`),
   KEY `idx_agrpdi_site` (`agrebal_code_regate`),
   KEY `idx_updated_at` (`agrebal_updatedAt`),
   KEY `idx_pdi_ids` ((cast(`agrebal_pdi_ids` as unsigned array)))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=9389 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_api_log` -----
 DROP TABLE IF EXISTS `trppu_api_log`;
@@ -141,7 +136,7 @@ CREATE TABLE `trppu_neutralisations` (
   CONSTRAINT `fk_neutre_scen` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`) ON DELETE CASCADE,
   CONSTRAINT `chk_neutre_dates` CHECK ((`dt_debut` <= `dt_fin`)),
   CONSTRAINT `chk_neutre_jour` CHECK ((`nb_jour` > 0))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_pic_coefficients` -----
 DROP TABLE IF EXISTS `trppu_pic_coefficients`;
@@ -212,7 +207,7 @@ CREATE TABLE `trppu_pic_version` (
 -- ----- TABLE `trppu_produit` -----
 DROP TABLE IF EXISTS `trppu_produit`;
 CREATE TABLE `trppu_produit` (
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `lb_produit` varchar(80) NOT NULL,
   `dt_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `dt_desactivation` date DEFAULT NULL,
@@ -268,7 +263,7 @@ CREATE TABLE `trppu_scenario` (
   PRIMARY KEY (`id_scenario`),
   KEY `idx_scenario_site_statut` (`co_regate`,`statut`),
   CONSTRAINT `trppu_scenario_chk_1` CHECK ((`nb_jours_semaine` in (5,6)))
-) ENGINE=InnoDB AUTO_INCREMENT=36 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=39 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_scenario_comptages_manuels` -----
 DROP TABLE IF EXISTS `trppu_scenario_comptages_manuels`;
@@ -281,7 +276,7 @@ CREATE TABLE `trppu_scenario_comptages_manuels` (
   PRIMARY KEY (`id_comptage`),
   KEY `idx_scm` (`id_scenario`,`dt_comptage`,`co_produit`),
   CONSTRAINT `trppu_scenario_comptages_manuels_ibfk_1` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_scenario_exclusions` -----
 DROP TABLE IF EXISTS `trppu_scenario_exclusions`;
@@ -356,11 +351,12 @@ CREATE TABLE `trppu_tmh` (
   `motif` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id_tmh`),
   UNIQUE KEY `uq_tmh` (`id_tmh`,`id_scenario`,`co_produit`),
-  KEY `idx_tmh_produit` (`co_produit`,`id_scenario`),
+  KEY `fk_tmh_scen` (`id_scenario`),
+  KEY `fk_tmh_produit` (`co_produit`),
   CONSTRAINT `fk_tmh_produit` FOREIGN KEY (`co_produit`) REFERENCES `trppu_produit` (`co_produit`) ON DELETE RESTRICT,
   CONSTRAINT `fk_tmh_scen` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`) ON DELETE CASCADE,
   CONSTRAINT `chk_tmh_volumes` CHECK ((((`volume_realise` is null) or (`volume_realise` >= 0)) and ((`volume_previsionnel` is null) or (`volume_previsionnel` >= 0))))
-) ENGINE=InnoDB AUTO_INCREMENT=81 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=79 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_trafic_agrebal` -----
 DROP TABLE IF EXISTS `trppu_trafic_agrebal`;

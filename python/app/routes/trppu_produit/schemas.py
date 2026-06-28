@@ -4,11 +4,11 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CO_PRODUIT_PATTERN = r"^[A-Za-z0-9]{2}$"
+CO_PRODUIT_PATTERN = r"^[A-Za-z0-9]{2,3}$"
 
 
 class ProduitBase(BaseModel):
-    co_produit: str = Field(..., min_length=2, max_length=2, pattern=CO_PRODUIT_PATTERN)
+    co_produit: str = Field(..., min_length=2, max_length=3, pattern=CO_PRODUIT_PATTERN)
     lb_produit: str = Field(..., min_length=1, max_length=80)
     dt_desactivation: date | None = None
     motif_desactivation: str | None = Field(None, max_length=255)

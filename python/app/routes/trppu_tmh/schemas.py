@@ -35,7 +35,7 @@ class _TmhFields(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     co_produit: str = Field(..., min_length=1, max_length=2, pattern=CO_PRODUIT_PATTERN)
-    volume_realise: int | None = Field(None, ge=0)
+    volume_realise: int | None = None  # valeurs négatives autorisées
     volume_previsionnel: int | None = Field(None, ge=0)
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
@@ -88,7 +88,7 @@ class TmhVolumeUpdate(BaseModel):
     """Body PATCH ciblé d'un trafic initial modifié (DSR-649), par id_tmh."""
 
     model_config = ConfigDict(extra="forbid")
-    volume_realise: int = Field(..., ge=0)
+    volume_realise: int  # valeurs négatives autorisées
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
     motif: str | None = Field(
