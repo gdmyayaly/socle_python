@@ -41,9 +41,9 @@ TRAFIC_PRODUITS = tuple(dict.fromkeys(TRAFIC_PRODUIT_MAPPING.values()))
 TRAFIC_OBJET_LABELS = tuple(TRAFIC_PRODUIT_MAPPING.keys())
 
 TABLES_PERIODE = {
-    "jours": "g_trppu_trafics_jour",
-    "semaines": "g_trppu_trafics_semaine",
-    "mois": "g_trppu_trafics_mois",
+    "jours": "g_trppu_trafics_jour_3",
+    "semaines": "g_trppu_trafics_semaine_3",
+    "mois": "g_trppu_trafics_mois_3",
 }
 
 DATE_COLUMN_PERIODE = {
@@ -315,3 +315,163 @@ def accumulate_trafics(rows, value_col, target_key, acc):
         if valeur is None:
             continue
         acc[produit][target_key] += valeur
+
+
+# =============================================================================
+# DSR-679 — Nouvelle structure gold TRPPU (tables `_3`, objet déjà porté, partitions)
+# =============================================================================
+# Les tables trafics `_3` portent DIRECTEMENT l'objet TRPPU dans `co_type_objet`
+# (OO/OS/PR/PP/CO/IP) + `trafic_constate` / `trafic_prevu` + `co_regate` +
+# `co_annee_comptage` / `co_mois_comptage` (partitions). Confirmé via SELECT * réel.
+# => AUCUNE jointure / AUCUN mapping en dur : la requête agrège directement par
+#    `co_type_objet` et le service RESTITUE tel quel le résultat du SQL (dynamique).
+# Le référentiel/hiérarchie est dans `g_trppu_entite`, le calendrier dans
+# `s_commun_calendrier_jour` (02_silver) — dimensions non nécessaires ici, gardées
+# comme références pour la route de debug.
+
+# Dimensions (références debug uniquement — non utilisées par la requête agrégée).
+OBJ_MAPPING_TABLE = os.getenv("TRAFIC679_OBJ_MAPPING_TABLE", "g_trppu_obj_mapping")
+ENTITE_TABLE = os.getenv("TRAFIC679_ENTITE_TABLE", "g_trppu_entite")
+CALENDRIER_TABLE = os.getenv("TRAFIC679_CALENDRIER_TABLE", "s_commun_calendrier_jour")
+
+# Colonnes de la table trafics `_3` (structure gold réelle, confirmée via SELECT *).
+TRAFIC679_COL_OBJET = os.getenv("TRAFIC679_COL_OBJET", "co_type_objet")  # objet TRPPU (agrégation)
+TRAFIC679_COL_CONSTATE = os.getenv("TRAFIC679_COL_CONSTATE", "trafic_constate")
+TRAFIC679_COL_PREVISIONNEL = os.getenv("TRAFIC679_COL_PREVISIONNEL", "trafic_prevu")
+TRAFIC679_COL_ANNEE = os.getenv("TRAFIC679_COL_ANNEE", "co_annee_comptage")
+TRAFIC679_COL_MOIS = os.getenv("TRAFIC679_COL_MOIS", "co_mois_comptage")  # partition mois (table jour)
+
+# Alias exposés dans le SELECT agrégé (clés des dicts renvoyés par fetch_all).
+OBJ_TRPPU_ALIAS = "co_objet_trppu"
+SOMME_ALIAS = "somme"
+
+
+def _years_in_range(dt_start: datetime, dt_end: datetime) -> list[int]:
+    """Années couvertes par [dt_start, dt_end] (inclus)."""
+    return list(range(dt_start.year, dt_end.year + 1))
+
+
+def _months_in_range(dt_start: datetime, dt_end: datetime) -> list[str]:
+    """Codes AAAA-MM couverts par [dt_start, dt_end] (inclus)."""
+    mois: list[str] = []
+    y, m = dt_start.year, dt_start.month
+    while (y, m) <= (dt_end.year, dt_end.month):
+        mois.append(f"{y:04d}-{m:02d}")
+        if m == 12:
+            y, m = y + 1, 1
+        else:
+            m += 1
+    return mois
+
+
+def build_partition_conditions(
+    periode: str, ranges: list[tuple[datetime, datetime]], params: dict
+) -> list[str]:
+    """Construit les prédicats de partition (pruning) pour la table de la période.
+
+    - jour     : co_annee_comptage IN (...) AND co_mois_comptage IN (...)
+    - semaine  : co_annee_comptage IN (...)
+    - mois     : co_annee_comptage IN (...)
+
+    Mutualise l'union des années/mois de toutes les plages (superset sûr : les
+    partitions non concernées sont juste élaguées). Alimente `params` avec des clés
+    uniques et retourne la liste des conditions SQL.
+    """
+    annees: set[int] = set()
+    mois: set[str] = set()
+    for s, e in ranges:
+        annees.update(_years_in_range(s, e))
+        if periode == "jours":
+            mois.update(_months_in_range(s, e))
+
+    conditions: list[str] = []
+
+    annee_keys: list[str] = []
+    for i, an in enumerate(sorted(annees)):
+        k = f"part_an_{i}"
+        params[k] = an
+        annee_keys.append(f":{k}")
+    if annee_keys:
+        conditions.append(f"{TRAFIC679_COL_ANNEE} IN ({', '.join(annee_keys)})")
+
+    if periode == "jours" and mois:
+        mois_keys: list[str] = []
+        for i, mo in enumerate(sorted(mois)):
+            k = f"part_mo_{i}"
+            params[k] = mo
+            mois_keys.append(f":{k}")
+        conditions.append(f"{TRAFIC679_COL_MOIS} IN ({', '.join(mois_keys)})")
+
+    return conditions
+
+
+def build_query_679(
+    catalog: str,
+    schema: str,
+    periode: str,
+    co_regate: str,
+    ranges: list[tuple[datetime, datetime]],
+    value_col: str,
+) -> tuple[str, dict]:
+    """DSR-679 : requête agrégée par objet sur la table de la période (sans jointure).
+
+    L'objet TRPPU est déjà porté par `co_type_objet` : filtre `co_regate` + dates
+    (BETWEEN par plage, OR entre plages) + prédicats de partition, puis
+    `SUM(value_col) GROUP BY co_type_objet`. Le résultat est restitué tel quel.
+
+    `value_col` est un identifiant de colonne contrôlé (constante), injecté dans le
+    SQL ; les valeurs restent paramétrées.
+    """
+    table = f"{catalog}.{schema}.{TABLES_PERIODE[periode]}"
+    date_col = DATE_COLUMN_PERIODE[periode]
+
+    params: dict = {"co_regate": co_regate}
+    date_conditions: list[str] = []
+    for i, (dt_start, dt_end) in enumerate(ranges):
+        s_key, e_key = f"dt_start_{i}", f"dt_end_{i}"
+        params[s_key] = fmt_date(dt_start, periode)
+        params[e_key] = fmt_date(dt_end, periode)
+        date_conditions.append(f"{date_col} BETWEEN :{s_key} AND :{e_key}")
+
+    part_conditions = build_partition_conditions(periode, ranges, params)
+
+    where = [
+        "co_regate = :co_regate",
+        f"({' OR '.join(date_conditions)})",
+    ]
+    where.extend(part_conditions)
+
+    sql = (
+        f"SELECT {TRAFIC679_COL_OBJET} AS {OBJ_TRPPU_ALIAS}, "
+        f"SUM({value_col}) AS {SOMME_ALIAS} "
+        f"FROM {table} "
+        f"WHERE {' AND '.join(where)} "
+        f"GROUP BY {TRAFIC679_COL_OBJET}"
+    )
+    return sql, params
+
+
+def empty_trafics_accumulator_679():
+    """Accumulateur DSR-679 dynamique (vide) : `{objet: {trafic_brut, trafic_previsionnel}}`.
+
+    Aucun objet n'est pré-hydraté — la restitution ne renvoie que les objets réellement
+    présents dans le résultat du SQL (agrégation par `co_type_objet`)."""
+    return {}
+
+
+def accumulate_trafics_679(rows, target_key, acc):
+    """Ajoute la somme agrégée (par objet) dans `acc[objet][target_key]` (dynamique).
+
+    `rows` = lignes agrégées `{co_objet_trppu, somme}` renvoyées par `build_query_679`.
+    L'objet est créé à la volée s'il n'existe pas ; une somme nulle compte pour 0.
+    """
+    for row in rows:
+        objet = row.get(OBJ_TRPPU_ALIAS)
+        objet = str(objet).strip() if objet is not None else None
+        if objet is None:
+            continue
+        slot = acc.setdefault(objet, {"trafic_brut": 0, "trafic_previsionnel": 0})
+        valeur = row.get(SOMME_ALIAS)
+        if valeur is None:
+            continue
+        slot[target_key] += valeur

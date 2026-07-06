@@ -1,16 +1,32 @@
-/trafics/get_trppu_trafics?co_regate=245840&date_debut=20250101&date_fin=20251231
-Le problème est que le mode auto décompose en requêtes sur les tables mois/semaines/jours, mais la table mensuelle
-  (g_mdp_trafics_mois_actualise) n'a probablement pas les mêmes colonnes que la table jour (trafic_reel, co_process, co_type_objet,
-  lb_type_entite_regate_court). Ta requête exemple était uniquement sur la table jour.
+- Sans Databricks : lancer l'app (python -m app.main / uvicorn), appeler
+GET /trppu-api/trafics/test/echantillons puis GET /trppu-api/trafics/test/pivot_dry_run sur les
+3 cas du ticket (passé : date_debut=20250301&date_fin=20260331&date_pivot=20251001 ; futur :
+date_debut=20261001&date_fin=20270331&date_pivot=20261001) et vérifier la somme par objet.
+- Cas d'erreur (critères d'acceptance) : appels partiels (co_regate seul, période seule, une
+seule date, date_pivot seule) → 400 rappelant les paramètres ; période > 2 ans → 400.
+- SQL générée : activer DEBUG_SHOW_QUERY=true et vérifier dans queries la jointure
+g_trppu_obj_mapping, le GROUP BY objet, et les prédicats de partition (co_annee_comptage,
+co_mois_comptage pour le jour).
+- Avec Databricks réel (quand dispo) : appeler get_trafics_pivot_dsr679 sur 400300 et comparer
+à une requête manuelle en base pour valider trafics et objets renvoyés
 
+**************************************************
+Noms verrouillés (confirmés par le message UNRESOLVED_COLUMN : m.co_comptage, m.co_type_objet) :
+- Jointure : t.co_comptage = m.co_comptage
+- Objet TRPPU renvoyé : m.co_type_objet
+- La SQL générée est maintenant : ...JOIN g_trppu_obj_mapping m ON t.co_comptage = m.co_comptage ... GROUP BY m.co_type_objet
 
-D'accord, maintenant j'ai les 3 requêtes. Les différences clés entre les tables :
+2 routes de debug SELECT * ajoutées (interrogent les vraies tables Databricks) :
 
-  ┌────────────┬─────────────┬─────────────────────────────────────────────────────────────────┬────────────────────────────────────┐
-  │            │    Jours    │                            Semaines                             │                Mois                │     ├────────────┼─────────────┼─────────────────────────────────────────────────────────────────┼────────────────────────────────────┤
-  │ Valeur     │ trafic_reel │ nb_objet_retenu                                                 │ nb_objet_retenu                    │     ├────────────┼─────────────┼─────────────────────────────────────────────────────────────────┼────────────────────────────────────┤   
-  │ SELECT     │ da_comptage │ co_annee_comptage, co_semaine_comptage,                         │ co_annee_comptage,                 │     │ date       │             │ da_lundi_semaine_comptage                                       │ co_mois_comptage                   │     ├────────────┼─────────────┼─────────────────────────────────────────────────────────────────┼────────────────────────────────────┤   
-  │ GROUP BY   │ idem        │ idem + regate + type_site                                       │ idem + regate + type_site          │
-  └────────────┴─────────────┴─────────────────────────────────────────────────────────────────┴────────────────────────────────────┘
+1. GET /trppu-api/trafics/test/schema?limit=3&co_regate=400300
+→ fait un SELECT * LIMIT sur les 6 tables (g_trppu_trafics_jour/semaine/mois, g_trppu_obj_mapping, g_trppu_entite, s_commun_calendrier_jour) et renvoie, par table : liste des colonnes + échantillon. Une table en erreur n'empêche pas les autres.
+2. GET /trppu-api/trafics/test/schema_raw?table=g_trppu_obj_mapping&limit=5
+→ SELECT * libre sur une table (nom court résolu en gold, ou catalog.schema.table complet).
 
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+Ce qu'il reste à confirmer via ces routes (je ne peux pas atteindre Databricks depuis mon environnement) :
+- La colonne code CTR côté table trafics — j'ai posé co_comptage (même clé que le mapping) ; à vérifier avec /schema.
+- Les colonnes de valeurs : nb_objet_retenu / nb_objet_prevu_recadre_bu (ticket) vs trafic_constate / trafic_prevu (ancien gold observé).
+
+Lance sur ton serveur :
+GET /trppu-api/trafics/test/schema?limit=2&co_regate=400300
+Colle-moi la sortie (au moins les blocs colonnes de g_trppu_trafics_jour et g_trppu_obj_mapping) et je verrouille immédiatement les derniers noms (clé de jointure + colonnes de trafic). Tous ces noms sont aussi surchargeables par .env (TRAFIC679_COL_CODE_OBJET, TRAFIC679_COL_CONSTATE, etc.) si tu préfères ajuster sans re-livrer.

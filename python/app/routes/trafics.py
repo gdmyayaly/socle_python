@@ -1,6 +1,10 @@
-"""Route de récupération des trafics depuis Databricks (mode auto)."""
+"""Route de récupération des trafics bruts depuis Databricks (mode auto, DSR-613).
 
-import json
+⚠️ Le pivot (agrégation par objet selon la date pivot) a migré vers le package
+`app/routes/trppu_trafics/` (DSR-679). Ce module ne conserve que `GET /get_trafics`
+(lignes brutes), consommé par DSR-613/634/648.
+"""
+
 import logging
 import time
 from datetime import datetime
@@ -17,19 +21,11 @@ from app.db.databricks import databricks
 from app.routes.trafics_helpers import (
     DATE_COLUMN_PERIODE,
     TABLES_PERIODE,
-    TRAFIC_COL_CONSTATE,
     TRAFIC_COL_OBJET,
-    TRAFIC_COL_PREVISIONNEL,
-    TRAFIC_OBJET_LABELS,
-    TRAFIC_PRODUITS,
-    accumulate_trafics,
     decompose_auto,
-    empty_trafics_accumulator,
     fmt_date,
     render_sql,
-    split_by_pivot,
     validate_params,
-    validate_params_pivot,
 )
 from app.services.jours_service import compute_nb_jours
 
@@ -47,9 +43,7 @@ def build_query(
 ) -> tuple[str, dict]:
     """Construit un SELECT * sur la table de la période, couvrant toutes les plages.
 
-    Si `objet_labels` est fourni (et non vide), restreint la requête aux libellés
-    via `lb_type_objet IN (...)` (utilisé par le pivot pour ne ramener que les
-    objets mappés)."""
+    Si `objet_labels` est fourni (et non vide), restreint via `<col objet> IN (...)`."""
     table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
     date_col = DATE_COLUMN_PERIODE[periode]
 
@@ -86,12 +80,8 @@ def build_period_queries(
     objet_labels: list[str] | None = None,
     force_jours: bool = False,
 ) -> list[tuple[str, dict]]:
-    """Découpe [dt_debut, dt_fin] en segments mois/semaines/jours et regroupe en
-    une requête par table (max 3 requêtes).
-
-    Si `force_jours` est vrai, on court-circuite le découpage auto : un unique
-    segment jour couvre toute la période, et la requête se fait donc uniquement
-    sur la table jour (`g_trppu_trafics_jour`)."""
+    """Découpe [dt_debut, dt_fin] en segments mois/semaines/jours et regroupe en une
+    requête par table (max 3 requêtes)."""
     if force_jours:
         segments = [("jours", dt_debut, dt_fin)]
     else:
@@ -165,115 +155,4 @@ async def get_trafics(
     }
     if DEBUG_SHOW_QUERY:
         response["queries"] = [render_sql(sql, params) for sql, params in queries]
-    return response
-
-
-@router.get("/get_trafics_pivot")
-async def get_trafics_pivot(
-    co_regate: str | None = None,
-    date_debut: str | None = None,
-    date_fin: str | None = None,
-    date_pivot: str | None = None,
-    is_day: bool = False,
-):
-    """DSR-666 : trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot.
-
-    - dates < pivot  -> trafic réel (constaté/brut) ; prévisionnel = 0
-    - dates >= pivot -> trafic prévisionnel ; réel = 0
-    Renvoie une ligne par objet (les 6 produits cf _TRAFIC_PRODUIT_MAPPING_DEFAUT du helper) avec la somme des
-    trafics sur la période et le site. Paramètres au format AAAAMMJJ ; période <= 2 ans.
-    """
-    dt_debut, dt_fin, dt_pivot = validate_params_pivot(
-        co_regate, date_debut, date_fin, date_pivot
-    )
-    reel_range, prev_range = split_by_pivot(dt_debut, dt_fin, dt_pivot)
-
-    # Une requête par zone (réel/prév) ; on somme la bonne colonne par produit.
-    plan: list[tuple[tuple[datetime, datetime], str, str]] = []
-    if reel_range is not None:
-        plan.append((reel_range, TRAFIC_COL_CONSTATE, "trafic_brut"))
-    if prev_range is not None:
-        plan.append((prev_range, TRAFIC_COL_PREVISIONNEL, "trafic_previsionnel"))
-
-    acc = empty_trafics_accumulator()
-    executed: list[tuple[str, dict]] = []
-    raw_rows: list[dict] = []
-
-    start = time.perf_counter()
-    try:
-        for (rg_debut, rg_fin), value_col, target_key in plan:
-            for sql, params in build_period_queries(
-                co_regate,
-                rg_debut,
-                rg_fin,
-                objet_labels=list(TRAFIC_OBJET_LABELS),
-                force_jours=is_day,
-            ):
-                rows = await run_in_threadpool(databricks.fetch_all, sql, params)
-                raw_rows.extend(rows)
-                accumulate_trafics(rows, value_col, target_key, acc)
-                executed.append((sql, params))
-    except Exception as e:
-        logger.error("Erreur requête trafics pivot : %s", e)
-        detail = {
-            "error": True,
-            "message": "Erreur lors de la récupération des trafics.",
-            "code": 500,
-        }
-        if DEBUG_SHOW_QUERY:
-            detail["queries"] = [render_sql(sql, params) for sql, params in executed]
-            detail["databricks_error"] = str(e)
-        raise HTTPException(status_code=500, detail=detail) from e
-    duration_s = round(time.perf_counter() - start, 3)
-
-    # Réponse non transformée : lignes brutes renvoyées par Databricks (avant mapping/agrégation).
-    logger.info(
-        "Trafics pivot (co_regate=%s) — réponse non transformée (%d lignes) : %s",
-        co_regate,
-        len(raw_rows),
-        json.dumps(raw_rows, ensure_ascii=False, default=str),
-    )
-
-    trafics = [
-        {
-            "co_produit": produit,
-            "trafic_brut": acc[produit]["trafic_brut"],
-            "trafic_previsionnel": acc[produit]["trafic_previsionnel"],
-        }
-        for produit in TRAFIC_PRODUITS
-    ]
-
-    # Réponse transformée : trafics agrégés par produit (après mapping/fusion).
-    logger.info(
-        "Trafics pivot (co_regate=%s) — réponse transformée : %s",
-        co_regate,
-        json.dumps(trafics, ensure_ascii=False, default=str),
-    )
-
-    # nb_jours (DSR-613) 
-    nb_jours = None
-    try:
-        nbj = await compute_nb_jours(dt_debut.date(), dt_fin.date())
-        nb_jours = {
-            "nbJoursOuvres": nbj.nb_jours_ouvres,
-            "nbJoursOuvrables": nbj.nb_jours_ouvrables,
-        }
-    except Exception:
-        logger.warning(
-            "Calcul nb_jours indisponible (co_regate=%s) — bloc nb_jours=null.", co_regate
-        )
-
-    response = {
-        "execution_time_s": duration_s,
-        "co_regate": co_regate,
-        "date_debut": fmt_date(dt_debut),
-        "date_fin": fmt_date(dt_fin),
-        "date_pivot": fmt_date(dt_pivot),
-        "is_day": is_day,
-        "count": len(trafics),
-        "trafics": trafics,
-        "nb_jours": nb_jours,
-    }
-    if DEBUG_SHOW_QUERY:
-        response["queries"] = [render_sql(sql, params) for sql, params in executed]
     return response
