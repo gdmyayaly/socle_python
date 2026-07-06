@@ -25,6 +25,7 @@ import { TrppuVariationTraficComponent } from './components/trppu-variation-traf
 import { TrppuNeutralisationPeakComponent } from './components/trppu-neutralisation-peak/trppu-neutralisation-peak.component';
 import { TrppuNeutralisationSecondaireComponent } from './components/trppu-neutralisation-secondaire/trppu-neutralisation-secondaire.component';
 import { TrppuProduitAExclureComponent } from './components/trppu-produit-a-exclure/trppu-produit-a-exclure.component';
+import { TrppuVariationPrevisionnelleComponent } from './components/trppu-variation-previsionnelle/trppu-variation-previsionnelle.component';
 import { CalculComponent } from './calcul/calcul.component';
 import { ParamComponent } from './param/param.component';
 import { ConfigComponent } from './config/config.component';
@@ -56,6 +57,7 @@ const routes: Routes = [
     TrppuNeutralisationPeakComponent,
     TrppuNeutralisationSecondaireComponent,
     TrppuProduitAExclureComponent,
+    TrppuVariationPrevisionnelleComponent,
     CalculComponent,
     ParamComponent,
     ConfigComponent
