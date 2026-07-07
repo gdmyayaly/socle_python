@@ -77,9 +77,14 @@ def parse_date(value: str, nom_param: str) -> datetime:
 
 
 def render_sql(sql: str, params: dict) -> str:
-    """Substitue les paramètres nommés (:name) dans le SQL pour l'affichage debug."""
+    """Substitue les paramètres nommés (:name) dans le SQL pour l'affichage debug.
+
+    Les clés sont substituées de la plus longue à la plus courte pour éviter qu'un
+    préfixe (`:part_mo_1`) ne corrompe une clé plus longue (`:part_mo_10`).
+    """
     rendered = sql
-    for key, value in params.items():
+    for key in sorted(params, key=len, reverse=True):
+        value = params[key]
         literal = "NULL" if value is None else f"'{str(value).replace(chr(39), chr(39) * 2)}'"
         rendered = rendered.replace(f":{key}", literal)
     return rendered

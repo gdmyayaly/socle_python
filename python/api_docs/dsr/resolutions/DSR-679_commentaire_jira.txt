@@ -1,0 +1,237 @@
+========================================================================
+DSR-679 - Adaptation de la requete trafics Databricks
+(nouvelle structure gold + date pivot)
+Commentaire de resolution
+========================================================================
+
+
+1. RESUME DU LIVRABLE
+------------------------------------------------------------------------
+
+Nouveau service YS04 qui, pour un site + une periode + une date pivot,
+recupere les trafics Databricks depuis la nouvelle structure gold,
+ventile le trafic reel (constate) et le trafic previsionnel selon la
+date pivot, et renvoie une ligne par objet correspondant a la somme des
+trafics sur la periode.
+
+L'endpoint conserve la meme URL que l'ancien service pivot qu'il
+remplace : il n'y a donc aucun impact de contrat cote IHM.
+
+
+2. URL D'APPEL ET PARAMETRES
+------------------------------------------------------------------------
+
+GET /trppu-api/trafics/get_trafics_pivot
+
+Exemple :
+GET /trppu-api/trafics/get_trafics_pivot?co_regate=400300
+    &date_debut=20250101&date_fin=20261127&date_pivot=20260404
+
+Parametres :
+
+  - co_regate   (obligatoire) : code regate du site.
+  - date_debut  (obligatoire) : debut de la periode. Format AAAAMMJJ
+                                 (ou AAAA-MM-JJ).
+  - date_fin    (obligatoire) : fin de la periode. Format AAAAMMJJ.
+  - date_pivot  (obligatoire) : date du jour de l'appel OU date de mise
+                                 en oeuvre. Format AAAAMMJJ.
+  - is_day      (optionnel, defaut false) : force l'interrogation de la
+                                 table jour uniquement (court-circuite le
+                                 decoupage automatique).
+
+
+3. REGLE DE GESTION (DATE PIVOT)
+------------------------------------------------------------------------
+
+  - Trafic dont la date est STRICTEMENT ANTERIEURE a la date pivot
+    -> trafic reel / constate (trafic_constate) ; le previsionnel vaut 0.
+
+  - Trafic dont la date est EGALE OU SUPERIEURE a la date pivot
+    -> trafic previsionnel (trafic_prevu) ; le reel vaut 0.
+
+Les 3 cas du ticket sont couverts :
+
+  1. Periode entierement dans le passe
+     -> du reel et du previsionnel selon le pivot (date de mise en oeuvre).
+
+  2. Periode a cheval sur le jour d'execution
+     -> du reel avant le pivot, du previsionnel a partir du pivot.
+
+  3. Periode entierement dans le futur
+     -> pas de zone reelle, uniquement du previsionnel.
+
+Le decoupage reel / previsionnel est realise AU JOUR PRES, en amont de la
+requete. Cela evite toute maille mois ou semaine a cheval sur le pivot.
+
+
+4. LOGIQUE TECHNIQUE
+------------------------------------------------------------------------
+
+a) Decoupage temporel optimise
+   La periode est decoupee automatiquement en segments : mois pleins,
+   semaines completes (lundi -> dimanche), et jours residuels. Les
+   segments d'une meme maille sont regroupes en une seule requete par
+   table (au maximum 3 requetes par zone reel / prev). On attaque ainsi
+   chaque table a la bonne granularite pour minimiser le volume scanne.
+
+b) Filtrage par periode, adapte au format de chaque table
+   - table jour    -> da_comptage          (format AAAA-MM-JJ)
+   - table semaine -> co_semaine_comptage   (format AAAA-NS)
+   - table mois    -> co_mois_comptage      (format AAAA-MM)
+   Le format des bornes de dates est adapte automatiquement a la table
+   interrogee.
+
+c) Optimisation par partitions (pruning)
+   Conformement au partitionnement et au tri des tables, la clause WHERE
+   exploite aussi les colonnes de partition :
+   - table jour (partition annee + mois)
+       -> co_annee_comptage IN (...) AND co_mois_comptage IN (...)
+   - tables semaine et mois (partition annee)
+       -> co_annee_comptage IN (...)
+   Les codes annee / mois / semaine sont recalcules directement a partir
+   des dates en parametre : aucune dependance obligatoire a la table
+   calendrier.
+
+d) Agregation par objet
+   L'objet est deja porte par la colonne co_type_objet dans les tables
+   trafics : l'agregation se fait donc cote SQL. Exemple de requete
+   generee (zone reelle, maille mois) :
+
+     SELECT co_type_objet AS co_objet_trppu,
+            SUM(trafic_constate) AS somme
+     FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_mois_3
+     WHERE co_regate = '400300'
+       AND (co_mois_comptage BETWEEN '2025-01' AND '2026-03')
+       AND co_annee_comptage IN (2025, 2026)
+     GROUP BY co_type_objet
+
+   Les resultats des zones reelle et previsionnelle sont ensuite
+   fusionnes par objet cote service.
+
+e) Sortie
+   Une ligne par objet present :
+
+     { "co_produit": "OO", "trafic_brut": 3500, "trafic_previsionnel": 2435 }
+
+   La reponse complete contient egalement : date_debut, date_fin,
+   date_pivot, count, le bloc nb_jours (nbJoursOuvres / nbJoursOuvrables,
+   DSR-613), execution_time_s, et la liste des requetes SQL executees
+   lorsque le mode debug est actif.
+
+f) Erreurs (HTTP 400, avec message rappelant les parametres attendus)
+   - parametre manquant (dont date_pivot)
+   - date_debut posterieure a date_fin
+   - periode superieure a 2 ans (730 jours)
+
+
+5. STRUCTURE GOLD REELLE (POINT IMPORTANT)
+------------------------------------------------------------------------
+
+Le ticket decrivait une cible avec des dimensions separees
+(g_trppu_obj_mapping, g_trppu_entite) et des colonnes nb_objet_retenu /
+nb_objet_prevu_recadre_bu. Une verification directe en base a revele la
+structure reellement deployee, qui differe :
+
+  - Les tables sont suffixees "_3" :
+      g_trppu_trafics_jour_3, g_trppu_trafics_semaine_3,
+      g_trppu_trafics_mois_3
+      (catalogue ppd_dd_kairos_int, schema 03_gold).
+
+  - Elles portent DIRECTEMENT l'objet TRPPU dans la colonne
+      co_type_objet (valeurs : OO, OS, PR, PP, CO, IP).
+
+  - Les colonnes de valeurs sont trafic_constate et trafic_prevu
+      (et non nb_objet_retenu / nb_objet_prevu_recadre_bu).
+
+  - Les colonnes de partition presentes sont bien co_annee_comptage,
+      co_mois_comptage et co_semaine_comptage.
+
+Consequence de conception :
+  Puisque co_type_objet est deja present dans les tables trafics, AUCUNE
+  jointure vers g_trppu_obj_mapping n'est necessaire et AUCUN mapping
+  n'est code en dur. Le service restitue directement le resultat du SQL
+  (agregation dynamique par co_type_objet). Les dimensions
+  g_trppu_obj_mapping et g_trppu_entite, ainsi que le calendrier
+  s_commun_calendrier_jour (schema 02_silver), ne sont pas utilises par
+  la requete.
+
+Robustesse : les noms de tables et de colonnes sont surchargeables par
+variables d'environnement, ce qui permet d'absorber sans nouvelle
+livraison un eventuel renommage cote data.
+
+
+6. POINTS D'ATTENTION / A VALIDER
+------------------------------------------------------------------------
+
+1. Semantique reel/prev par ligne vs pre-decoupage Databricks
+   Le service suppose que trafic_constate ET trafic_prevu sont
+   exploitables par ligne quelle que soit la date (le pivot choisit la
+   bonne valeur). Si les tables pre-decoupent deja constate/prevu sur la
+   date du jour reelle, alors pour une periode entierement passee avec un
+   pivot = date de mise en oeuvre (cas 1), la zone previsionnelle
+   [pivot, fin] pourrait ressortir a 0.
+   -> A confirmer avec l'equipe data.
+
+2. Restitution dynamique
+   Un objet sans trafic sur la periode n'apparait pas dans la reponse
+   (pas d'hydratation forcee a 0). L'exemple du ticket montre "IP a 0 ou
+   null". Si l'IHM exige systematiquement les 6 objets (meme a 0), il
+   faut soit hydrater cote service, soit gerer l'absence cote
+   consommateur.
+   -> A arbitrer.
+
+3. Codes objets
+   co_type_objet renvoie des codes sur 2 caracteres (OO, OS, PR, PP, CO,
+   IP). La table trppu_produit.co_produit est char(2) : la correspondance
+   vers les libelles "PRESSE / COLIS / PPI" reste a cadrer cote
+   consommateur (point deja remonte en DSR-666).
+
+4. Rechargement serveur
+   En environnement sdev, le code n'est pas recharge automatiquement
+   (rechargement actif uniquement en APP_ENV=local). Apres un deploiement
+   ou une modification, il faut redemarrer le process, sinon l'ancien
+   code reste en memoire.
+
+
+7. COMMENT TESTER (DATABRICKS REEL)
+------------------------------------------------------------------------
+
+Activer le mode debug (DEBUG_SHOW_QUERY=true) pour tracer les requetes
+SQL dans la reponse (champ "queries"), puis appeler l'endpoint sur les
+3 cas :
+
+  Cas passe :
+    GET /trppu-api/trafics/get_trafics_pivot?co_regate=400300
+        &date_debut=20250301&date_fin=20260331&date_pivot=20251001
+    -> reel + previsionnel
+
+  Cas futur :
+    GET /trppu-api/trafics/get_trafics_pivot?co_regate=400300
+        &date_debut=20261001&date_fin=20270331&date_pivot=20261001
+    -> previsionnel uniquement
+
+  Cas periode > 2 ans :
+    -> reponse 400 (depassement des 2 ans)
+
+Verification en base : comparer la somme par objet renvoyee par le
+service a une requete manuelle
+    SUM(trafic_constate) avant le pivot / SUM(trafic_prevu) a partir du
+    pivot, GROUP BY co_type_objet.
+
+
+8. COUVERTURE DES CRITERES D'ACCEPTANCE
+------------------------------------------------------------------------
+
+  - Manque periode / regate / une date / date_pivot -> 400 rappelant les
+    parametres ........................................ OK (validation en entree)
+  - Periode > 2 ans -> 400 ............................ OK (controle 730 jours)
+  - Periode passee -> reel + previsionnel ............ OK (decoupage pivot)
+  - Periode mixte  -> reel + previsionnel ............ OK (decoupage pivot)
+  - Periode future -> previsionnel uniquement ........ OK (zone reelle vide)
+  - 1 ligne par objet = somme des trafics ............ OK (GROUP BY
+                                                         co_type_objet +
+                                                         fusion reel/prev)
+  - Verification en base (trafics & objets) .......... OK (requetes SQL
+                                                         tracees en mode debug)
+
+========================================================================
