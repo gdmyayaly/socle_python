@@ -72,8 +72,9 @@ implémentation**. Criticité : 🔴 bloquant · 🟠 important · 🟡 confort.
 
 ## 8. 🟠 « Valeurs par défaut » DSR-651 / DSR-652
 
-- **DSR-651** : renvoyer **uniquement** les variations ≠ 0 (l'IHM applique 0 %) ou
-  **hydrater** toute la liste des produits actifs à 0 % (source `trppu_produit`) ?
+- **DSR-651** : ✅ **tranché** — la liste est **hydratée depuis le TMH** du scénario
+  (`co_produit` distincts non exclus, `bl_exclu = 0`), variation stockée ou 0 % par
+  défaut (`COALESCE` côté back). Pas le catalogue global `trppu_produit`.
 - **DSR-652** : structure de réponse plate (lignes brutes) vs **regroupée** par
   type (proposée dans la fiche) ?
 - **Tickets** : 651, 652.

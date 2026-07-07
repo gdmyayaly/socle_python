@@ -24,7 +24,13 @@ async def list_variations(
     id_scenario: int,
     id_session_ihm: str | None = Query(None, description="Id de session IHM (traçabilité)"),
 ):
-    """DSR-651 : variations prévisionnelles d'un scénario (défaut 0 % non stocké)."""
+    """DSR-651 : variations prévisionnelles d'un scénario.
+
+    La liste est pilotée par les produits du TMH (co_produit distincts ayant au moins
+    une ligne non exclue) : chaque produit est renvoyé avec sa variation stockée, ou
+    0 % par défaut (le 0 % n'est pas stocké en base). Un scénario sans TMH — ou dont
+    tous les produits sont exclus — renvoie une liste vide.
+    """
     start = time.perf_counter()
     logger.info(
         "Début lecture variations (id_scenario=%d, id_session_ihm=%s)",
@@ -33,7 +39,7 @@ async def list_variations(
     )
     await fetch_scenario_or_404(id_scenario)
     try:
-        rows = await db_read.fetch_all(SELECT_VARIATIONS_SQL, (id_scenario,))
+        rows = await db_read.fetch_all(SELECT_VARIATIONS_SQL, (id_scenario, id_scenario))
     except Exception as e:
         logger.exception("Erreur lecture variations (id_scenario=%d)", id_scenario)
         raise HTTPException(status_code=500, detail="Erreur lecture variations.") from e

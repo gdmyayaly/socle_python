@@ -10,11 +10,15 @@
 
 ## 1. Contexte & objectif métier
 
-Service (yb04) qui récupère, pour un `id_scenario`, **toutes les lignes** de
-`trppu_scenario_variations_prev` (1 par produit) : `co_produit`, `variation_pct`.
+Service (yb04) qui récupère, pour un `id_scenario`, la liste des variations à charger
+dans le tableau du paramétrage prévisionnel : `co_produit`, `variation_pct`.
 
-Règle : **seuls les produits dont la variation ≠ 0 % sont en base**. Les produits
-absents sont **à 0 % par défaut** (le défaut n'est pas stocké).
+Règle : **la liste est pilotée par les produits du TMH du scénario**, pas par la table
+des variations. Cette dernière ne stocke que les écarts **≠ 0 %** (le 0 % n'est pas
+stocké). La réponse renvoie donc **un produit par `co_produit` distinct du TMH ayant
+au moins une ligne non exclue** (`bl_exclu = 0`), avec la variation stockée si elle
+existe, sinon **0 % par défaut** (matérialisé par le back). Sans cette hydratation, un
+scénario sans variation saisie renverrait `[]` et l'IHM n'afficherait aucune ligne.
 
 ---
 
@@ -30,17 +34,23 @@ absents sont **à 0 % par défaut** (le défaut n'est pas stocké).
 ## 3. Spécification (SELECT)
 
 ```sql
-SELECT co_produit, variation_pct
-  FROM trppu_scenario_variations_prev
- WHERE id_scenario = %s
- ORDER BY co_produit;
+SELECT t.co_produit, COALESCE(v.variation_pct, 0) AS variation_pct
+  FROM (
+        SELECT co_produit
+          FROM trppu_tmh
+         WHERE id_scenario = %s AND bl_exclu = 0
+         GROUP BY co_produit
+       ) AS t
+  LEFT JOIN trppu_scenario_variations_prev v
+         ON v.co_produit = t.co_produit AND v.id_scenario = %s
+ ORDER BY t.co_produit;
 ```
 
-> **Décision de design (à valider)** : le service renvoie **uniquement** les
-> variations stockées (≠ 0). C'est l'IHM qui applique 0 % par défaut aux autres
-> produits — évite de dépendre du catalogue `trppu_produit` côté service. Variante
-> possible : « hydrater » la réponse avec tous les produits actifs à 0 %
-> (cf. `README_incomprehensions.md`).
+> **Décision de design (tranchée)** : la liste est **pilotée par le TMH** du scénario
+> (produits réellement présents), pas par le catalogue global `trppu_produit`. Le
+> sous-select `bl_exclu = 0 GROUP BY co_produit` ne retient qu'un produit ayant au moins
+> une ligne TMH non exclue (produits entièrement exclus → masqués). Le `COALESCE(…, 0)`
+> matérialise le défaut 0 % côté back. Deux paramètres `id_scenario` (sous-requête + jointure).
 
 ---
 
@@ -48,14 +58,15 @@ SELECT co_produit, variation_pct
 
 `GET /trppu-api/scenarios/{id_scenario}/variations`
 
-Réponse `200` :
+Réponse `200` — une ligne par produit du TMH (non entièrement exclu), variation stockée ou 0 :
 ```json
 [
   { "co_produit": "OO", "variation_pct": 25.00 },
-  { "co_produit": "IP", "variation_pct": -15.00 }
+  { "co_produit": "IP", "variation_pct": -15.00 },
+  { "co_produit": "PR", "variation_pct": 0.00 }
 ]
 ```
-Codes : `200` (liste éventuellement vide).
+Codes : `200` (liste vide si le scénario n'a aucune ligne TMH non exclue).
 
 ---
 
@@ -84,11 +95,14 @@ id session IHM si fourni.
 | Critère | Couverture |
 | ------- | ---------- |
 | Service appelé pour le scénario édité | §4 |
-| Produits par défaut (0 %) non stockés | §3 (décision de design) |
+| Liste hydratée depuis le TMH, défaut 0 % matérialisé | §3 (COALESCE) |
 | Log Kibana avec id_scenario | §7 |
 | Données conformes à la base | SELECT §3 |
 
-## 9. Questions ouvertes
+## 9. Questions ouvertes (tranchées)
 
-`README_incomprehensions.md` : renvoyer seulement les ≠ 0 ou hydrater toute la
-liste produits à 0 % ? source de la liste produits (`trppu_produit`) ?
+- **Renvoyer seulement les ≠ 0 ou hydrater à 0 % ?** → **Hydrater** : la liste est
+  pilotée par les `co_produit` du TMH, défaut 0 % matérialisé côté back (§3).
+- **Source de la liste produits ?** → **le TMH du scénario** (`trppu_tmh`), pas le
+  catalogue global `trppu_produit`. Produits entièrement exclus (`bl_exclu = 1` sur
+  toutes leurs lignes) → masqués.

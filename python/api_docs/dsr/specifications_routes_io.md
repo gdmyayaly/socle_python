@@ -217,11 +217,13 @@ id_scenario, dt_comptage, co_produit, nb_produit. ⚠️ **`id_rh` reçu mais NO
 # 4. VARIATIONS PRÉVISIONNELLES (`trppu_scenario_variations_prev`)
 
 ## `GET /trppu-api/scenarios/{id_scenario}/variations` (DSR-651)
-**Entrée** : path, query `id_session_ihm?`. **Sortie** : `list[VariationOut]` :
+**Entrée** : path, query `id_session_ihm?`. **Sortie** : `list[VariationOut]` (une ligne
+par `co_produit` distinct du TMH non exclu, variation stockée ou 0 par défaut) :
 ```json
-[ { "co_produit": "OO", "variation_pct": 5.00 } ]
+[ { "co_produit": "OO", "variation_pct": 5.00 }, { "co_produit": "PR", "variation_pct": 0.00 } ]
 ```
-**Lu** : `trppu_scenario_variations_prev` (co_produit, variation_pct ; variations ≠ 0). **Altéré** : aucun.
+**Lu** : `trppu_tmh` (co_produit distincts, `bl_exclu = 0`) `LEFT JOIN`
+`trppu_scenario_variations_prev` (`COALESCE(variation_pct, 0)`). **Altéré** : aucun.
 
 ## `PUT /trppu-api/scenarios/{id_scenario}/variations/{co_produit}` (DSR-646)
 **Entrée** `VariationUpsert` : `{ "variation_pct": 5.00, "id_rh": "ABC1234" }` (0 ⇒ suppression).

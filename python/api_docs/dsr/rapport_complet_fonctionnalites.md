@@ -73,7 +73,7 @@ Table `trppu_scenario_variations_prev`. Lecture = `co_produit, variation_pct`.
 
 | Endpoint | Ce que ça fait | Récupéré | Enregistré |
 | --- | --- | --- | --- |
-| `GET /scenarios/{id}/variations` (651) | Liste des variations ≠ 0 | `list[VariationOut]` (2 champs) | 🔎 |
+| `GET /scenarios/{id}/variations` (651) | Liste pilotée par le TMH (produits non exclus, variation ou 0 par défaut) | `list[VariationOut]` (2 champs) | 🔎 |
 | `PUT /…/variations/{co_produit}` (646) | Upsert ; **0% ⇒ suppression** | variation MAJ/supprimée | variation_pct, id_rh🔒, dt_creation🧮 (réécrit à chaque modif) |
 | `DELETE /…/variations/{co_produit}` (646) | Suppression dure explicite | — | DELETE par (id_scenario, co_produit) |
 

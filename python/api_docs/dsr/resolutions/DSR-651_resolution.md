@@ -22,14 +22,16 @@ Aligné avec le schéma DB `db_10_09_2026.sql` (table `trppu_scenario_variations
 Pas de corps de requête (lecture).
 
 ### Sortie — `200 OK` → `list[VariationOut]`
-Une ligne par produit ayant une variation **≠ 0 %** (les 0 % par défaut ne sont pas stockés).
+Une ligne par `co_produit` distinct du **TMH** du scénario ayant au moins une ligne non
+exclue (`bl_exclu = 0`), avec la variation stockée ou **0 % par défaut** (matérialisé côté back).
 ```json
 [
   { "co_produit": "OO", "variation_pct": 25.00 },
-  { "co_produit": "IP", "variation_pct": -15.00 }
+  { "co_produit": "IP", "variation_pct": -15.00 },
+  { "co_produit": "PR", "variation_pct": 0.00 }
 ]
 ```
-Scénario sans variation stockée → `200 OK` avec `[]`.
+Scénario sans ligne TMH non exclue → `200 OK` avec `[]`.
 
 ### Codes d'erreur
 | Code | Cas |
@@ -42,11 +44,13 @@ Aucune (lecture seule). Schéma DB conforme : `id_scenario` bigint, `co_produit`
 `variation_pct` decimal(5,2), clé unique `(id_scenario, co_produit)`.
 
 ## 5. Hypothèses & écarts
-- Renvoie **uniquement** les variations stockées (≠ 0 %). Les produits à 0 % par défaut
-  ne sont pas en base ; l'IHM applique 0 % (décision §8 du doc d'intégration, #8).
+- Liste **hydratée depuis le TMH** : un produit par `co_produit` distinct de `trppu_tmh`
+  (scénario) ayant ≥ 1 ligne non exclue, variation stockée ou 0 % par défaut (`COALESCE`).
+  Les 0 % restent non stockés en base ; le back les matérialise à la lecture.
+- Produits entièrement exclus (`bl_exclu = 1` sur toutes leurs lignes) → **masqués**.
+- Variation stockée pour un produit absent du TMH (ou entièrement exclu) → **non renvoyée**
+  (la liste est pilotée par le TMH).
 - `id_session_ihm` accepté en query (#11), tracé dans les logs applicatifs.
-- ⚠️ **À valider PO** : faut-il renvoyer la liste complète des produits hydratée à 0 %
-  plutôt que les seules variations ≠ 0 % ?
 
 ## 6. Comment tester
 ```
@@ -54,18 +58,19 @@ GET /trppu-api/scenarios/1/variations
 GET /trppu-api/scenarios/1/variations?id_session_ihm=IHM-123
 ```
 Vérifier dans Kibana les logs `Début lecture variations (id_scenario=..., id_session_ihm=...)`
-et `Lecture variations terminée (id_scenario=..., count=..., duration_ms=...)`, puis
-comparer le `count` et les valeurs avec un `SELECT * FROM trppu_scenario_variations_prev
-WHERE id_scenario = 1`.
+et `Lecture variations terminée (id_scenario=..., count=..., duration_ms=...)`. Le `count`
+correspond au nombre de `co_produit` distincts non exclus du TMH (`SELECT COUNT(DISTINCT
+co_produit) FROM trppu_tmh WHERE id_scenario = 1 AND bl_exclu = 0`) ; les valeurs ≠ 0
+proviennent de `trppu_scenario_variations_prev`, les autres sont à 0 par défaut.
 
 ## 7. Mapping critères d'acceptance
 | Critère | Couverture |
 | ------- | ---------- |
 | Service appelé pour le scénario édité | `GET /trppu-api/scenarios/{id_scenario}/variations` |
-| Récupération co_produit + variation_pct | `SELECT co_produit, variation_pct` |
-| Produits par défaut (0 %) non stockés → 0 % IHM | SELECT ≠ 0 uniquement (non stockés en base) |
+| Récupération co_produit + variation_pct | `SELECT t.co_produit, COALESCE(v.variation_pct, 0)` |
+| Produits par défaut (0 %) matérialisés | `COALESCE(…, 0)` sur les produits du TMH sans variation stockée |
 | Log Kibana avec id_scenario | `logger.info(... id_scenario ...)` début + fin |
-| Conformité base | SELECT direct sur `trppu_scenario_variations_prev` |
+| Conformité base | Sous-requête TMH + `LEFT JOIN trppu_scenario_variations_prev` |
 
 ## 8. ➡️ Commentaire Jira (à coller)
 
@@ -79,15 +84,16 @@ WHERE id_scenario = 1`.
 > - Pas de corps de requête.
 >
 > **Données de sortie**
-> tableau JSON (une ligne par produit dont la variation ≠ 0 % ; les produits à 0 % par
-> défaut ne sont pas stockés et sont hydratés à 0 % par l'IHM) :
+> tableau JSON piloté par le TMH du scénario : une ligne par `co_produit` distinct ayant
+> au moins une ligne TMH non exclue, avec la variation stockée ou 0 % par défaut :
 > ```json
 > [
 >   { "co_produit": "OO", "variation_pct": 25.00 },
->   { "co_produit": "IP", "variation_pct": -15.00 }
+>   { "co_produit": "IP", "variation_pct": -15.00 },
+>   { "co_produit": "PR", "variation_pct": 0.00 }
 > ]
 > ```
-> - Scénario sans variation stockée => []
+> - Scénario sans ligne TMH non exclue => []
 > - Scénario inexistant => 404.
 > - Erreur base => 500.
 >
@@ -95,6 +101,6 @@ WHERE id_scenario = 1`.
 > chaque appel logue `id_scenario` et `id_session_ihm` à l'entrée et le nombre de lignes
 > + durée à la sortie.
 >
-> **À valider PO**
-> renvoyer la liste complète des produits hydratée à 0 %, ou conserver le comportement
-> actuel (seules les variations ≠ 0 %, le 0 % étant géré côté IHM) ?
+> **Décision (tranchée)**
+> la liste est hydratée à partir des produits du TMH du scénario (défaut 0 % matérialisé
+> côté back), les produits entièrement exclus étant masqués.

@@ -72,7 +72,7 @@ Fichiers : `app/routes/trppu_variations/routes.py`. *(colonnes `dt_creation`/`id
 | --- | --- | --- | --- |
 | `PUT /…/variations/{co_produit}` | 646 | variation_pct, id_rh | upsert : variation_pct, id_rh🔒, dt_creation🧮(NOW à chaque modif) · **suppression si variation_pct=0** |
 | `DELETE /…/variations/{co_produit}` | 646 | — | DELETE par (id_scenario, co_produit) |
-| `GET /scenarios/{id}/variations` | 651 | id_session_ihm? | 🔎 lecture seule (variations ≠ 0 uniquement) |
+| `GET /scenarios/{id}/variations` | 651 | id_session_ihm? | 🔎 lecture seule (liste pilotée par le TMH : co_produit distincts non exclus, variation stockée ou 0 par défaut) |
 
 ### 1.5 Neutralisations — `trppu_neutralisations`
 Fichiers : `app/routes/trppu_neutralisations/routes.py`.
