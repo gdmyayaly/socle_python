@@ -398,10 +398,10 @@ async def get_scenario_edition(
     from app.routes.trppu_comptages.helpers import SELECT_COMPTAGES_SQL
     from app.routes.trppu_neutralisations.helpers import SELECT_NEUTRALISATIONS_SQL
     from app.routes.trppu_scenario_pic.helpers import (
-        DEFAULT_PIC_VERSION,
         fetch_coeffs_for_version,
         fetch_scenario_pic_version,
         merge_coeffs,
+        resolve_default_pic_version,
     )
     from app.routes.trppu_tmh.helpers import fetch_tmh
     from app.routes.trppu_variations.helpers import SELECT_VARIATIONS_SQL
@@ -412,7 +412,8 @@ async def get_scenario_edition(
         variations = await db_read.fetch_all(SELECT_VARIATIONS_SQL, (id_scenario,))
         # DSR-645 (motif libre) : liste à plat des neutralisations (plus de regroupement).
         neutralisations = await db_read.fetch_all(SELECT_NEUTRALISATIONS_SQL, (id_scenario,))
-        defaults = await fetch_coeffs_for_version(db_read, DEFAULT_PIC_VERSION)
+        id_pic_version_defaut = await resolve_default_pic_version(db_read)
+        defaults = await fetch_coeffs_for_version(db_read, id_pic_version_defaut)
         scen_v = await fetch_scenario_pic_version(db_read, id_scenario)
         overrides = (
             await fetch_coeffs_for_version(db_read, int(scen_v["id_pic_version"]))
@@ -420,7 +421,7 @@ async def get_scenario_edition(
             else []
         )
         pic = {
-            "id_pic_version_defaut": DEFAULT_PIC_VERSION,
+            "id_pic_version_defaut": id_pic_version_defaut,
             "id_pic_version_scenario": int(scen_v["id_pic_version"]) if scen_v else None,
             "niveau_scenario": scen_v["niveau"] if scen_v else None,
             "coefficients": merge_coeffs(defaults, overrides),

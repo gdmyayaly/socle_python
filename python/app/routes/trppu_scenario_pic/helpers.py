@@ -4,10 +4,26 @@ from __future__ import annotations
 
 from typing import Any
 
-# Version PIC par défaut (national) — cf. DSR-660.
+# Fallback si aucune version PIC nationale par défaut n'est trouvée en base — cf. DSR-660.
 DEFAULT_PIC_VERSION = 1
 
 _COEF_COLS = "id_pic_version, co_produit, jour_semaine, densite, coef"
+
+
+async def resolve_default_pic_version(db) -> int:
+    """id_pic_version du paramétrage par défaut : niveau NATIONAL + est_par_defaut=1.
+
+    Conforme à l'intention de DSR-660 (le défaut n'est pas forcément l'id 1). Fallback sur
+    `DEFAULT_PIC_VERSION` si la ligne national/défaut n'existe pas encore.
+    """
+    row = await db.fetch_one(
+        "SELECT id_pic_version FROM trppu_pic_version "
+        "WHERE niveau = 'NATIONAL' AND est_par_defaut = 1 "
+        "ORDER BY id_pic_version LIMIT 1"
+    )
+    if row:
+        return int(row["id_pic_version"])
+    return DEFAULT_PIC_VERSION
 
 
 async def fetch_coeffs_for_version(db, id_pic_version: int) -> list[dict[str, Any]]:

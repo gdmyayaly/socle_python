@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CO_PRODUIT_PATTERN = r"^[A-Za-z0-9]{1,2}$"
+CO_PRODUIT_PATTERN = r"^[A-Za-z0-9]{1,3}$"
 
 
 class TmhOut(BaseModel):
@@ -34,7 +34,7 @@ class _TmhFields(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    co_produit: str = Field(..., min_length=1, max_length=2, pattern=CO_PRODUIT_PATTERN)
+    co_produit: str = Field(..., min_length=1, max_length=3, pattern=CO_PRODUIT_PATTERN)
     volume_realise: int | None = None  # valeurs négatives autorisées
     volume_previsionnel: int | None = Field(None, ge=0)
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)

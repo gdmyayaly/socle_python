@@ -11,10 +11,10 @@ from app.security.crypto import encrypt_id_rh
 from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 
 from .helpers import (
-    DEFAULT_PIC_VERSION,
     fetch_coeffs_for_version,
     fetch_scenario_pic_version,
     merge_coeffs,
+    resolve_default_pic_version,
 )
 from .schemas import PicCoefUpsert, PicCoefUpsertResult, PicScenarioOut
 
@@ -38,7 +38,8 @@ async def get_pic_coefficients(
     await fetch_scenario_or_404(id_scenario)
 
     try:
-        defaults = await fetch_coeffs_for_version(db_read, DEFAULT_PIC_VERSION)
+        id_pic_version_defaut = await resolve_default_pic_version(db_read)
+        defaults = await fetch_coeffs_for_version(db_read, id_pic_version_defaut)
         scen_version = await fetch_scenario_pic_version(db_read, id_scenario)
         overrides: list = []
         id_pic_version_scenario = None
@@ -54,16 +55,19 @@ async def get_pic_coefficients(
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Lecture coefficients PIC terminée (id_scenario=%d, id_pic_version_scenario=%s, "
+        "Lecture coefficients PIC terminée (id_scenario=%d, id_session_ihm=%s, "
+        "id_pic_version_defaut=%d, id_pic_version_scenario=%s, "
         "nb_coeffs=%d, nb_surcharges=%d, duration_ms=%.1f)",
         id_scenario,
+        safe_preview(id_session_ihm),
+        id_pic_version_defaut,
         id_pic_version_scenario,
         len(coefficients),
         len(overrides),
         duration_ms,
     )
     return PicScenarioOut(
-        id_pic_version_defaut=DEFAULT_PIC_VERSION,
+        id_pic_version_defaut=id_pic_version_defaut,
         id_pic_version_scenario=id_pic_version_scenario,
         niveau_scenario=niveau_scenario,
         coefficients=coefficients,
@@ -71,7 +75,11 @@ async def get_pic_coefficients(
 
 
 @router.put("/{id_scenario}/pic-coefficients", response_model=PicCoefUpsertResult)
-async def upsert_pic_coefficient(id_scenario: int, payload: PicCoefUpsert):
+async def upsert_pic_coefficient(
+    id_scenario: int,
+    payload: PicCoefUpsert,
+    id_session_ihm: str | None = Query(None, description="Id de session IHM (traçabilité)"),
+):
     """DSR-661 : enregistre un coefficient PIC modifié pour le scénario.
 
     - Cas 1 : version scénario existante -> UPDATE du coef, ou INSERT si (produit, jour,
@@ -81,8 +89,10 @@ async def upsert_pic_coefficient(id_scenario: int, payload: PicCoefUpsert):
     """
     start = time.perf_counter()
     logger.info(
-        "Début enregistrement coefficient PIC (id_scenario=%d, co_produit=%s, jour=%s, densite=%s)",
+        "Début enregistrement coefficient PIC (id_scenario=%d, id_session_ihm=%s, "
+        "co_produit=%s, jour=%s, densite=%s)",
         id_scenario,
+        safe_preview(id_session_ihm),
         payload.co_produit,
         payload.jour_semaine,
         payload.densite,
@@ -148,8 +158,10 @@ async def upsert_pic_coefficient(id_scenario: int, payload: PicCoefUpsert):
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Enregistrement coefficient PIC terminé (id_scenario=%d, id_pic_version=%d, action=%s, duration_ms=%.1f)",
+        "Enregistrement coefficient PIC terminé (id_scenario=%d, id_session_ihm=%s, "
+        "id_pic_version=%d, action=%s, duration_ms=%.1f)",
         id_scenario,
+        safe_preview(id_session_ihm),
         id_pic_version,
         action,
         duration_ms,
