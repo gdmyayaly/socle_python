@@ -1,0 +1,46 @@
+<div class="section-container">
+ <div class="section-header">
+  <mat-icon class="header-icon">tune</mat-icon>
+  <h3>Variation du trafic prévisionnel du scénario en cours</h3>
+ </div>
+
+
+
+ <p class="section-hint">
+  Variation à 0 % par défaut pour les nouveaux scénarios. {{variations.length}}
+ </p>
+
+ <div class="error-banner" *ngIf="error">{{ error }}</div>
+
+ <div class="variation-list">
+  <div class="variation-row" *ngFor="let v of variations">
+   <span class="variation-label">{{ v.libelle || v.co_produit }}</span>
+
+   <div class="slider-zone">
+    <div class="slider-track"></div>
+
+    <span class="slider-value"
+       [class.positive]="v.variation_pct > 0"
+       [class.negative]="v.variation_pct < 0"
+       [style.left.%]="toPercent(v.variation_pct)">
+     {{ v.variation_pct > 0 ? '+' : '' }}{{ v.variation_pct }}%
+    </span>
+
+    <span class="slider-thumb"
+       [class.positive]="v.variation_pct > 0"
+       [class.negative]="v.variation_pct < 0"
+       [style.left.%]="toPercent(v.variation_pct)"></span>
+
+    <input type="range"
+       class="slider-input"
+       [min]="min"
+       [max]="max"
+       [step]="step"
+       [value]="v.variation_pct"
+       [disabled]="readonly"
+       (input)="onVariationChange(v, +$any($event.target).value)" />
+   </div>
+  </div>
+ </div>
+</div>
+

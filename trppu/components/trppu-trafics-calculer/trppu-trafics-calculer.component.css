@@ -1,0 +1,154 @@
+.trafics-container {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 24px;
+  margin: 16px 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.trafics-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.header-icon {
+  color: #3f51b5;
+  font-size: 28px;
+  width: 28px;
+  height: 28px;
+}
+
+.trafics-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  color: #212121;
+  flex: 1;
+}
+
+.jours-field {
+  width: 140px;
+  font-size: 13px;
+}
+
+::ng-deep .jours-field .mat-form-field-wrapper {
+  padding-bottom: 0 !important;
+  margin: 0 !important;
+}
+
+::ng-deep .jours-field .mat-form-field-infix {
+  padding: 4px 0 6px 0 !important;
+  border-top: 4px solid transparent !important;
+}
+
+table {
+  width: 100%;
+}
+
+.cell-input {
+  width: 110px;
+  font-family: Roboto, sans-serif;
+  font-size: 14px;
+  padding: 4px 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  outline: none;
+}
+
+.cell-input:focus {
+  border-color: #3f51b5;
+}
+
+.computed-cell {
+  font-weight: 600;
+  text-align: left;
+}
+
+.manuel-cell {
+  color: red;
+}
+
+.tmh-cell {
+  color: #3f51b5;
+}
+
+.mat-column-exclure {
+  width: 70px;
+}
+
+.mat-column-manuel {
+  width: 100px;
+}
+
+.mat-column-motif, .mat-column-produit {
+  width: 300px;
+}
+
+::ng-deep tr.row-excluded .mat-cell {
+  background-color: #f5f5f5;
+  color: #8a8a8a;
+}
+
+::ng-deep tr.row-excluded .computed-cell {
+  color: #7d7d7d;
+}
+
+::ng-deep td.row-manuel.mat-column-produit {
+  color: #ffc000;
+  font-size: 12px;
+  padding-left: 20px;
+}
+
+/* Input inline dans les cellules */
+.inline-input {
+  width: 90%;
+  font-family: Roboto, sans-serif;
+  font-size: 14px;
+  padding: 4px 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  outline: none;
+}
+
+.inline-input:focus {
+  border-color: #3f51b5;
+}
+
+/* Select inline dans le footer */
+.inline-field {
+  width: 240px;
+  max-width: 100%;
+  margin: 0;
+  font-size: 13px;
+}
+
+.inline-field.compact-select {
+  width: 220px;
+}
+
+::ng-deep .inline-field .mat-form-field-wrapper {
+  padding-bottom: 0 !important;
+  margin: 0 !important;
+}
+
+::ng-deep .inline-field.compact-select .mat-form-field-infix {
+  padding: 4px 0 6px 0 !important;
+  border-top: 4px solid transparent !important;
+}
+
+::ng-deep .inline-field.compact-select .mat-select-value {
+  font-size: 13px;
+}
+
+/* Ligne footer d'ajout */
+.add-footer-row {
+  background: #fafafa;
+}
+
+.add-footer-row td {
+  border-top: 2px dashed #e0e0e0;
+}
+

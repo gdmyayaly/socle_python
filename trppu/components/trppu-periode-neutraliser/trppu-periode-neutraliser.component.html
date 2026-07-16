@@ -1,0 +1,146 @@
+<div class="section-container">
+<div class="section-header">
+<mat-icon class="header-icon">event_busy</mat-icon>
+<h3>Périodes à neutraliser</h3>
+</div>
+
+
+
+ <table mat-table [dataSource]="rows">
+
+
+
+ <ng-container matColumnDef="dateDebut">
+<th mat-header-cell *matHeaderCellDef>Date début</th>
+<td mat-cell *matCellDef="let row">{{ formatDateFr(row.dt_debut) }}</td>
+<td mat-footer-cell *matFooterCellDef>
+<mat-form-field *ngIf="isAdding" appearance="outline" class="inline-field">
+<input matInput
+ #debutInput
+ [matDatepicker]="pickerDebut"
+ [matDatepickerFilter]="dateFilter"
+ [min]="dateMin"
+ [max]="dateMax"
+ [(ngModel)]="newDebut"
+ (dateChange)="onDebutChange()"
+ #debutCtrl="ngModel"
+ placeholder="JJ/MM/AAAA" />
+<mat-datepicker-toggle matSuffix [for]="pickerDebut"></mat-datepicker-toggle>
+<mat-datepicker #pickerDebut></mat-datepicker>
+<mat-error *ngIf="debutCtrl.hasError('matDatepickerParse')">Format attendu : JJ/MM/AAAA</mat-error>
+<mat-error *ngIf="debutCtrl.hasError('matDatepickerFilter')">Jour férié ou week-end non autorisé.</mat-error>
+<mat-error *ngIf="debutCtrl.hasError('matDatepickerMin') || debutCtrl.hasError('matDatepickerMax')">Hors période du scénario.</mat-error>
+</mat-form-field>
+</td>
+</ng-container>
+
+
+
+ <ng-container matColumnDef="dateFin">
+<th mat-header-cell *matHeaderCellDef>Date fin</th>
+<td mat-cell *matCellDef="let row">{{ formatDateFr(row.dt_fin) }}</td>
+<td mat-footer-cell *matFooterCellDef>
+<mat-form-field *ngIf="isAdding" appearance="outline" class="inline-field">
+<input matInput
+ #finInput
+ [matDatepicker]="pickerFin"
+ [matDatepickerFilter]="dateFilter"
+ [min]="newDebut || dateMin"
+ [max]="dateMax"
+ [(ngModel)]="newFin"
+ (dateChange)="onFinChange()"
+ #finCtrl="ngModel"
+ placeholder="JJ/MM/AAAA" />
+<mat-datepicker-toggle matSuffix [for]="pickerFin"></mat-datepicker-toggle>
+<mat-datepicker #pickerFin></mat-datepicker>
+<mat-error *ngIf="finCtrl.hasError('matDatepickerParse')">Format attendu : JJ/MM/AAAA</mat-error>
+<mat-error *ngIf="finCtrl.hasError('matDatepickerFilter')">Jour férié ou week-end non autorisé.</mat-error>
+<mat-error *ngIf="finCtrl.hasError('matDatepickerMin') || finCtrl.hasError('matDatepickerMax')">Hors période du scénario / antérieure au début.</mat-error>
+</mat-form-field>
+</td>
+</ng-container>
+
+
+
+ <ng-container matColumnDef="motif">
+<th mat-header-cell *matHeaderCellDef>Motif</th>
+<td mat-cell *matCellDef="let row">{{ row.motif || '—' }}</td>
+<td mat-footer-cell *matFooterCellDef>
+<mat-form-field *ngIf="isAdding" appearance="outline" class="inline-field motif-field">
+<input matInput
+ #motifInput
+ [(ngModel)]="newMotif"
+ #motifCtrl="ngModel"
+ name="motif"
+ required
+ (blur)="onMotifBlur()"
+ placeholder="Motif"
+ maxlength="255" />
+<mat-error *ngIf="motifCtrl.hasError('required')">Motif obligatoire.</mat-error>
+</mat-form-field>
+</td>
+</ng-container>
+
+
+
+ <ng-container matColumnDef="nbJour">
+<th mat-header-cell *matHeaderCellDef>Jours ouvrés</th>
+<td mat-cell *matCellDef="let row">{{ row.nb_jour ?? '—' }}</td>
+<td mat-footer-cell *matFooterCellDef>
+<span *ngIf="isAdding" class="nb-jour-preview">{{ computeNbJour(newDebut, newFin) }}</span>
+</td>
+</ng-container>
+
+
+
+ <ng-container matColumnDef="actions">
+<th mat-header-cell *matHeaderCellDef>Actions</th>
+
+
+
+ <!-- Ligne persistée : suppression + « Ajouter » sur la dernière ligne. -->
+<td mat-cell *matCellDef="let row">
+<button mat-icon-button color="warn" (click)="onRemove(row)" aria-label="Supprimer">
+<mat-icon>delete</mat-icon>
+</button>
+<button *ngIf="!isAdding && isLastRow(row)"
+ mat-raised-button
+ color="primary"
+ (click)="onAjouter()">
+<mat-icon>add</mat-icon>
+ Ajouter
+</button>
+</td>
+
+
+
+ <!-- Ligne de saisie : annulation (interdite si aucune période). -->
+<td mat-footer-cell *matFooterCellDef>
+<ng-container *ngIf="isAdding">
+<span *ngIf="saving" class="saving-hint">Enregistrement…</span>
+<button *ngIf="!saving && rows.length"
+ mat-icon-button
+ (mousedown)="onCancelMouseDown()"
+ (click)="onAnnuler()"
+ aria-label="Annuler">
+<mat-icon>close</mat-icon>
+</button>
+</ng-container>
+</td>
+</ng-container>
+
+
+
+ <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+<tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+<tr mat-footer-row *matFooterRowDef="displayedColumns" class="add-row" [class.hidden]="!isAdding"></tr>
+</table>
+
+
+
+ <p class="error-message" *ngIf="errorMessage">
+<mat-icon>error_outline</mat-icon> {{ errorMessage }}
+</p>
+</div>
+
+

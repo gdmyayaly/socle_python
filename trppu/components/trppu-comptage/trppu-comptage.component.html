@@ -1,0 +1,55 @@
+
+  <!-- Tableau avec ligne d'ajout intégrée -->
+  <table mat-table [dataSource]="comptages">
+
+    <ng-container matColumnDef="produit">
+      <td mat-cell *matCellDef="let row">
+        <span class="produit-code">{{ row.co_produit }}</span>
+        {{ row.lb_produit }}
+      </td>
+      <td mat-footer-cell *matFooterCellDef>
+        <mat-form-field appearance="outline" class="inline-field compact-select">
+          <mat-select [(ngModel)]="newTraficId"
+                      placeholder="Choisir un produit"
+                      (selectionChange)="onDraftChange()">
+            <mat-option *ngFor="let p of availableProduits" [value]="p.co_produit">
+              {{ p.co_produit }} — {{ p.lb_produit }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
+      </td>
+    </ng-container>
+
+    <ng-container matColumnDef="valeur">
+      <td mat-cell *matCellDef="let row">
+        <input type="number" class="inline-input"
+               [ngModel]="row.nb_produit"
+               (ngModelChange)="onValeurInput(row, $event)"
+               (blur)="onValeurBlur()"
+               />
+      </td>
+      <td mat-footer-cell *matFooterCellDef>
+        <input type="number" class="inline-input"
+               [(ngModel)]="newValeur"
+               (blur)="onDraftChange()"
+               placeholder="0" />
+      </td>
+    </ng-container>
+
+    <ng-container matColumnDef="actions">
+      <td mat-cell *matCellDef="let row">
+        <button mat-icon-button color="warn" (click)="onRemove(row)" aria-label="Supprimer">
+          <mat-icon>delete</mat-icon>
+        </button>
+      </td>
+      <td mat-footer-cell *matFooterCellDef>
+        <button mat-icon-button color="primary" [disabled]="!canAdd" (click)="onAdd()" aria-label="Ajouter">
+          <mat-icon>add_circle</mat-icon>
+        </button>
+      </td>
+    </ng-container>
+
+    <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+    <tr mat-footer-row *matFooterRowDef="displayedColumns" class="add-footer-row"></tr>
+  </table>
+

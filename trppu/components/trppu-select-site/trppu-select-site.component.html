@@ -1,0 +1,33 @@
+<!-- Mode sélection -->
+<div *ngIf="!selectedSite" class="select-container">
+  <mat-form-field class="example-full-width site-select" appearance="fill">
+      <input type="text"
+          placeholder="Sélectionner un site"
+          aria-label="Sélectionner un site"
+          matInput
+          [formControl]="myControl"
+          [matAutocomplete]="autoGroup">
+      <mat-autocomplete #autoGroup="matAutocomplete"  (optionSelected)="onSelectionChange($event.option.value)" [displayWith]="displaySite">
+        <mat-optgroup *ngFor="let group of filteredGroups | async" [label]="group.dex">
+          <mat-option *ngFor="let site of group.list" [value]="site">
+            {{ site.libelleCourt ? site.libelleCourt : site.denomination ? site.denomination : site.libelle }} - {{ site.codeRoc }} - {{ site.codeRegate }}
+          </mat-option>
+        </mat-optgroup>
+      </mat-autocomplete>
+  </mat-form-field>
+</div>
+
+<!-- Mode badge récap -->
+<div *ngIf="selectedSite" class="badge-container site-select">
+  <div class="badge-recap">
+    <div class="badge-info">
+      <span class="badge-title"><b>DEX : </b>{{ selectedSite.dex }}</span>
+      <span class="badge-detail"><b>Site : </b>{{ selectedSite.libelle }}</span>
+      <span class="badge-detail">{{ selectedSite.codeRoc }} - {{ selectedSite.codeRegate }}</span>
+      <span class="badge-detail" *ngIf="scenario"><b>Scénario : </b>{{ scenario.lb_scenario }}</span>
+    </div>
+    <button mat-icon-button (click)="clear()" aria-label="Changer de site" class="badge-close">
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+</div>

@@ -1,0 +1,18 @@
+<div class="recap-container">
+  <div class="scenario-name-block">
+    <mat-label>Scénario :</mat-label>
+    <mat-form-field class="scenario-name-input" appearance="outline">
+      <input matInput maxlength="20" [value]="scenarioName" [(ngModel)]="editedName" (focusout)="saveName()" placeholder="Nom du scénario" />
+      <mat-hint align="end">{{ editedName.length > 0 ? editedName.length : scenarioName.length }} / 20</mat-hint>
+    </mat-form-field>
+  </div>
+  
+  <div class="scenario-status-block">
+    <mat-select [value]="scenario ? scenario.statut : null" (selectionChange)="changeStatus($event.value)">
+      <mat-option value="EN COURS">En cours</mat-option>
+      <mat-option value="VALIDE">Valide</mat-option>
+      <mat-option value="EN PRODUCTION">En production</mat-option>
+      <mat-option value="ARCHIVE">Archive</mat-option>
+    </mat-select>
+  </div>
+</div>

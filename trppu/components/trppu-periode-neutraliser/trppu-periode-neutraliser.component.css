@@ -1,0 +1,51 @@
+.section-container {
+ background: #fff;
+ border: 1px solid #e0e0e0;
+ border-radius: 12px;
+ padding: 24px;
+ margin: 16px 0;
+ box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+
+.section-header {
+ display: flex;
+ align-items: center;
+ gap: 10px;
+ margin-bottom: 20px;
+}
+
+.header-icon { color: #3f51b5; font-size: 28px; width: 28px; height: 28px; }
+.section-header h3 { margin: 0; font-size: 18px; font-weight: 500; color: #212121; }
+
+table { width: 100%; }
+
+/* Champs Material compacts dans la ligne de saisie (footer) */
+.inline-field {
+ width: 150px;
+ font-size: 13px;
+}
+.inline-field.motif-field { width: 220px; }
+
+/* Réduit la hauteur des mat-form-field outline dans la ligne d'ajout */
+.inline-field ::ng-deep .mat-mdc-form-field-subscript-wrapper { display: none; }
+.inline-field ::ng-deep .mat-mdc-text-field-wrapper { padding-top: 2px; padding-bottom: 2px; }
+
+.nb-jour-preview {
+ font-weight: 500;
+ color: #3f51b5;
+}
+
+.add-row { background: #fafafa; }
+.add-row td { border-top: 2px dashed #e0e0e0; padding-top: 8px; }
+
+.error-message {
+ display: flex;
+ align-items: center;
+ gap: 6px;
+ color: #d32f2f;
+ font-size: 13px;
+ margin: 12px 0 0;
+}
+.error-message mat-icon { font-size: 18px; width: 18px; height: 18px; }
+

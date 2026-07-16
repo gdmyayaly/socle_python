@@ -1,0 +1,111 @@
+<div class="trafics-container">
+
+ <div class="trafics-header">
+  <mat-icon class="header-icon">calculate</mat-icon>
+  <h3>Volumes des produits</h3>
+
+  <mat-form-field appearance="outline" class="jours-field">
+   <mat-label>Nombre de jours</mat-label>
+   <mat-select [ngModel]="joursParSemaine"
+         (selectionChange)="onJoursParSemaineChange($event.value)">
+    <mat-option *ngFor="let j of joursOptions" [value]="j">{{ j }}</mat-option>
+   </mat-select>
+  </mat-form-field>
+ </div>
+
+ <table mat-table [dataSource]="trafics">
+
+  <ng-container matColumnDef="exclure">
+   <th mat-header-cell *matHeaderCellDef>Exclure</th>
+   <td mat-cell *matCellDef="let row">
+     <mat-checkbox *ngIf="!row.manuel" [ngModel]="row.exclure"
+           (ngModelChange)="onExclureChange(row, $event)"
+           aria-label="Exclure le trafic {{ row.produit }}">
+    </mat-checkbox>
+   </td>
+   <td mat-footer-cell *matFooterCellDef></td>
+  </ng-container>
+
+  <ng-container matColumnDef="produit">
+   <th mat-header-cell *matHeaderCellDef>Produit</th>
+   <td mat-cell *matCellDef="let row" class="{{ row.manuel && !row.manuelCalc ? 'row-manuel' : '' }}">{{ row.lbProduit }}</td>
+   <td mat-footer-cell *matFooterCellDef>
+    <mat-form-field appearance="outline" class="inline-field compact-select"  *ngIf="enableAddComptage">
+     <mat-select [(ngModel)]="newTraficId"
+           placeholder="Choisir un produit">
+      <mat-option *ngFor="let p of manuelsProduits" [value]="p.co_produit">
+       {{ p.lb_produit }}
+      </mat-option>
+     </mat-select>
+    </mat-form-field>
+   </td>
+  </ng-container>
+
+  <ng-container matColumnDef="constateBrut">
+   <th mat-header-cell *matHeaderCellDef>Constaté brut</th>
+   <td mat-cell *matCellDef="let row">
+    {{ !row.manuel ? (row.constateBrut | number:'':'fr') : '' }}
+    <input *ngIf="row.manuel" type="number" class="inline-input" value="{{ row.constateBrut }}" (focusout)="updateComptage(row, $event, 'constateBrut')" placeholder="0" />
+   </td>
+   <td mat-footer-cell *matFooterCellDef>
+    <input *ngIf="enableAddComptage" type="number" class="inline-input"
+       [(ngModel)]="newValeur"
+       placeholder="0" />
+   </td>
+  </ng-container>
+
+  <ng-container matColumnDef="previsionnelBrut">
+   <th mat-header-cell *matHeaderCellDef>Prévisionnel brut</th>
+   <td mat-cell *matCellDef="let row">{{ !row.manuel ? (row.previsionnelBrut | number:'':'fr') : '' }}</td>
+   <td mat-footer-cell *matFooterCellDef></td>
+  </ng-container>
+
+  <ng-container matColumnDef="volumeBrut">
+   <th mat-header-cell *matHeaderCellDef>Volume brut</th>
+   <td mat-cell *matCellDef="let row" class="computed-cell {{ row.manuelCalc ? 'manuel-cell' : '' }}">{{ !row.manuel || row.manuelCalc ? (row.volumeBrut | number:'':'fr') : '' }}</td>
+   <td mat-footer-cell *matFooterCellDef></td>
+  </ng-container>
+
+  <ng-container matColumnDef="traficMoyenHebdo">
+   <th mat-header-cell *matHeaderCellDef>Trafic moyen hebdo</th>
+   <td mat-cell *matCellDef="let row" class="computed-cell tmh-cell">{{ !row.manuel || row.manuelCalc ? (row.traficMoyenHebdo | number:'':'fr') : '' }}</td>
+   <td mat-footer-cell *matFooterCellDef></td>
+  </ng-container>
+
+  <ng-container matColumnDef="motif">
+   <th mat-header-cell *matHeaderCellDef>Motif</th>
+   <td mat-cell *matCellDef="let row">
+    <input *ngIf="row.manuel" type="text" class="inline-input" value="{{ row.motif }}" (focusout)="updateComptage(row, $event, 'motif')" placeholder="Saisir la motif" />
+   </td>
+   <td mat-footer-cell *matFooterCellDef>
+    <input *ngIf="enableAddComptage" type="text" class="inline-input"
+       [(ngModel)]="newMotif"
+       placeholder="Saisir la motif" />
+   </td>
+  </ng-container>
+
+  <ng-container matColumnDef="manuel">
+   <th mat-header-cell *matHeaderCellDef>Manuel</th>
+   <td mat-cell *matCellDef="let row">
+    <button mat-icon-button *ngIf="!row.manuel" color="primary" (click)="onAddComptageProduit(row)" aria-label="Ajouter Comptage Manuel">
+     <mat-icon>add_circle</mat-icon>
+    </button>
+    <button mat-icon-button *ngIf="row.manuel" color="warn" (click)="onRemoveManual(row)" aria-label="Supprimer">
+     <mat-icon>delete</mat-icon>
+    </button>
+    <mat-icon *ngIf="row.manuel">check</mat-icon>
+   </td>
+   <td mat-footer-cell *matFooterCellDef>
+    <button *ngIf="enableAddComptage" mat-icon-button color="primary" [disabled]="!canAddComptage" (click)="onAddComptage()" aria-label="Ajouter">
+     <mat-icon>add_circle</mat-icon>
+    </button>
+   </td>
+  </ng-container>
+
+  <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+  <tr mat-row *matRowDef="let row; columns: displayedColumns;" 
+      [class.row-excluded]="row.exclure" ></tr>
+  <tr mat-footer-row *matFooterRowDef="displayedColumns" class="add-footer-row"></tr>
+ </table>
+
+</div>

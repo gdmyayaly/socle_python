@@ -1,0 +1,93 @@
+<div class="pic-config">
+
+
+
+ <div class="pic-header">
+  <mat-icon class="header-icon">grid_on</mat-icon>
+  <h2>Configuration PIC</h2>
+ </div>
+
+ <div class="pic-context">
+  <span class="ctx-item">
+   Site : <strong>{{ coRegate || '—' }}</strong>
+  </span>
+  <span class="ctx-item">
+   Scénario en cours : <strong>{{ idScenario != null ? idScenario : 'aucun' }}</strong>
+  </span>
+  <span class="ctx-mode" [class.editable]="editable">
+   {{ editable ? 'Coefficients modifiables' : 'Lecture seule (valeurs par défaut)' }}
+  </span>
+ </div>
+
+ <div class="error-banner" *ngIf="errorMessage">{{ errorMessage }}</div>
+ <div class="loading" *ngIf="loading">Chargement du paramétrage PIC…</div>
+
+ <div class="table-scroll">
+  <table class="pic-table">
+   <thead>
+    <!-- Ligne 1 : jours de la semaine -->
+    <tr>
+     <th class="col-produit corner"></th>
+     <th *ngFor="let j of joursHeader" [attr.colspan]="j.span" class="jour-head">
+      {{ j.label }}
+     </th>
+    </tr>
+    <!-- Ligne 2 : densités -->
+    <tr>
+     <th class="col-produit corner"></th>
+     <th *ngFor="let d of densiteHeader" class="densite-head">{{ d }}</th>
+    </tr>
+    <!-- Ligne 3 : typage des jours de distribution (NOP sur la 1ère colonne) -->
+    <tr class="typage-row">
+     <th class="col-produit typage">NOP</th>
+     <th [attr.colspan]="columns.length" class="typage-band"></th>
+    </tr>
+   </thead>
+
+   <tbody>
+    <tr *ngFor="let row of rows">
+     <th class="col-produit produit">{{ row.libelle }}</th>
+
+     <td *ngFor="let cell of row.cells"
+       class="coef-cell"
+       [class.empty]="cell.coef === null"
+       [class.modified]="cell.pending"
+       [class.scenario]="isScenario(cell)"
+       [class.err]="cell.error">
+
+      <ng-container *ngIf="cell.coef === null">&nbsp;</ng-container>
+
+      <ng-container *ngIf="cell.coef !== null">
+       <ng-container *ngIf="editable">
+        <span class="input-wrap">
+         <input class="coef-input"
+            type="text"
+            [(ngModel)]="cell.edit"
+            (focus)="errorMessage = null"
+            (blur)="onBlur(cell)" />
+         <span class="pct">%</span>
+        </span>
+       </ng-container>
+       <ng-container *ngIf="!editable">{{ formatCoef(cell.coef) }}</ng-container>
+      </ng-container>
+     </td>
+    </tr>
+
+    <!-- Total trafic (RG à définir avec le métier) -->
+    <tr class="total-row">
+     <th class="col-produit">total trafic</th>
+     <td *ngFor="let t of totalRow" class="coef-cell total">{{ formatCoef(t) }}</td>
+    </tr>
+   </tbody>
+  </table>
+ </div>
+
+ <p class="pic-note">
+  Les coefficients propres au scénario (id_pic_version ≠ 1) sont en
+  <span class="legend scenario">vert</span> ; une modification en cours d'enregistrement
+  apparaît en <span class="legend modified">rouge</span>.
+  Total trafic : règle de gestion à définir avec le métier (moyenne provisoire).
+ </p>
+
+</div>
+
