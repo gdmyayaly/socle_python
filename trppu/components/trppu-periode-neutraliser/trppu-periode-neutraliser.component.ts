@@ -6,17 +6,22 @@ import {
   OnChanges,
   SimpleChanges,
   OnInit,
+  OnDestroy,
   ViewChild,
   ElementRef,
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { MatDialog } from '@angular/material/dialog';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 
 import { Scenario } from '../../models/scenario.model';
 import { Neutralisation } from '../../models/neutralisation.model';
 import { UserService } from '../../../../service/user/user.service';
 import { environment } from '../../../../../environments/environment';
 import { ScenarioService } from '../../services/scenario.service';
+import { NeutralisationService } from '../../services/neutralisation.service';
+import { TmhRecalculService } from '../../services/tmh-recalcul.service';
 import apiPaths from '../../../../literals/api-paths.literal';
 import { DSRUser } from '../../../../model/user.model';
 import {
@@ -43,7 +48,7 @@ interface JourFerie {
   templateUrl: './trppu-periode-neutraliser.component.html',
   styleUrls: ['./trppu-periode-neutraliser.component.css'],
 })
-export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit {
+export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit, OnDestroy {
   @Input() scenario: Scenario | null = null;
   @Output() periodesChange = new EventEmitter<Neutralisation[]>();
 
@@ -84,13 +89,14 @@ export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit {
   saving = false;
   errorMessage = '';
   private utilisateurConnecter: DSRUser;
-  readonly apiTrppuUrl = environment.trppuApiUrl;
-  private readonly NEUTRALISATIONS_API = `${this.apiTrppuUrl}/scenarios`;
+  private readonly destroy$ = new Subject<void>();
 
   constructor(
     private http: HttpClient,
     private userService: UserService,
     private scenarioService: ScenarioService,
+    private neutralisationService: NeutralisationService,
+    private tmhRecalcul: TmhRecalculService,
     private dialog: MatDialog,
   ) {}
 
@@ -110,6 +116,22 @@ export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit {
     this.userService
       .getUserTrppuAsync()
       .subscribe((user) => (this.utilisateurConnecter = user));
+
+    // Erreurs du recalcul TMH déclenché après une modification de neutralisation
+    // ou de variation (seul ce composant porte l'abonnement sur /parameters).
+    this.tmhRecalcul.recalculErrors$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() =>
+        this.openMessage(
+          "Les moyennes TMH n'ont pas pu être recalculées. Modifiez à nouveau la période ou relancez le calcul depuis la page Calcul.",
+          'error',
+        ),
+      );
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
   }
 
   // ── Identifiant scénario ──
@@ -166,10 +188,8 @@ export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit {
   private loadNeutralisations(): void {
     const id = this.idScenario;
     if (id == null) return;
-    this.http
-      .get<
-        Neutralisation[]
-      >(`${this.NEUTRALISATIONS_API}/${id}/neutralisations`)
+    this.neutralisationService
+      .list(id)
       .subscribe({
         next: (data) => {
           this.rows = (data || []).map((n) => ({
@@ -326,11 +346,8 @@ export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit {
     };
     this.saving = true;
     this.errorMessage = '';
-    this.http
-      .post<Neutralisation>(
-        `${this.NEUTRALISATIONS_API}/${id}/neutralisations`,
-        payload,
-      )
+    this.neutralisationService
+      .create(id, payload)
       .subscribe({
         next: (created) => {
           this.rows = [
@@ -350,6 +367,7 @@ export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit {
           this.saving = false;
           this.isAdding = false;
           this.periodesChange.emit(this.rows);
+          this.demanderRecalculTmh(id);
 
           this.openMessage(
             'Neutralisation enregistrée avec succès.',
@@ -402,14 +420,13 @@ export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit {
 
   /** Suppression effective côté serveur, appelée uniquement après confirmation. */
   private deleteNeutralisation(idScenario: number, row: Neutralisation): void {
-    this.http
-      .delete(
-        `${this.NEUTRALISATIONS_API}/${idScenario}/neutralisations/${row.id}`,
-      )
+    this.neutralisationService
+      .delete(idScenario, row.id!)
       .subscribe({
         next: () => {
           this.rows = this.rows.filter((r) => r.id !== row.id);
           this.periodesChange.emit(this.rows);
+          this.demanderRecalculTmh(idScenario);
           this.openMessage('Neutralisation supprimée avec succès.', 'success');
           this.ensureDraftIfEmpty();
         },
@@ -422,6 +439,18 @@ export class TrppuPeriodeNeutraliserComponent implements OnChanges, OnInit {
           );
         },
       });
+  }
+
+  /**
+   * Déclenche le recalcul + persistance des moyennes TMH du scénario
+   * (les jours neutralisés sont déduits des jours ouvrables).
+   */
+  private demanderRecalculTmh(idScenario: number): void {
+    if (this.scenario?.est_fige || !this.utilisateurConnecter) return;
+    this.tmhRecalcul.demanderRecalcul(
+      idScenario,
+      this.utilisateurConnecter.idRh,
+    );
   }
 
   /** Ouvre une MessageDialog d'information (succès / erreur). */

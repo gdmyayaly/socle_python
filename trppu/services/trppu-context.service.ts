@@ -7,6 +7,7 @@ export class TrppuContextService {
   private static readonly KEY_ID_SCENARIO = 'trppu.id_scenario';
   private static readonly KEY_CO_REGATE = 'trppu.co_regate';
   private static readonly KEY_ID_SESSION = 'trppu.id_session';
+  private static readonly KEY_ID_RH = 'trppu.id_rh';
   /** Id du scénario en cours, ou null si aucun. */
   getIdScenario(): number | null {
     const raw = localStorage.getItem(TrppuContextService.KEY_ID_SCENARIO);
@@ -40,6 +41,21 @@ export class TrppuContextService {
       localStorage.removeItem(TrppuContextService.KEY_CO_REGATE);
     } else {
       localStorage.setItem(TrppuContextService.KEY_CO_REGATE, coRegate);
+    }
+  }
+
+  /** Identifiant RH de l'utilisateur connecté, ou null si inconnu. */
+  getIdRh(): string | null {
+    const raw = localStorage.getItem(TrppuContextService.KEY_ID_RH);
+    return raw && raw.trim() !== '' ? raw : null;
+  }
+
+  /** Positionne l'identifiant RH (à appeler à la connexion de l'utilisateur). */
+  setIdRh(idRh: string | null): void {
+    if (!idRh) {
+      localStorage.removeItem(TrppuContextService.KEY_ID_RH);
+    } else {
+      localStorage.setItem(TrppuContextService.KEY_ID_RH, idRh);
     }
   }
 
@@ -95,5 +111,6 @@ export class TrppuContextService {
     localStorage.removeItem(TrppuContextService.KEY_ID_SCENARIO);
     localStorage.removeItem(TrppuContextService.KEY_CO_REGATE);
     localStorage.removeItem(TrppuContextService.KEY_ID_SESSION);
+    localStorage.removeItem(TrppuContextService.KEY_ID_RH);
   }
 }

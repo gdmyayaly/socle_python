@@ -59,6 +59,12 @@ const DENSITE_LABELS: Record<Densite, string> = {
  2: 'clairsemée2',
 };
 
+/**
+* Saisie autorisée : chiffres, un seul séparateur décimal ("." ou ","),
+* 4 décimales maximum (aligné sur le backend : coef DECIMAL(7,4)).
+*/
+const SAISIE_COEF_PATTERN = /^\d*([.,]\d{0,4})?$/;
+
 
 @Component({
   selector: 'app-configpic',
@@ -78,6 +84,9 @@ export class ConfigpicComponent implements OnInit {
  coRegate: string | null = null;
  /** Modifiable uniquement si un scénario est en cours. */
  editable = false;
+
+ /** Version PIC propre au scénario (DSR-660) ; null = jamais surchargé. */
+ idPicVersionScenario: number | null = null;
 
  // En-têtes
  joursHeader: { label: string; span: number }[] = JOURS_DEF.map(j => ({
@@ -128,16 +137,28 @@ export class ConfigpicComponent implements OnInit {
  // Lecture des coefficients (YS04 - DSR-660)
  // ---------------------------------------------------------------------------
  private chargerCoefficients(): void {
+  // Le service YS04 exige un scénario existant : sans scénario en cours,
+  // le paramétrage PIC n'est pas disponible.
+  if (this.idScenario == null) {
+   this.buildRows([]);
+   this.recomputeTotals();
+   this.errorMessage = 'Aucun scénario en cours : paramétrage PIC indisponible.';
+   return;
+  }
+
   this.loading = true;
   this.errorMessage = null;
-  this.picService.getCoefficients(this.idScenario).subscribe({
-   next: (coeffs) => {
-    this.buildRows(coeffs);
+  this.picService.getPicScenario(this.idScenario).subscribe({
+   next: (vue) => {
+    this.idPicVersionScenario = vue.idPicVersionScenario;
+    this.buildRows(vue.coefficients);
     this.recomputeTotals();
     this.loading = false;
    },
-   error: () => {
-    this.errorMessage = 'Erreur de chargement du paramétrage PIC.';
+   error: (err) => {
+    this.errorMessage = err?.status === 404
+     ? 'Scénario introuvable : paramétrage PIC indisponible.'
+     : 'Erreur de chargement du paramétrage PIC.';
     this.loading = false;
    },
   });
@@ -167,6 +188,36 @@ export class ConfigpicComponent implements OnInit {
     } as CoefCell;
    }),
   }));
+ }
+
+ // ---------------------------------------------------------------------------
+ // Contrôle de saisie : seuls chiffres + un séparateur ("." ou ",") + 4
+ // décimales max sont acceptés ; tout autre caractère est ignoré à la frappe.
+ // ---------------------------------------------------------------------------
+ onInput(cell: CoefCell): void {
+  const saisie = cell.edit ?? '';
+  if (SAISIE_COEF_PATTERN.test(saisie)) {
+   return;
+  }
+  // Reconstruction : on ne garde que les caractères valides.
+  let epure = '';
+  let separateurVu = false;
+  let decimales = 0;
+  for (const ch of saisie) {
+   if (ch >= '0' && ch <= '9') {
+    if (separateurVu) {
+     if (decimales >= 4) {
+      continue;
+     }
+     decimales++;
+    }
+    epure += ch;
+   } else if ((ch === '.' || ch === ',') && !separateurVu) {
+    separateurVu = true;
+    epure += ch;
+   }
+  }
+  cell.edit = epure;
  }
 
  // ---------------------------------------------------------------------------
@@ -203,27 +254,49 @@ export class ConfigpicComponent implements OnInit {
    return;
   }
 
+  // Le PUT YS04 exige l'id_rh de l'utilisateur (crypté côté serveur).
+  const idRh = this.context.getIdRh();
+  if (!idRh) {
+   cell.edit = this.numToFr(cell.coef);
+   this.errorMessage = 'Identifiant RH inconnu : modification impossible (reconnectez-vous).';
+   return;
+  }
+
   // Modification en cours : gras + rouge, mise à jour immédiate des totaux.
+  const precedent = cell.coef;
   cell.coef = valeur;
   cell.edit = this.numToFr(valeur);
   cell.pending = true;
   this.recomputeTotals();
 
-  this.picService.updateCoefficient({
-   id_scenario: this.idScenario!,
+  this.picService.updateCoefficient(this.idScenario!, {
    co_produit: cell.co_produit,
    jour_semaine: cell.jour,
    coef: valeur,
    densite: cell.densite,
+   id_rh: idRh,
   }).subscribe({
-   next: () => {
-    // Enregistré : le coefficient devient propre au scénario -> gras + vert.
+   next: (res) => {
+    // Enregistré : la cellule porte la version PIC du scénario -> gras + vert.
     cell.pending = false;
-    cell.id_pic_version = 2;
+    cell.id_pic_version = res.id_pic_version;
+    this.idPicVersionScenario = res.id_pic_version;
    },
-   error: () => {
+   error: (err) => {
+    // Échec : la valeur n'est pas persistée, on restaure l'ancienne.
     cell.pending = false;
-    this.errorMessage = 'Erreur lors de l\'enregistrement du coefficient.';
+    cell.coef = precedent;
+    cell.edit = this.numToFr(precedent);
+    this.recomputeTotals();
+    if (err?.status === 409) {
+     this.errorMessage = 'Scénario figé ou non modifiable : coefficient non enregistré.';
+    } else if (err?.status === 422) {
+     this.errorMessage = 'Paramètre invalide : coefficient non enregistré.';
+    } else if (err?.status === 404) {
+     this.errorMessage = 'Scénario introuvable : coefficient non enregistré.';
+    } else {
+     this.errorMessage = 'Erreur lors de l\'enregistrement du coefficient.';
+    }
    },
   });
  }
@@ -264,4 +337,3 @@ export class ConfigpicComponent implements OnInit {
   return `${coProduit}|${jour}|${densite}`;
  }
 }
-

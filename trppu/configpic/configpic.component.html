@@ -62,7 +62,10 @@
         <span class="input-wrap">
          <input class="coef-input"
             type="text"
+            inputmode="decimal"
+            maxlength="8"
             [(ngModel)]="cell.edit"
+            (input)="onInput(cell)"
             (focus)="errorMessage = null"
             (blur)="onBlur(cell)" />
          <span class="pct">%</span>

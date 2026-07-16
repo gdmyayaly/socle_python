@@ -1,112 +1,92 @@
 import { Injectable } from '@angular/core';
-import { Observable, of } from 'rxjs';
-import { delay } from 'rxjs/operators';
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+import { environment } from '../../../../environments/environment';
 import {
  PicCoefficient,
  PicCoefUpdate,
- JourSemaine,
- Densite,
+ PicCoefUpsertResult,
+ PicScenarioOut,
+ PicScenarioView,
  ID_PIC_VERSION_DEFAUT,
+ JOUR_FRONT_TO_API,
+ JOUR_API_TO_FRONT,
 } from '../models/pic-coefficient.model';
+import { TrppuContextService } from './trppu-context.service';
 
 
 
-
+/**
+* Paramétrage de rétention en PIC (YS04 - DSR-660 / DSR-661).
+* Lecture fusionnée défaut national + surcharges scénario, et enregistrement
+* d'un coefficient modifié.
+*/
 @Injectable({ providedIn: 'root' })
 export class PicCoefficientService {
 
- private static readonly ID_PIC_VERSION_SCENARIO = 2;
+ readonly apiTrppuUrl = environment.trppuApiUrl;
+ private readonly baseUrl = `${this.apiTrppuUrl}/scenarios`;
 
- private static readonly KEY_OVERRIDES = 'trppu.pic_overrides';
+ constructor(
+  private http: HttpClient,
+  private context: TrppuContextService,
+ ) {}
 
- private static readonly JOURS: JourSemaine[] = ['LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
+ /**
+ * DSR-660 : paramétrage PIC du scénario (défaut national surchargé par le
+ * scénario), converti au format IHM (jours LUN..SAM, coef numérique).
+ */
+ getPicScenario(idScenario: number): Observable<PicScenarioView> {
+  return this.http.get<PicScenarioOut>(
+   `${this.baseUrl}/${idScenario}/pic-coefficients`,
+   { params: this.sessionParams() },
+  ).pipe(map((out) => this.toView(out)));
+ }
 
- getCoefficients(idScenario: number | null): Observable<PicCoefficient[]> {
-  const defauts = this.buildDefauts();
-
-  if (idScenario == null) {
-   return of(defauts).pipe(delay(200));
-  }
-
-  // Fusion défauts + overrides du scénario (id_pic_version != 1).
-  const overrides = this.loadOverrides(idScenario);
-  const fusion = defauts.map((c) => {
-   const key = this.cellKey(c.co_produit, c.jour_semaine, c.densite);
-   const ov = overrides[key];
-   return ov != null
-    ? { ...c, coef: ov, id_pic_version: PicCoefficientService.ID_PIC_VERSION_SCENARIO }
-    : c;
-  });
-  return of(fusion).pipe(delay(200));
+ /** DSR-660 : uniquement la liste aplatie des coefficients (une cellule chacun). */
+ getCoefficients(idScenario: number): Observable<PicCoefficient[]> {
+  return this.getPicScenario(idScenario).pipe(map((v) => v.coefficients));
  }
 
  /**
  * DSR-661 : enregistre un coefficient modifié pour le scénario en cours.
- * Reçoit id_scenario, co_produit, jour_semaine, coef, densite.
+ * `id_scenario` est passé dans l'URL (le backend rejette tout champ en trop
+ * dans le body). Retourne l'action réalisée et l'id_pic_version à reporter
+ * sur la cellule.
  */
- updateCoefficient(payload: PicCoefUpdate): Observable<void> {
-  // Simulation de la persistance back : stockage de l'override.
-  const overrides = this.loadOverrides(payload.id_scenario);
-  overrides[this.cellKey(payload.co_produit, payload.jour_semaine, payload.densite)] = payload.coef;
-  this.saveOverrides(payload.id_scenario, overrides);
-
-  // delay => la cellule reste "en cours" (rouge) le temps de l'aller-retour.
-  return of(void 0).pipe(delay(500));
- }
-
- // ---------------------------------------------------------------------------
- // Simulation des overrides (persistés en localStorage pour survivre au reload)
- // ---------------------------------------------------------------------------
- private loadOverrides(idScenario: number): Record<string, number> {
-  const raw = localStorage.getItem(this.overridesKey(idScenario));
-  if (!raw) {
-   return {};
-  }
-  try {
-   return JSON.parse(raw) as Record<string, number>;
-  } catch {
-   return {};
-  }
- }
-
- private saveOverrides(idScenario: number, overrides: Record<string, number>): void {
-  localStorage.setItem(this.overridesKey(idScenario), JSON.stringify(overrides));
- }
-
- private overridesKey(idScenario: number): string {
-  return `${PicCoefficientService.KEY_OVERRIDES}.${idScenario}`;
- }
-
- private cellKey(coProduit: string, jour: JourSemaine, densite: Densite): string {
-  return `${coProduit}|${jour}|${densite}`;
- }
-
- private buildDefauts(): PicCoefficient[] {
-  const grille: Record<string, (number | null)[][]> = {
-   OO: [[21.7, 1.3, null], [19.8, 0.7, null], [16.1, 0.7, 0.0], [17.9, 0.7, 0.0], [18.1, 0.7, 0.0], [2.4]],
-   OS: [[14.4, 2.7, null], [10.5, 1.9, null], [13.7, 2.5, 0.0], [14.2, 2.6, 0.0], [14.5, 2.7, 0.0], [20.1]],
-   PR: [[14.4, 5.0, null], [12.9, 5.3, null], [12.2, 5.4, 0.0], [12.9, 5.3, 0.0], [13.6, 5.1, 0.0], [7.9]],
-   CO: [[7.3, 7.3, null], [5.7, 5.7, null], [9.7, 9.7, 0.0], [9.7, 9.7, 0.0], [9.3, 9.3, 0.0], [16.7]],
-   PP: [[14.8, 1.9, null], [14.8, 1.9, null], [14.8, 1.9, 0.0], [14.8, 1.9, 0.0], [14.8, 1.9, 0.0], [16.5]],
-   IP: [[25.0, 0.0, null], [25.0, 0.0, null], [25.0, 0.0, 0.0], [25.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0]],
+ updateCoefficient(idScenario: number, payload: PicCoefUpdate): Observable<PicCoefUpsertResult> {
+  const body = {
+   co_produit: payload.co_produit,
+   jour_semaine: JOUR_FRONT_TO_API[payload.jour_semaine],
+   densite: payload.densite,
+   coef: payload.coef,
+   id_rh: payload.id_rh,
   };
+  return this.http.put<PicCoefUpsertResult>(
+   `${this.baseUrl}/${idScenario}/pic-coefficients`,
+   body,
+   { params: this.sessionParams() },
+  );
+ }
 
-  const coeffs: PicCoefficient[] = [];
-  for (const coProduit of Object.keys(grille)) {
-   grille[coProduit].forEach((valeursJour, indexJour) => {
-    const jour = PicCoefficientService.JOURS[indexJour];
-    valeursJour.forEach((coef, densite) => {
-     coeffs.push({
-      co_produit: coProduit,
-      jour_semaine: jour,
-      densite: densite as Densite,
-      coef,
-      id_pic_version: ID_PIC_VERSION_DEFAUT,
-     });
-    });
-   });
-  }
-  return coeffs;
+ private toView(out: PicScenarioOut): PicScenarioView {
+  return {
+   idPicVersionDefaut: out.id_pic_version_defaut ?? ID_PIC_VERSION_DEFAUT,
+   idPicVersionScenario: out.id_pic_version_scenario,
+   niveauScenario: out.niveau_scenario,
+   coefficients: out.coefficients.map((c) => ({
+    co_produit: c.co_produit,
+    jour_semaine: JOUR_API_TO_FRONT[c.jour_semaine],
+    densite: c.densite,
+    coef: c.coef == null ? null : Number(c.coef),
+    id_pic_version: c.id_pic_version,
+   })),
+  };
+ }
+
+ /** Paramètre de traçabilité id_session_ihm exigé par YS04 pour les logs. */
+ private sessionParams(): HttpParams {
+  return new HttpParams().set('id_session_ihm', this.context.getOrCreateIdSession());
  }
 }
-

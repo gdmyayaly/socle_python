@@ -21,11 +21,10 @@
  </app-trppu-periode-neutraliser>
 
   <div *ngIf="selectedScenario"> 
-  <app-trppu-variation-previsionnelle 
+  <app-trppu-variation-previsionnelle
   [class.disabled-content]="!selectedScenario"
     [idScenario]="selectedScenario?.id_scenario"
     [readonly]="selectedScenario?.est_fige">
-    /* (variationsChange)="onVariationsPrevChange($event)"> */
   </app-trppu-variation-previsionnelle>
   </div>
 

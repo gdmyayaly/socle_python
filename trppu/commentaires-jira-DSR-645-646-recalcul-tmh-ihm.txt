@@ -1,0 +1,134 @@
+================================================================================
+COMMENTAIRE JIRA — DSR-645 / DSR-652 (IHM : recalcul automatique des moyennes
+TMH à l'ajout / la suppression d'une période neutralisée)
+================================================================================
+
+*Intégration IHM terminée* — l'ajout ou la suppression d'une période
+neutralisée depuis l'écran "Paramètres" (composant `trppu-periode-neutraliser`)
+déclenche désormais AUTOMATIQUEMENT le recalcul et la persistance des moyennes
+TMH du scénario : les jours neutralisés sont déduits du nombre de jours
+ouvrables utilisé comme dénominateur. La base est à jour immédiatement, que
+l'utilisateur retourne ou non sur l'écran "Calcul".
+
+*Chaîne exécutée par l'IHM après chaque écriture réussie*
+1. POST   {trppuApiUrl}/scenarios/{id}/neutralisations   (ou DELETE .../{id_n})
+2. — déclenchement automatique (coalescé, voir plus bas) —
+3. GET    {trppuApiUrl}/scenarios/{id}                    (nb_jours_* frais)
+   GET    {trppuApiUrl}/scenarios/{id}/neutralisations    (somme des nb_jour)
+   GET    {trppuApiUrl}/scenarios/{id}/variations         (pct par produit)
+   GET    {trppuApiUrl}/scenarios/{id}/tmh                (lignes brutes)
+4. PUT    {trppuApiUrl}/scenarios/{id}/tmh                (batch, DSR-659)
+
+*Règles de calcul appliquées (nouveau service IHM `TmhRecalculService`)*
+- Base de jours alignée sur la règle backend DSR-656 :
+  base = nb_jours_ouvres si nb_jours_semaine = 5, sinon nb_jours_ouvrables.
+- Jours ouvrables effectifs : jEff = max(base − somme(nb_jour neutralisés), 0).
+- Moyenne journalière = round((volume_realise + volume_previsionnel) / jEff)
+  Moyenne hebdo       = round(nb_jours_semaine × (…) / jEff)
+  (formules existantes de `TraficService`, réutilisées à l'identique).
+- IMPORTANT : les volumes stockés en TMH restent BRUTS ; seules les moyennes
+  intègrent la déduction. Le recalcul est donc ré-exécutable à volonté sans
+  effet cumulatif.
+- Lignes manuelles (bl_manuel) : moyennes recalculées sur le volume réalisé
+  seul, avec le même jEff. Lignes exclues (bl_exclu) : recalculées aussi,
+  flag reporté tel quel.
+
+*Robustesse*
+- Demandes coalescées (500 ms) puis SÉRIALISÉES : jamais deux recalculs
+  concurrents ; chaque exécution relit l'état frais en base (le dernier gagne).
+- Scénario figé (est_fige) : aucun recalcul, aucune écriture (double garde
+  composant + service).
+- Échec réseau : 1 relance automatique (délai 2 s) puis modal utilisateur
+  "Les moyennes TMH n'ont pas pu être recalculées…". Aucune écriture partielle
+  possible (lecture atomique via forkJoin) ; l'état se répare seul au prochain
+  recalcul ou au prochain calcul pivot.
+- Au passage, les appels HTTP directs du composant ont été extraits dans un
+  service dédié `NeutralisationService` (gestion 409/422 inchangée).
+
+*Cohérence avec l'écran "Calcul" (composant `trppu-trafics-calculer`)*
+- Le rafraîchissement de la table TMH charge d'abord les ajustements du
+  scénario : les moyennes des comptages manuels utilisent jEff.
+- Le recalcul complet depuis Databricks (get_trafics_pivot) ré-applique
+  lui aussi la déduction avant l'upsert : un recalcul pivot ultérieur
+  (validation de période, changement 5/6 jours) n'écrase plus les
+  neutralisations. Repli sur le nb_jours de la réponse pivot si les champs
+  nb_jours_* du scénario sont absents.
+- Au retour sur l'écran "Calcul", seule la relecture GET /tmh est émise
+  (les moyennes stockées sont déjà ajustées) : aucun appel Databricks inutile.
+
+*Limites connues (backend non modifié, à arbitrer côté PO)*
+- Le champ `nb_jours_scenario` du scénario n'est recalculé par le backend
+  qu'au PUT /scenarios/{id} (DSR-656) : l'IHM n'en dépend plus (elle refait
+  la déduction localement), mais la colonne en base peut rester périmée entre
+  deux validations de période.
+- Au changement 5 <-> 6 jours/semaine, les `nb_jour` déjà stockés des
+  neutralisations ont été calculés avec l'ancien réglage (une période
+  contenant un samedi vaut 1 jour de plus en 6 j). Même limite que le backend ;
+  une évolution service (recalcul des nb_jour au PATCH nb-jours-semaine)
+  serait souhaitable.
+
+================================================================================
+COMMENTAIRE JIRA — DSR-646 / DSR-651 (IHM : application automatique des
+variations prévisionnelles au calcul des moyennes TMH)
+================================================================================
+
+*Intégration IHM terminée* — toute modification d'une variation prévisionnelle
+depuis l'écran "Paramètres" (sliders −100 % / +100 %, composant
+`trppu-variation-previsionnelle`) déclenche automatiquement le recalcul et la
+persistance des moyennes TMH : le pourcentage est appliqué (ajout ou déduction)
+au volume prévisionnel de chaque produit dans le calcul des moyennes.
+
+*Chaîne exécutée par l'IHM*
+1. Les mouvements de slider sont désormais REGROUPÉS (debounce 400 ms) :
+   un lot de PUT {trppuApiUrl}/scenarios/{id}/variations/{co_produit}
+   par produit modifié (au lieu d'un PUT par cran de slider auparavant).
+2. Après le succès du lot : même chaîne de recalcul que ci-dessus
+   (GET scenario + neutralisations + variations + tmh, puis PUT /tmh),
+   déclenchée UNE fois pour le lot.
+
+*Règles de calcul appliquées*
+- volume_previsionnel_ajusté = round(volume_previsionnel_brut × (1 + pct/100)) ;
+  moyennes journalière/hebdo recalculées avec ce volume ajusté et le jEff
+  décrit au commentaire précédent (neutralisations et variations sont donc
+  appliquées ensemble, de façon cohérente).
+- Le volume prévisionnel STOCKÉ reste brut : revenir à 0 % restitue exactement
+  les moyennes d'origine (pas d'effet cumulatif). `variation_pct = 0` reste un
+  upsert normal (suppression côté back, DSR-646) ; l'absence de ligne est
+  traitée comme 0 % par le recalcul.
+- La variation ne s'applique PAS aux comptages manuels (bl_manuel) : un volume
+  mesuré par l'utilisateur n'est pas un prévisionnel — il n'est pas dénaturé.
+
+*Cohérence avec l'écran "Calcul"*
+- Identique au commentaire précédent : le recalcul pivot Databricks ré-applique
+  les variations avant l'upsert ; le retour sur l'écran "Calcul" relit
+  simplement les moyennes stockées (déjà ajustées).
+
+*Garde-fous*
+- readonly / scénario figé : aucun PUT variation, aucun recalcul.
+- id_rh absent du contexte : le recalcul n'est pas déclenché (même précondition
+  que les écritures existantes).
+- Erreur d'enregistrement d'un lot : message "Erreur d'enregistrement de la
+  variation.", pas de recalcul (rien n'a changé en base).
+
+*Vérifications effectuées*
+- Compilation TypeScript (tsc 4.7, typings Angular 14 / RxJS 7.5) sans erreur
+  sur l'ensemble des fichiers créés/modifiés et leurs dépendances.
+- Scénario de test manuel documenté (onglet réseau) :
+  . ajout d'une neutralisation de N jours -> PUT /tmh avec volumes inchangés
+    et moyenne_journaliere = round((vR+vP)/(base−N)) ;
+  . slider +10 % (plusieurs crans rapides) -> UN lot de PUT variations + UN
+    recalcul ; volume_previsionnel du PUT resté brut, moyennes ×1,10 ;
+    retour à 0 % -> moyennes d'origine restituées ;
+  . retour écran "Calcul" -> GET /tmh seul, valeurs ajustées affichées ;
+  . revalidation de la période (pivot) -> les ajustements sont conservés ;
+  . scénario figé -> aucun PUT /tmh émis depuis "Paramètres".
+
+*Fichiers IHM concernés (module trppu)*
+- services/tmh-recalcul.service.ts        (nouveau — cœur du dispositif)
+- services/neutralisation.service.ts      (nouveau)
+- services/scenario.service.ts            (ajout listTmhRaw)
+- components/trppu-periode-neutraliser/   (déclencheur + service dédié)
+- components/trppu-variation-previsionnelle/ (debounce + déclencheur)
+- components/trppu-trafics-calculer/      (cohérence écran Calcul)
+- parameters/parameters.component.html    (nettoyage)
+================================================================================

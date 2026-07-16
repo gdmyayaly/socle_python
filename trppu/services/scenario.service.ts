@@ -294,6 +294,16 @@ export class ScenarioService {
     );
   }
 
+  /**
+   * List raw TMH rows for a scenario, without display normalization.
+   * GET /scenarios/{id_scenario}/tmh
+   * Utilisé par le recalcul des moyennes (TmhRecalculService) qui a besoin
+   * des lignes brutes (bl_exclu / bl_manuel / id_tmh) sans agrégation.
+   */
+  listTmhRaw(idScenario: number): Observable<Tmh[]> {
+    return this.http.get<Tmh[]>(`${this.baseUrl}/${idScenario}/tmh`);
+  }
+
   private normalizeTraficsResponse(response: any, nbJoursOuvrables: number, joursSemaine: number): TraficCalcule[] {
     const rows    = Array.isArray(response) ? response : [];
     const trafics = [];

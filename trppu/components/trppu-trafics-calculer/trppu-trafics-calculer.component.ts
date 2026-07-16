@@ -1,7 +1,7 @@
 import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, OnInit } from '@angular/core';
 import { MatDialog, MatDialogRef } from '@angular/material/dialog';
 import { forkJoin } from 'rxjs';
-import { retry, finalize, switchMap, tap } from 'rxjs/operators';
+import { retry, finalize, switchMap, map } from 'rxjs/operators';
 
 import { TraficCalcule } from '../../models/trafic-calcule.model';
 import { TraficPivot } from '../../models/trafic-pivot.model';
@@ -11,6 +11,7 @@ import { Produit } from '../../models/produit.model';
 import { TraficService } from '../../services/trafics.service';
 import { ScenarioService } from '../../services/scenario.service';
 import { ComptageService } from '../../services/comptage.service';
+import { TmhRecalculService, AjustementsScenario } from '../../services/tmh-recalcul.service';
 import { UserService } from '../../../../service/user/user.service';
 import { DSRUser } from '../../../../model/user.model';
 
@@ -60,6 +61,9 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
  trafics: TraficCalcule[] = [];
  private rawTrafics: Tmh[] = [];
 
+ /** Ajustements courants du scénario (jours neutralisés + variations %). */
+ private ajustements: AjustementsScenario | null = null;
+
  availableProduits: Produit[] = [];
  manuelsProduits: Produit[] = [];
  newTraficId: string | null = null;
@@ -76,6 +80,7 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
   private scenarioService: ScenarioService,
   private userService: UserService,
   private comptageService: ComptageService,
+  private tmhRecalcul: TmhRecalculService,
   private dialog: MatDialog,
  ) {
   this.resolveProduits();
@@ -94,7 +99,23 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
  }
 
  refresh(update: boolean = false): void {
-  this.loadTraficsScenario(update);
+  if (this.scenarioId === null) {
+   this.trafics = [];
+   return;
+  }
+
+  // Charge d'abord les ajustements (jours neutralisés + variations) pour que
+  // les moyennes des lignes manuelles/comptages utilisent le nombre de jours
+  // ouvrables effectif du scénario.
+  this.tmhRecalcul.getAjustements(this.scenarioId, this.joursParSemaine).subscribe({
+   next: (ajustements) => {
+    this.ajustements = ajustements;
+    this.joursOuvrables = ajustements.joursOuvrablesEffectifs;
+    this.loadTraficsScenario(update);
+   },
+   // Repli : on relit les TMH avec les valeurs courantes (comportement historique).
+   error: () => this.loadTraficsScenario(update)
+  });
  }
 
  onJoursParSemaineChange(value: JoursParSemaine): void {
@@ -237,16 +258,37 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
   // Prévient l'utilisateur via un modal si le traitement dépasse le seuil.
   this.startLongProcessTimer();
 
-  this.traficService
-   .getTraficsPivot({ coRegate, dateDebut, dateFin, datePivot, joursSemaine, currentTmh: this.trafics })
+  forkJoin({
+   pivot: this.traficService
+    .getTraficsPivot({ coRegate, dateDebut, dateFin, datePivot, joursSemaine, currentTmh: this.trafics })
+    .pipe(
+     // En cas d'échec (ex. 502 dû à un traitement long), on relance jusqu'à
+     // MAX_PIVOT_RETRIES fois, avec un délai entre chaque tentative.
+     retry({ count: MAX_PIVOT_RETRIES, delay: RETRY_DELAY_MS })
+    ),
+   // Jours neutralisés + variations % du scénario, appliqués aux moyennes
+   // pour ne pas écraser les ajustements faits depuis /parameters.
+   ajustements: this.tmhRecalcul
+    .getAjustements(scenarioId, joursSemaine)
+    .pipe(retry({ count: 1, delay: RETRY_DELAY_MS }))
+  })
    .pipe(
-    // En cas d'échec (ex. 502 dû à un traitement long), on relance jusqu'à
-    // MAX_PIVOT_RETRIES fois, avec un délai entre chaque tentative.
-    retry({ count: MAX_PIVOT_RETRIES, delay: RETRY_DELAY_MS }),
-    tap(newtrafics => this.joursOuvrables = newtrafics.nbJoursOuvrables),
+    map(({ pivot, ajustements }) => {
+     // Base DSR-656 (ouvrés en 5 j / ouvrables en 6 j) ; repli sur la base
+     // pivot si les nb_jours du scénario sont absents.
+     const base = ajustements.nbJoursBase > 0 ? ajustements.nbJoursBase : pivot.nbJoursOuvrables;
+     const ajustementsEffectifs: AjustementsScenario = {
+      ...ajustements,
+      nbJoursBase: base,
+      joursOuvrablesEffectifs: Math.max(base - ajustements.nbJoursNeutralises, 0)
+     };
+     this.ajustements = ajustementsEffectifs;
+     this.joursOuvrables = ajustementsEffectifs.joursOuvrablesEffectifs;
+     return this.tmhRecalcul.applyAjustements(pivot.tmh, ajustementsEffectifs);
+    }),
     // Enchaîne sur l'enregistrement des TMH calculés.
-    switchMap(newtrafics =>
-     this.scenarioService.upsertTmh(scenarioId, this.utilisateurConnecter.idRh, newtrafics.tmh)
+    switchMap(tmh =>
+     this.scenarioService.upsertTmh(scenarioId, this.utilisateurConnecter.idRh, tmh)
     ),
     // Ferme toujours le modal d'attente, succès comme échec.
     finalize(() => this.clearLongProcessTimer())
