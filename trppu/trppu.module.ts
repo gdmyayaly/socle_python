@@ -26,6 +26,7 @@ import { TrppuProduitAExclureComponent } from './components/trppu-produit-a-excl
 // import { TrppuLoadderComponent } from './components/trppu-loadder/trppu-loadder.component';
 import { HTTP_INTERCEPTORS } from '@angular/common/http';
 import { LoaderInterceptor } from './components/trppu-loadder/loader.interceptor';
+import { SessionIhmInterceptor } from './services/session-ihm.interceptor';
 import { TrppuVariationPrevisionnelleComponent } from './components/trppu-variation-previsionnelle/trppu-variation-previsionnelle.component';
 @NgModule({
   declarations: [
@@ -67,6 +68,11 @@ import { TrppuVariationPrevisionnelleComponent } from './components/trppu-variat
       provide:HTTP_INTERCEPTORS,
       useClass : LoaderInterceptor,
       multi:true // pour le multi interceptor
+    },
+    {
+      provide:HTTP_INTERCEPTORS,
+      useClass : SessionIhmInterceptor,
+      multi:true // id_session_ihm sur tous les appels /trppu-api (traçabilité Kibana)
     }
   ]
 })

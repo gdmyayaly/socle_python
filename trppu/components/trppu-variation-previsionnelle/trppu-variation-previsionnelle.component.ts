@@ -27,7 +27,7 @@ export class TrppuVariationPrevisionnelleComponent implements OnChanges, OnInit,
 
  readonly min = -100;
  readonly max = 100;
- readonly step = 5;
+ readonly step = 1;
 
  variations: VariationPrevisionnelle[] = [];
  loading = false;
