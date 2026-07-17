@@ -105,16 +105,12 @@
 .coef-cell.scenario,
 .coef-cell.scenario .coef-input { color: #2e7d32; font-weight: 700; }
 
-/* Modification en cours : gras + rouge */
+/* Modification en cours : gras + vert */
 .coef-cell.modified,
-.coef-cell.modified .coef-input { color: #d32f2f; font-weight: 700; }
+.coef-cell.modified .coef-input { color: #2e7d32; font-weight: 700; }
 
 /* Cellule en erreur (hors plage) */
 .coef-cell.err { outline: 2px solid #d32f2f; outline-offset: -2px; }
-
-/* Total trafic */
-.total-row .col-produit { background: #f0f0f0; }
-.coef-cell.total { background: #f0f0f0; font-weight: 600; }
 
 /* Input d'édition */
 .input-wrap {
@@ -148,5 +144,5 @@
 }
 .legend { font-weight: 700; }
 .legend.scenario { color: #2e7d32; }
-.legend.modified { color: #d32f2f; }
+.legend.modified { color: #2e7d32; }
 

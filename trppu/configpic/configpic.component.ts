@@ -18,7 +18,7 @@ interface CoefCell {
  coef: number | null;
  id_pic_version: number;
  edit: string;   // texte saisi dans l'input (sans le "%")
- pending: boolean; // enregistrement en cours -> gras/rouge
+ pending: boolean; // enregistrement en cours -> gras/vert
  error: boolean;  // valeur hors plage 0-100
 }
 
@@ -98,7 +98,6 @@ export class ConfigpicComponent implements OnInit {
 
  // Corps
  rows: CoefRow[] = [];
- totalRow: (number | null)[] = [];
 
  loading = false;
  errorMessage: string | null = null;
@@ -141,7 +140,6 @@ export class ConfigpicComponent implements OnInit {
   // le paramétrage PIC n'est pas disponible.
   if (this.idScenario == null) {
    this.buildRows([]);
-   this.recomputeTotals();
    this.errorMessage = 'Aucun scénario en cours : paramétrage PIC indisponible.';
    return;
   }
@@ -152,7 +150,6 @@ export class ConfigpicComponent implements OnInit {
    next: (vue) => {
     this.idPicVersionScenario = vue.idPicVersionScenario;
     this.buildRows(vue.coefficients);
-    this.recomputeTotals();
     this.loading = false;
    },
    error: (err) => {
@@ -262,12 +259,11 @@ export class ConfigpicComponent implements OnInit {
    return;
   }
 
-  // Modification en cours : gras + rouge, mise à jour immédiate des totaux.
+  // Modification en cours : gras + vert.
   const precedent = cell.coef;
   cell.coef = valeur;
   cell.edit = this.numToFr(valeur);
   cell.pending = true;
-  this.recomputeTotals();
 
   this.picService.updateCoefficient(this.idScenario!, {
    co_produit: cell.co_produit,
@@ -287,7 +283,6 @@ export class ConfigpicComponent implements OnInit {
     cell.pending = false;
     cell.coef = precedent;
     cell.edit = this.numToFr(precedent);
-    this.recomputeTotals();
     if (err?.status === 409) {
      this.errorMessage = 'Scénario figé ou non modifiable : coefficient non enregistré.';
     } else if (err?.status === 422) {
@@ -298,23 +293,6 @@ export class ConfigpicComponent implements OnInit {
      this.errorMessage = 'Erreur lors de l\'enregistrement du coefficient.';
     }
    },
-  });
- }
-
- // ---------------------------------------------------------------------------
- // Total trafic par colonne — RG à définir avec le métier.
- // Placeholder : moyenne des coefficients produits non vides de la colonne.
- // ---------------------------------------------------------------------------
- private recomputeTotals(): void {
-  this.totalRow = this.columns.map((_, i) => {
-   const valeurs = this.rows
-    .map((r) => r.cells[i].coef)
-    .filter((v): v is number => v != null);
-   if (valeurs.length === 0) {
-    return null;
-   }
-   const moyenne = valeurs.reduce((a, b) => a + b, 0) / valeurs.length;
-   return Math.round(moyenne * 10) / 10;
   });
  }
 

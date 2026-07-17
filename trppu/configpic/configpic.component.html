@@ -75,12 +75,6 @@
       </ng-container>
      </td>
     </tr>
-
-    <!-- Total trafic (RG à définir avec le métier) -->
-    <tr class="total-row">
-     <th class="col-produit">total trafic</th>
-     <td *ngFor="let t of totalRow" class="coef-cell total">{{ formatCoef(t) }}</td>
-    </tr>
    </tbody>
   </table>
  </div>
@@ -88,8 +82,7 @@
  <p class="pic-note">
   Les coefficients propres au scénario (id_pic_version ≠ 1) sont en
   <span class="legend scenario">vert</span> ; une modification en cours d'enregistrement
-  apparaît en <span class="legend modified">rouge</span>.
-  Total trafic : règle de gestion à définir avec le métier (moyenne provisoire).
+  apparaît en <span class="legend modified">vert</span>.
  </p>
 
 </div>

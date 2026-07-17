@@ -64,7 +64,7 @@ ARCHIVE    -> {}                               (terminal)
 | `POST`  | `/trppu-api/scenarios/{id_scenario}/mise-en-prod` | **Seule manière d'atteindre EN PRODUCTION** |
 | `PATCH` | `/trppu-api/scenarios/{id_scenario}/est-fige` | Force le flag est_fige |
 | `PATCH` | `/trppu-api/scenarios/{id_scenario}/lb-scenario` | MAJ libellé |
-| `POST`  | `/trppu-api/scenarios/{id_scenario}/duplicate` | Clone en `EN COURS` v1 (sans tracking parent) |
+| `POST`  | `/trppu-api/scenarios/{id_scenario}/duplicate` | Copie profonde (entête + historique TMH/PIC/etc.) en `EN COURS` v1 |
 
 > Plus de `GET /history` (la lignée parent a été retirée du modèle).
 
@@ -135,14 +135,29 @@ Lève **422** si le statut courant n'est pas `VALIDE`.
 
 ### 3.6 `POST /trppu-api/scenarios/{id_scenario}/duplicate`
 
-Body optionnel :
+Body requis (`id_rh` obligatoire, `lb_scenario` optionnel — défaut `"<source> (copie)"`,
+tronqué à 20) :
 ```json
-{ "lb_scenario": "Mon clone" }
+{ "id_rh": "U123456", "lb_scenario": "Mon clone" }
 ```
 
-Le clone est créé en `EN COURS`, `version_scenario = 1`, `est_fige = 0`, copie
-toutes les colonnes métier sauf l'id, dt_*, statut, version, est_fige. Pas de
-tracking parent : aucun lien clone↔source persisté.
+**Copie profonde** : le clone est créé en `EN COURS`, `version_scenario = 1`,
+`est_fige = 0`, avec :
+- l'entête complète (périodes, `nb_jours_*`, `dt_pivot`, `dt_mise_en_oeuvre`,
+  flags `trafic_*_calcule`) — `dt_validation` / `dt_mise_en_prod` restent NULL ;
+- toutes les données filles : `trppu_tmh`, `trppu_neutralisations`,
+  `trppu_scenario_comptages_manuels`, `trppu_scenario_exclusions`,
+  `trppu_scenario_variations_prev`, `trppu_scenario_pic_coeffs`,
+  `trppu_trafic_agrebal`, `trppu_trafic_pdi` (dates d'historique conservées) ;
+- le PIC : si la source a une version PIC niveau `SCENARIO`, une **nouvelle**
+  `trppu_pic_version` est créée pour le clone avec la copie de ses
+  `trppu_pic_coefficients` ; sinon le clone garde l'`id_pic_version` partagé.
+
+L'`id_rh` du body (chiffré) devient l'auteur du clone (`id_rh_creation`) et
+remplace l'`id_rh` des lignes filles copiées. Les logs (`trppu_api_log`,
+`trppu_recalcul_log`) ne sont pas copiés. La duplication d'un scénario figé ou
+archivé est permise. Pas de tracking parent : aucun lien clone↔source persisté.
+Tout est exécuté dans une transaction unique (rollback complet en cas d'erreur).
 
 ---
 

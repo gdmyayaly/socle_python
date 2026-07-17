@@ -163,6 +163,143 @@ async def delete_scenario_cascade(tx, id_scenario: int) -> None:
     await tx.execute("DELETE FROM trppu_scenario WHERE id_scenario = %s", (id_scenario,))
 
 
+# Miroir "copie" de SCENARIO_CHILD_TABLES pour la duplication profonde d'un
+# scénario (trppu_pic_version est traitée à part, cf. duplicate_scenario_pic_version).
+# Tuple : (table, colonnes copiées telles quelles, la table porte un id_rh à remplacer).
+# Les PK auto-increment ne sont jamais listées ; dt_calcul / dt_creation sont
+# copiées explicitement pour préserver l'historique (sinon les DEFAULT
+# CURRENT_TIMESTAMP écraseraient les dates d'origine).
+DUPLICATE_CHILD_SPECS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+    (
+        "trppu_tmh",
+        (
+            "co_produit",
+            "volume_realise",
+            "volume_previsionnel",
+            "moyenne_journaliere",
+            "moyenne_hebdo",
+            "dt_calcul",
+            "bl_exclu",
+            "bl_manuel",
+            "motif",
+        ),
+        True,
+    ),
+    (
+        "trppu_neutralisations",
+        ("dt_debut", "dt_fin", "nb_jour", "motif", "dt_creation"),
+        True,
+    ),
+    (
+        "trppu_scenario_comptages_manuels",
+        ("dt_comptage", "co_produit", "nb_produit"),
+        False,
+    ),
+    ("trppu_scenario_exclusions", ("co_produit", "motif"), False),
+    (
+        "trppu_scenario_variations_prev",
+        ("co_produit", "variation_pct", "dt_creation"),
+        True,
+    ),
+    (
+        "trppu_scenario_pic_coeffs",
+        ("co_produit", "jour_semaine", "coef_dense", "coef_faible1", "coef_faible2"),
+        False,
+    ),
+    (
+        "trppu_trafic_agrebal",
+        ("co_regate", "id_agrebal", "co_produit", "jour_semaine", "couleur_pic", "volume"),
+        False,
+    ),
+    (
+        "trppu_trafic_pdi",
+        (
+            "co_regate",
+            "id_agrebal",
+            "id_pdi",
+            "co_produit",
+            "jour_semaine",
+            "dense",
+            "faible1",
+            "faible2",
+            "dt_calcul",
+            "id_calcul_batch",
+        ),
+        False,
+    ),
+)
+
+
+async def duplicate_scenario_children(
+    tx, src_id: int, new_id: int, id_rh_token: str | None
+) -> dict[str, int]:
+    """Copie toutes les données filles de src_id vers new_id (INSERT ... SELECT).
+
+    Retourne {table: nb_lignes_copiées}. Sur les tables portant un id_rh
+    (cf. DUPLICATE_CHILD_SPECS), l'auteur d'origine est remplacé par
+    id_rh_token (le demandeur de la duplication).
+    """
+    counts: dict[str, int] = {}
+    for table, cols, replace_rh in DUPLICATE_CHILD_SPECS:
+        col_list = ", ".join(cols)
+        if replace_rh:
+            sql = (
+                f"INSERT INTO {table} (id_scenario, {col_list}, id_rh) "
+                f"SELECT %s, {col_list}, %s FROM {table} WHERE id_scenario = %s"
+            )
+            params = (new_id, id_rh_token, src_id)
+        else:
+            sql = (
+                f"INSERT INTO {table} (id_scenario, {col_list}) "
+                f"SELECT %s, {col_list} FROM {table} WHERE id_scenario = %s"
+            )
+            params = (new_id, src_id)
+        counts[table] = await tx.execute(sql, params)
+    return counts
+
+
+async def duplicate_scenario_pic_version(
+    tx, src_id: int, new_id: int, co_regate: str, id_rh_token: str | None
+) -> int | None:
+    """Duplique la version PIC niveau SCENARIO de la source, si elle existe.
+
+    Crée une nouvelle trppu_pic_version pour le clone, copie ses coefficients
+    (trppu_pic_coefficients) et pointe l'entête du clone dessus. Retourne le
+    nouvel id_pic_version, ou None si la source n'a pas de version SCENARIO
+    active (le clone garde alors l'id_pic_version hérité de l'entête source,
+    version nationale/partagée).
+    """
+    from app.routes.trppu_scenario_pic.helpers import fetch_scenario_pic_version
+
+    src_version = await fetch_scenario_pic_version(tx, src_id)
+    if not src_version:
+        return None
+    src_pic_id = int(src_version["id_pic_version"])
+
+    await tx.execute(
+        "INSERT INTO trppu_pic_version "
+        "(lb_pic_version, niveau, co_regate, id_scenario, dt_activation, "
+        " id_rh_creation, id_rh_maj) "
+        "VALUES (%s, 'SCENARIO', %s, %s, NOW(), %s, %s)",
+        (f"{co_regate}_{new_id}", co_regate, new_id, id_rh_token, id_rh_token),
+    )
+    row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
+    new_pic_id = int(row["id"])
+
+    await tx.execute(
+        "INSERT INTO trppu_pic_coefficients "
+        "(id_pic_version, co_produit, jour_semaine, dt_effet, dt_fin, coef, densite, id_rh) "
+        "SELECT %s, co_produit, jour_semaine, dt_effet, dt_fin, coef, densite, %s "
+        "FROM trppu_pic_coefficients WHERE id_pic_version = %s",
+        (new_pic_id, id_rh_token, src_pic_id),
+    )
+    await tx.execute(
+        "UPDATE trppu_scenario SET id_pic_version = %s WHERE id_scenario = %s",
+        (new_pic_id, new_id),
+    )
+    return new_pic_id
+
+
 async def ensure_site_exists(
     tx,
     co_regate: str,

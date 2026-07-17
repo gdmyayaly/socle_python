@@ -205,7 +205,8 @@ class LbScenarioUpdate(BaseModel):
 
 
 class DuplicateRequest(BaseModel):
-    """Body optionnel pour POST /duplicate : permet d'écraser le libellé du clone."""
+    """Body POST /duplicate : id_rh requis (traçabilité du clone), lb_scenario optionnel."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    id_rh: str = Field(..., min_length=1)
     lb_scenario: Optional[str] = Field(None, min_length=1, max_length=20)

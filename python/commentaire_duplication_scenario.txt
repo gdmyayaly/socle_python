@@ -1,0 +1,89 @@
+Refonte de la duplication de scénario — copie complète de l'historique (back trppu API)
+=======================================================================================
+
+Contexte
+--------
+Jusqu'ici, la duplication d'un scénario (POST /trppu-api/scenarios/{id_scenario}/duplicate)
+ne copiait que l'entête de la table trppu_scenario : aucune donnée fille (TMH, PIC,
+neutralisations, comptages, variations...) n'était reprise, et le clone était créé sans
+auteur (id_rh_creation = NULL). La méthode a été retravaillée pour que la duplication
+emporte TOUT l'historique du scénario et que le clone soit une copie fidèle et
+indépendante de la source.
+
+Travaux réalisés
+----------------
+1. Le body de la requête devient obligatoire : id_rh est désormais requis (traçabilité),
+   lb_scenario reste optionnel (défaut "<libellé source> (copie)", tronqué à 20 caractères).
+   ATTENTION breaking change : l'IHM doit maintenant envoyer { "id_rh": "..." }.
+2. Copie profonde de toutes les données rattachées au scénario (détail ci-dessous),
+   avec conservation des dates d'historique (dt_calcul, dt_creation) et remplacement
+   de l'id_rh d'origine par celui du demandeur sur les lignes copiées.
+3. Gestion du PIC : si la source possède une version PIC de niveau SCENARIO, une
+   NOUVELLE version PIC est créée pour le clone avec la copie de ses coefficients ;
+   le clone devient ainsi indépendant (modifier ses coefficients n'impacte plus la
+   source). Sinon, le clone conserve la version PIC partagée (nationale) de la source.
+4. Atomicité : toutes les écritures sont exécutées dans une transaction unique ;
+   la moindre erreur annule TOUT (aucun clone partiel possible).
+5. Le clone repart systématiquement en statut EN COURS, version 1, non figé.
+   La duplication d'un scénario figé ou archivé reste permise.
+6. Tests unitaires ajoutés (tests/test_duplicate_scenario.py) et documentation API
+   mise à jour.
+
+Ordre exact des opérations exécutées par l'endpoint
+---------------------------------------------------
+1.  Lecture du scénario source (404 si introuvable).
+2.  Résolution du libellé du clone (body lb_scenario, sinon "<source> (copie)",
+    tronqué à 20 caractères).
+3.  Chiffrement de l'id_rh du demandeur (jamais stocké ni loggé en clair).
+4.  OUVERTURE DE LA TRANSACTION.
+5.  Copie de l'entête trppu_scenario (INSERT ... SELECT sur la source) :
+    - copiés : co_regate, co_roc, dt_mise_en_oeuvre, dt_pivot, periode_debut/fin,
+      periode_realise_debut/fin, periode_prev_debut/fin, nb_jours_semaine,
+      nb_jours_ouvres, nb_jours_ouvrables, nb_jours_scenario, id_pic_version,
+      trafic_pdi_calcule, trafic_agrebal_calcule ;
+    - forcés : lb_scenario (nouveau libellé), statut = 'EN COURS',
+      dt_creation = NOW(), version_scenario = 1, est_fige = 0,
+      id_rh_creation / id_rh_maj = id_rh du demandeur (chiffré) ;
+    - laissés NULL : dt_validation, dt_mise_en_prod (dates de workflow
+      incohérentes avec un clone EN COURS).
+    Récupération de l'identifiant du clone (LAST_INSERT_ID).
+6.  Duplication du PIC scénario (si la source a une version PIC niveau SCENARIO active) :
+    6a. INSERT d'une nouvelle ligne trppu_pic_version (niveau 'SCENARIO',
+        libellé "<co_regate>_<id_clone>", dt_activation = NOW(), rattachée au clone).
+    6b. Copie des coefficients trppu_pic_coefficients de la version source vers la
+        nouvelle version (INSERT ... SELECT : co_produit, jour_semaine, dt_effet,
+        dt_fin, coef, densite ; id_rh = demandeur).
+    6c. UPDATE de l'entête du clone pour pointer sur la nouvelle version PIC.
+7.  Copie des 8 tables filles, dans cet ordre, chacune en un seul INSERT ... SELECT :
+    7a. trppu_tmh (volumes réalisés/prévisionnels, moyennes journalière et hebdo,
+        dt_calcul conservé, bl_exclu, bl_manuel, motif ; id_rh = demandeur).
+    7b. trppu_neutralisations (dt_debut, dt_fin, nb_jour, motif, dt_creation
+        conservée ; id_rh = demandeur).
+    7c. trppu_scenario_comptages_manuels (dt_comptage, co_produit, nb_produit).
+    7d. trppu_scenario_exclusions (co_produit, motif).
+    7e. trppu_scenario_variations_prev (co_produit, variation_pct, dt_creation
+        conservée ; id_rh = demandeur).
+    7f. trppu_scenario_pic_coeffs (co_produit, jour_semaine, coef_dense,
+        coef_faible1, coef_faible2).
+    7g. trppu_trafic_agrebal (trafics agrégés Agrebal calculés, copiés tels quels).
+    7h. trppu_trafic_pdi (trafics par PDI calculés, copiés tels quels, dt_calcul
+        et id_calcul_batch conservés).
+8.  COMMIT DE LA TRANSACTION (ou rollback complet si une étape a échoué -> HTTP 500).
+9.  Relecture du clone et réponse HTTP 201 avec l'entête complète (ScenarioOut).
+10. Log de fin avec l'id du clone, l'id de la nouvelle version PIC éventuelle,
+    le nombre de lignes copiées par table et la durée d'exécution.
+
+Données volontairement NON copiées
+----------------------------------
+- trppu_api_log et trppu_recalcul_log : journaux propres à chaque scénario (traçabilité).
+- trppu_produit et trppu_site : référentiels partagés, simplement réutilisés.
+- dt_validation / dt_mise_en_prod : le clone repart au début du cycle de vie.
+
+Exemple d'appel
+---------------
+POST /trppu-api/scenarios/42/duplicate
+{ "id_rh": "U123456", "lb_scenario": "Copie scénario T1" }
+
+Réponse : 201 + entête du nouveau scénario (EN COURS, version 1, non figé),
+avec tout l'historique (TMH, PIC, neutralisations, comptages, variations,
+exclusions, trafics calculés) rattaché au nouvel id_scenario.

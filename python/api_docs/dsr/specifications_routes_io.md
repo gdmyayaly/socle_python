@@ -139,9 +139,9 @@ Liste paginée. **Entrée** : query `co_regate?`, `co_roc?`, `statut?`, `est_fig
 **Altéré** : `trppu_scenario` **UPDATE** statut='ARCHIVE' + version+1.
 
 ## `POST /trppu-api/scenarios/{id_scenario}/duplicate`
-**Entrée** `DuplicateRequest` (optionnel) : `{ "lb_scenario": "Copie scénario T1" }`.
-**Sortie** : `ScenarioOut` (nouveau scénario). **Lu** : scénario source.
-**Altéré** : `trppu_scenario` **INSERT** (entête + périodes + nb_jours_semaine + id_pic_version copiés ; statut='EN COURS', version=1, est_fige=0). **Sous-ressources non copiées.**
+**Entrée** `DuplicateRequest` (requis) : `{ "id_rh": "U123456", "lb_scenario": "Copie scénario T1" }` (`lb_scenario` optionnel).
+**Sortie** : `ScenarioOut` (nouveau scénario). **Lu** : scénario source + sa version PIC niveau SCENARIO.
+**Altéré** (copie profonde, transaction unique) : `trppu_scenario` **INSERT** (entête complète copiée dont dt_pivot, nb_jours_*, flags trafic ; statut='EN COURS', version=1, est_fige=0, id_rh_creation=id_rh chiffré) ; **INSERT...SELECT** dans `trppu_tmh`, `trppu_neutralisations`, `trppu_scenario_comptages_manuels`, `trppu_scenario_exclusions`, `trppu_scenario_variations_prev`, `trppu_scenario_pic_coeffs`, `trppu_trafic_agrebal`, `trppu_trafic_pdi` ; si version PIC SCENARIO source : **INSERT** `trppu_pic_version` + copie `trppu_pic_coefficients` + **UPDATE** id_pic_version du clone. Logs non copiés.
 
 ## `DELETE /trppu-api/scenarios/{id_scenario}`
 **Entrée** : aucune. **Sortie** : `{ "deleted": true, "id_scenario": 42 }` (statut 200).

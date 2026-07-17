@@ -17,6 +17,8 @@ from .helpers import (
     assert_not_archive,
     default_periode,
     delete_scenario_cascade,
+    duplicate_scenario_children,
+    duplicate_scenario_pic_version,
     ensure_site_exists,
     fetch_scenario_or_404,
     increment_version,
@@ -849,10 +851,19 @@ async def update_lb_scenario(id_scenario: int, payload: LbScenarioUpdate):
     response_model=ScenarioOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest | None = None):
-    """Duplique un scénario en nouveau EN COURS, version 1, est_fige=0.
+async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest):
+    """Duplique un scénario et TOUT son historique en nouveau EN COURS, version 1, est_fige=0.
 
-    Pas de tracking parent (id_scenario_parent retiré du modèle).
+    Copie profonde : entête (périodes, nb_jours, dt_pivot, flags trafic) + toutes
+    les données filles (tmh, neutralisations, comptages manuels, exclusions,
+    variations prévisionnelles, scenario_pic_coeffs, trafic_agrebal, trafic_pdi).
+    Si la source a une version PIC niveau SCENARIO, une nouvelle version est créée
+    pour le clone avec ses coefficients (le clone est indépendant de la source) ;
+    sinon le clone garde l'id_pic_version partagé de la source.
+
+    La duplication d'un scénario figé ou archivé est permise (le clone repart en
+    EN COURS / v1 / non figé). Pas de tracking parent. id_rh requis (traçabilité) :
+    il devient l'auteur du clone et des lignes filles copiées.
     """
     start = time.perf_counter()
     logger.info("Début duplication scénario (source_id=%d)", id_scenario)
@@ -861,39 +872,54 @@ async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest | None 
 
     new_lb = (
         payload.lb_scenario
-        if payload and payload.lb_scenario
+        if payload.lb_scenario
         else f"{source['lb_scenario']} (copie)"
     )
     if len(new_lb) > 20:  # lb_scenario : varchar(20) en base
         new_lb = new_lb[:20]
     logger.info("Nouveau libellé résolu (lb_scenario=%s)", safe_preview(new_lb))
 
+    id_rh_token = encrypt_id_rh(payload.id_rh)
+
     try:
         async with db_write.transaction() as tx:
+            # Entête : INSERT ... SELECT sur la source (colonnes réelles, sans
+            # dépendre des alias de SELECT_SCENARIO_SQL). dt_validation et
+            # dt_mise_en_prod restent NULL (workflow incohérent avec EN COURS).
             await tx.execute(
                 "INSERT INTO trppu_scenario "
                 "(co_regate, lb_scenario, co_roc, statut, dt_creation, "
+                " dt_mise_en_oeuvre, dt_pivot, "
                 " periode_debut, periode_fin, "
                 " periode_realise_debut, periode_realise_fin, "
                 " periode_prev_debut, periode_prev_fin, "
-                " nb_jours_semaine, id_pic_version, version_scenario, est_fige) "
-                "VALUES (%s, %s, %s, 'EN COURS', NOW(), %s, %s, %s, %s, %s, %s, %s, %s, 1, 0)",
-                (
-                    source["co_regate"],
-                    new_lb,
-                    source["co_roc"],
-                    source["periode_debut"],
-                    source["periode_fin"],
-                    source["periode_realise_debut"],
-                    source["periode_realise_fin"],
-                    source["periode_prev_debut"],
-                    source["periode_prev_fin"],
-                    source["nb_jours_semaine"],
-                    source["id_pic_version"],
-                ),
+                " nb_jours_semaine, nb_jours_ouvres, nb_jours_ouvrables, nb_jours_scenario, "
+                " id_pic_version, version_scenario, est_fige, "
+                " id_rh_creation, id_rh_maj, "
+                " trafic_pdi_calcule, trafic_agrebal_calcule) "
+                "SELECT co_regate, %s, co_roc, 'EN COURS', NOW(), "
+                " dt_mise_en_oeuvre, dt_pivot, "
+                " periode_debut, periode_fin, "
+                " periode_realise_debut, periode_realise_fin, "
+                " periode_prev_debut, periode_prev_fin, "
+                " nb_jours_semaine, nb_jours_ouvres, nb_jours_ouvrables, nb_jours_scenario, "
+                " id_pic_version, 1, 0, "
+                " %s, %s, "
+                " trafic_pdi_calcule, trafic_agrebal_calcule "
+                "FROM trppu_scenario WHERE id_scenario = %s",
+                (new_lb, id_rh_token, id_rh_token, id_scenario),
             )
             row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
             new_id = int(row["id"])
+
+            new_pic_id = await duplicate_scenario_pic_version(
+                tx, id_scenario, new_id, source["co_regate"], id_rh_token
+            )
+            counts = await duplicate_scenario_children(
+                tx, id_scenario, new_id, id_rh_token
+            )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(
             "Erreur duplication scénario (source_id=%d, new_lb=%s)",
@@ -905,9 +931,12 @@ async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest | None 
     duplicated = await fetch_scenario_or_404(new_id)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Duplication scénario terminée (source_id=%d, new_id=%d, duration_ms=%.1f)",
+        "Duplication scénario terminée (source_id=%d, new_id=%d, new_pic_id=%s, "
+        "lignes_copiees=%s, duration_ms=%.1f)",
         id_scenario,
         new_id,
+        new_pic_id,
+        counts,
         duration_ms,
     )
     return duplicated
