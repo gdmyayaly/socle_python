@@ -11,6 +11,7 @@ from typing import Any
 
 _TMH_COLS = (
     "id_tmh, co_produit, volume_realise, volume_previsionnel, "
+    "volume_previsionnel_recalcule, "
     "moyenne_journaliere, moyenne_hebdo, bl_exclu, bl_manuel, motif"
 )
 SELECT_TMH_SQL = (
@@ -39,22 +40,32 @@ async def insert_tmh_row(
     bl_manuel: bool = False,
     motif: str | None = None,
     id_rh: str | None = None,
+    volume_previsionnel_recalcule: int | None = None,
 ) -> int:
     """INSERT d'une nouvelle ligne TMH. Retourne l'`id_tmh` généré.
 
     Met dt_calcul = NOW(). Un même produit peut être inséré plusieurs fois.
     `id_rh` : token déjà crypté de l'utilisateur.
+    `volume_previsionnel_recalcule` : prévisionnel après variation % (calcul
+    front). Absent (None) => réaligné sur `volume_previsionnel` (valeur de base).
     """
+    vpr = (
+        volume_previsionnel_recalcule
+        if volume_previsionnel_recalcule is not None
+        else volume_previsionnel
+    )
     await tx.execute(
         "INSERT INTO trppu_tmh "
         "(id_scenario, co_produit, volume_realise, volume_previsionnel, "
+        " volume_previsionnel_recalcule, "
         " moyenne_journaliere, moyenne_hebdo, dt_calcul, bl_exclu, bl_manuel, motif, id_rh) "
-        "VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)",
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)",
         (
             id_scenario,
             co_produit,
             volume_realise,
             volume_previsionnel,
+            vpr,
             moyenne_journaliere,
             moyenne_hebdo,
             1 if bl_exclu else 0,
@@ -81,11 +92,14 @@ async def update_tmh_row(
     bl_manuel: bool = False,
     motif: str | None = None,
     id_rh: str | None = None,
+    volume_previsionnel_recalcule: int | None = None,
 ) -> bool:
     """UPDATE la ligne (id_tmh, id_scenario) si elle existe. Retourne True si trouvée.
 
     La ligne est identifiée par `id_tmh` et bornée au `id_scenario` (contrôle
     d'appartenance). Met dt_calcul = NOW().
+    `volume_previsionnel_recalcule` : absent (None) => réaligné sur
+    `volume_previsionnel` ; fourni (pipeline variations) => stocké tel quel.
     """
     existing = await tx.fetch_one(
         "SELECT id_tmh FROM trppu_tmh WHERE id_tmh = %s AND id_scenario = %s",
@@ -93,8 +107,14 @@ async def update_tmh_row(
     )
     if not existing:
         return False
+    vpr = (
+        volume_previsionnel_recalcule
+        if volume_previsionnel_recalcule is not None
+        else volume_previsionnel
+    )
     await tx.execute(
         "UPDATE trppu_tmh SET co_produit = %s, volume_realise = %s, volume_previsionnel = %s, "
+        "volume_previsionnel_recalcule = %s, "
         "moyenne_journaliere = %s, moyenne_hebdo = %s, bl_exclu = %s, "
         "bl_manuel = %s, motif = %s, id_rh = %s, dt_calcul = NOW() "
         "WHERE id_tmh = %s AND id_scenario = %s",
@@ -102,6 +122,7 @@ async def update_tmh_row(
             co_produit,
             volume_realise,
             volume_previsionnel,
+            vpr,
             moyenne_journaliere,
             moyenne_hebdo,
             1 if bl_exclu else 0,
@@ -129,6 +150,7 @@ async def upsert_tmh_row(
     bl_manuel: bool = False,
     motif: str | None = None,
     id_rh: str | None = None,
+    volume_previsionnel_recalcule: int | None = None,
 ) -> str:
     """MAJ la ligne `id_tmh` (si fournie et existante pour le scénario), sinon INSERT.
 
@@ -154,6 +176,7 @@ async def upsert_tmh_row(
             bl_manuel=bl_manuel,
             motif=motif,
             id_rh=id_rh,
+            volume_previsionnel_recalcule=volume_previsionnel_recalcule,
         )
         if updated:
             return "updated"
@@ -170,6 +193,7 @@ async def upsert_tmh_row(
         bl_manuel=bl_manuel,
         motif=motif,
         id_rh=id_rh,
+        volume_previsionnel_recalcule=volume_previsionnel_recalcule,
     )
     return "inserted"
 
@@ -202,6 +226,9 @@ async def upsert_tmh_rows(
             bl_manuel=getattr(it, "manuel", False),
             motif=getattr(it, "motif", None),
             id_rh=id_rh,
+            volume_previsionnel_recalcule=getattr(
+                it, "volume_previsionnel_recalcule", None
+            ),
         )
         if action == "inserted":
             nb_inserted += 1

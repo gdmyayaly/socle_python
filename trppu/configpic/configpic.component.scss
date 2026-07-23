@@ -105,9 +105,9 @@
 .coef-cell.scenario,
 .coef-cell.scenario .coef-input { color: #2e7d32; font-weight: 700; }
 
-/* Modification en cours : gras + vert */
+/* Modification en cours : gras + rouge */
 .coef-cell.modified,
-.coef-cell.modified .coef-input { color: #2e7d32; font-weight: 700; }
+.coef-cell.modified .coef-input { color: #d32f2f; font-weight: 700; }
 
 /* Cellule en erreur (hors plage) */
 .coef-cell.err { outline: 2px solid #d32f2f; outline-offset: -2px; }
@@ -135,14 +135,3 @@
  border-radius: 3px;
 }
 .pct { color: inherit; }
-
-/* Légende */
-.pic-note {
- margin-top: 12px;
- font-size: 12px;
- color: #757575;
-}
-.legend { font-weight: 700; }
-.legend.scenario { color: #2e7d32; }
-.legend.modified { color: #2e7d32; }
-

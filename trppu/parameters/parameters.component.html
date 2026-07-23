@@ -48,20 +48,5 @@
       [siteId]="selectedSite ? selectedSite.codeRoc : null"
       (produitsChange)="onProduitsChange($event)">
     </app-trppu-produit-a-exclure> -->
-
-    <div class="param-actions">
-      <button mat-raised-button
-              color="primary"
-              class="btn-validate"
-              [disabled]="!selectedSite"
-              (click)="onValidate()">
-        <mat-icon>check_circle</mat-icon>
-        Valider les paramètres
-      </button>
-      <span class="validated-info" *ngIf="lastValidatedPayload">
-        <mat-icon>task_alt</mat-icon>
-        Paramètres consolidés — prêts pour soumission
-      </span>
-    </div>
   </div>
 </div>

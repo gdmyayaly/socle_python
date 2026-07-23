@@ -22,6 +22,9 @@ class TmhOut(BaseModel):
     co_produit: str
     volume_realise: int | None = None
     volume_previsionnel: int | None = None
+    # Prévisionnel après variation % (calcul front) ; NULL ou égal à
+    # volume_previsionnel = aucune variation appliquée.
+    volume_previsionnel_recalcule: int | None = None
     moyenne_journaliere: Decimal
     moyenne_hebdo: Decimal
     bl_exclu: bool
@@ -37,6 +40,14 @@ class _TmhFields(BaseModel):
     co_produit: str = Field(..., min_length=1, max_length=3, pattern=CO_PRODUIT_PATTERN)
     volume_realise: int | None = None  # valeurs négatives autorisées
     volume_previsionnel: int | None = Field(None, ge=0)
+    volume_previsionnel_recalcule: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Prévisionnel après variation % (calcul front). "
+            "Absent => réaligné serveur sur volume_previsionnel."
+        ),
+    )
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
     exclusion: bool = False

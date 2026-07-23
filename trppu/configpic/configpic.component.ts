@@ -7,6 +7,7 @@ import {
 } from '../models/pic-coefficient.model';
 import { PicCoefficientService } from '../services/pic-coefficient.service';
 import { TrppuContextService } from '../services/trppu-context.service';
+import { UserService } from '../../../service/user/user.service';
 
 
 
@@ -105,6 +106,7 @@ export class ConfigpicComponent implements OnInit {
  constructor(
   private picService: PicCoefficientService,
   private context: TrppuContextService,
+  private userService:UserService
  ) {
   this.buildColonnes();
  }
@@ -252,7 +254,7 @@ export class ConfigpicComponent implements OnInit {
   }
 
   // Le PUT YS04 exige l'id_rh de l'utilisateur (crypté côté serveur).
-  const idRh = this.context.getIdRh();
+  const idRh = this.userService.getUser().idRh;
   if (!idRh) {
    cell.edit = this.numToFr(cell.coef);
    this.errorMessage = 'Identifiant RH inconnu : modification impossible (reconnectez-vous).';

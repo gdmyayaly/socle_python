@@ -9,6 +9,8 @@ export interface TraficCalcule {
   manuelCalc: boolean;
   constateBrut: number;
   previsionnelBrut: number;
+  /** Prévisionnel recalculé (variation %) ; null/égal à previsionnelBrut = pas de variation. */
+  previsionnelRecalcule?: number | null;
   comptageManuel: number;
   volumeBrut: number;
   traficMoyenHebdo: number;

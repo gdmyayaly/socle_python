@@ -10,6 +10,7 @@
       #scenarioList
       [site]="selectedSite"
       [siteId]="selectedSite ? selectedSite.codeRoc : null"
+      [scenario]="selectedScenario"
       (editScenario)="onEditScenario($event)"
       (removeScenario)="onRemoveScenario($event)"
       (addScenario)="onAddScenario()">
@@ -24,7 +25,8 @@
   </div>
   <app-trppu-recap-scenario
     [scenario]="selectedScenario"
-    (scenarioNameUpdated)="scenarioList.refreshScenarios()">
+    (scenarioNameUpdated)="scenarioList.refreshScenarios()"
+    (scenarioStatusUpdated)="onScenarioStatusUpdated($event)">
   </app-trppu-recap-scenario>
 </div>
 

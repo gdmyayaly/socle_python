@@ -29,3 +29,7 @@ table {
   font-style: italic;
   margin-top: 12px;
 }
+
+tr.selectedScenario {
+  background-color: #e0f7fa; /* Light cyan background for selected scenario */
+}

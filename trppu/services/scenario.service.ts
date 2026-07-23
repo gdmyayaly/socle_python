@@ -58,7 +58,6 @@ export interface LbScenarioUpdate {
 
 export interface DuplicateRequest {
   lb_scenario?: string;
-  [key: string]: any; // Additional fields based on backend requirements
 }
 
 export interface TmhOut {
@@ -327,6 +326,7 @@ export class ScenarioService {
         manuelCalc: false,
         constateBrut: row.volume_realise,
         previsionnelBrut: row.volume_previsionnel,
+        previsionnelRecalcule: row.volume_previsionnel_recalcule ?? null,
         comptageManuel: row.bl_manuel ? row.volume_realise : 0,
         volumeBrut: 0,
         traficMoyenHebdo: row.moyenne_hebdo

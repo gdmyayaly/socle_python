@@ -29,3 +29,19 @@ export interface Scenario {
   trafic_pdi_calcule?: boolean;
   trafic_agrebal_calcule?: boolean;
 }
+
+// Scenario Status Constants
+export enum ScenarioStatus {
+  EN_COURS = 'EN COURS',
+  SIMULATION = 'SIMULATION',
+  VALIDE = 'VALIDE',
+  EN_PRODUCTION = 'EN PRODUCTION',
+  ARCHIVE = 'ARCHIVE'
+}
+
+// Scenario Status which can be manually selected by users
+export const EDITABLE_STATUSES = [
+  ScenarioStatus.EN_COURS,
+  ScenarioStatus.SIMULATION,
+  ScenarioStatus.VALIDE
+];

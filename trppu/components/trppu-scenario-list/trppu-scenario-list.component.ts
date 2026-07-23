@@ -21,6 +21,7 @@ export class TrppuScenarioListComponent implements OnChanges, OnInit {
 
  @Input() siteId: string | null = null;
  @Input() site: Site | null = null;
+ @Input() scenario: Scenario | null = null;
 
  @Output() editScenario = new EventEmitter<Scenario>();
  @Output() removeScenario = new EventEmitter<Scenario>();
@@ -110,6 +111,41 @@ export class TrppuScenarioListComponent implements OnChanges, OnInit {
     this.trppuContextService.setIdScenario(null); // pour faire la suppression
    },
    error: () => this.openMessage('Erreur lors de la suppression du scénario.', 'error')
+  });
+ }
+
+ onDuplicate(scenario: Scenario): void {
+  const data: ConfirmDialogData = {
+   message: `Dupliquer le scénario "${scenario.lb_scenario}" ?`,
+   type: 'info',
+   yesAction: { label: 'Oui, dupliquer' },
+   noAction: { label: 'Annuler' },
+  };
+
+  this.dialog
+   .open(ConfirmDialogComponent, { data, width: '420px' })
+   .afterClosed()
+   .subscribe(result => {
+    if (result?.event === true) {
+     this.duplicateScenario(scenario);
+    }
+   });
+ }
+
+ /** Duplication effective côté serveur, appelée uniquement après confirmation. */
+ private duplicateScenario(scenario: Scenario): void {
+  const newLabel = 'Copie de ' + scenario.lb_scenario;
+  const payload = {
+   lb_scenario: newLabel.substring(0, 20) // Limite à 20 caractères pour le label du scénario,
+  };
+  this.scenarioService.duplicateScenario(scenario.id_scenario, payload).subscribe({
+   next: (created) => {
+    this.scenarios = [...this.scenarios, created];
+    this.addScenario.emit();
+    this.editScenario.emit(created);
+    this.trppuContextService.setIdScenario(created.id_scenario);
+   },
+   error: () => this.openMessage('Erreur lors de la duplication du scénario.', 'error')
   });
  }
 

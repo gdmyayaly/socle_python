@@ -32,6 +32,14 @@ class ScenarioTmhItem(BaseModel):
     co_produit: str = Field(..., min_length=1, max_length=2, pattern=CO_PRODUIT_PATTERN)
     volume_realise: Optional[int] = Field(None, ge=0)
     volume_previsionnel: Optional[int] = Field(None, ge=0)
+    volume_previsionnel_recalcule: Optional[int] = Field(
+        None,
+        ge=0,
+        description=(
+            "Prévisionnel après variation % (calcul front). "
+            "Absent => réaligné serveur sur volume_previsionnel."
+        ),
+    )
     moyenne_journaliere: Decimal = Field(..., max_digits=12, decimal_places=2)
     moyenne_hebdo: Decimal = Field(..., max_digits=12, decimal_places=2)
     exclusion: bool = False

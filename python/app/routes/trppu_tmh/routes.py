@@ -91,6 +91,7 @@ async def create_tmh(id_scenario: int, payload: TmhCreate):
                 bl_manuel=payload.manuel,
                 motif=payload.motif,
                 id_rh=id_rh_token,
+                volume_previsionnel_recalcule=payload.volume_previsionnel_recalcule,
             )
             row = await tx.fetch_one(SELECT_TMH_BY_ID_SQL, (new_id, id_scenario))
     except HTTPException:
@@ -163,10 +164,13 @@ async def update_tmh_volume(id_scenario: int, id_tmh: int, payload: TmhVolumeUpd
     try:
         async with db_write.transaction() as tx:
             # DSR-649 : modification manuelle d'un trafic initial -> la ligne devient
-            # "manuelle" (bl_manuel = 1), cf. DSR-665/648.
+            # "manuelle" (bl_manuel = 1), cf. DSR-665/648. Une ligne manuelle ne
+            # reçoit pas de variation prévisionnelle : le prévisionnel recalculé
+            # est réaligné sur la valeur de base (auto-référence SQL).
             await tx.execute(
                 "UPDATE trppu_tmh SET volume_realise = %s, moyenne_journaliere = %s, "
-                "moyenne_hebdo = %s, motif = %s, bl_manuel = 1, dt_calcul = NOW() "
+                "moyenne_hebdo = %s, motif = %s, bl_manuel = 1, "
+                "volume_previsionnel_recalcule = volume_previsionnel, dt_calcul = NOW() "
                 "WHERE id_tmh = %s AND id_scenario = %s",
                 (
                     payload.volume_realise,

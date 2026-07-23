@@ -8,11 +8,21 @@
   </div>
   
   <div class="scenario-status-block">
-    <mat-select [value]="scenario ? scenario.statut : null" (selectionChange)="changeStatus($event.value)">
-      <mat-option value="EN COURS">En cours</mat-option>
-      <mat-option value="VALIDE">Valide</mat-option>
-      <mat-option value="EN PRODUCTION">En production</mat-option>
-      <mat-option value="ARCHIVE">Archive</mat-option>
-    </mat-select>
+    <mat-label>Statut :</mat-label>
+    <mat-form-field appearance="outline" class="status-select">
+      <mat-select 
+        [value]="scenario ? scenario.statut : null" 
+        (selectionChange)="changeStatus($event.value)"
+        [disabled]="isStatusChangeDisabled() || isChangingStatus">
+        <mat-option *ngFor="let status of editableStatuses" [value]="status">
+          {{ getStatusLabel(status) }}
+        </mat-option>
+      </mat-select>
+    </mat-form-field>
+    
+    <!-- Message when traffic calculation is in progress -->
+    <div *ngIf="isTraficsCalculInProgress()" class="status-disabled-message">
+      Calcul des trafics est en cours !
+    </div>
   </div>
 </div>

@@ -35,31 +35,29 @@ export class TrppuSelectSiteComponent implements OnInit {
   ngOnInit(): void {
     this.userService.getUserTrppuAsync().subscribe(user=>{
       this.utilisateurConnecter=user
-    
-    console.log(["DEBUG1 geoPerimetre"] )
-    // this.sites = this.userService.getUserTrppu().geoPerimetre.sort((a,b) => a.libelle.toLowerCase().localeCompare(b.libelle.toLowerCase()));
-    // this.sitesGroups = this.userService.getUserTrppu().geoPerimetreGroups;
-    console.log(this.utilisateurConnecter)
-    this.sites = this.utilisateurConnecter.geoPerimetre.sort((a,b) => a.libelle.toLowerCase().localeCompare(b.libelle.toLowerCase()));
-    this.sitesGroups = this.utilisateurConnecter.geoPerimetreGroups;
-    this.filteredSites = this.myControl.valueChanges.pipe(
-      startWith(''),
-      map(value => this.filterSite(value))
-    );
-    this.filteredGroups = this.myControl.valueChanges.pipe(
-      startWith(''),
-      map(value => this.filterGroup(value))
-    );
-    // if(sessionStorage.getItem('selectedSite')) {
-    //   const selectedSiteCode = sessionStorage.getItem('selectedSite');
-    if(this.trppuContextService.getCoRegate()) {
-      const selectedSiteCode = this.trppuContextService.getCoRegate();
-      const site = this.userService.getSiteFromGeoPerimetre(selectedSiteCode);
-      if(site) {
-        this.onSelectionChange(site);
-      }
-    };
-    // Rajout de test
+
+      // this.sites = this.userService.getUserTrppu().geoPerimetre.sort((a,b) => a.libelle.toLowerCase().localeCompare(b.libelle.toLowerCase()));
+      // this.sitesGroups = this.userService.getUserTrppu().geoPerimetreGroups;
+      this.sites = this.utilisateurConnecter.geoPerimetre.sort((a,b) => a.libelle.toLowerCase().localeCompare(b.libelle.toLowerCase()));
+      this.sitesGroups = this.utilisateurConnecter.geoPerimetreGroups;
+      this.filteredSites = this.myControl.valueChanges.pipe(
+        startWith(''),
+        map(value => this.filterSite(value))
+      );
+      this.filteredGroups = this.myControl.valueChanges.pipe(
+        startWith(''),
+        map(value => this.filterGroup(value))
+      );
+      // if(sessionStorage.getItem('selectedSite')) {
+      //   const selectedSiteCode = sessionStorage.getItem('selectedSite');
+      if(this.trppuContextService.getCoRegate()) {
+        const selectedSiteCode = this.trppuContextService.getCoRegate();
+        const site = this.userService.getSiteFromGeoPerimetre(selectedSiteCode);
+        if(site) {
+          this.onSelectionChange(site);
+        }
+      };
+      // Rajout de test
     });
   }
 

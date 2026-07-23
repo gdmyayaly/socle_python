@@ -1,7 +1,8 @@
-import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, OnInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnChanges, SimpleChanges, OnInit, OnDestroy } from '@angular/core';
+import { formatNumber } from '@angular/common';
 import { MatDialog, MatDialogRef } from '@angular/material/dialog';
-import { forkJoin } from 'rxjs';
-import { retry, finalize, switchMap, map } from 'rxjs/operators';
+import { forkJoin, Subject } from 'rxjs';
+import { retry, finalize, switchMap, map, takeUntil } from 'rxjs/operators';
 
 import { TraficCalcule } from '../../models/trafic-calcule.model';
 import { TraficPivot } from '../../models/trafic-pivot.model';
@@ -34,7 +35,7 @@ const RETRY_DELAY_MS = 3_000;
  templateUrl: './trppu-trafics-calculer.component.html',
  styleUrls: ['./trppu-trafics-calculer.component.css']
 })
-export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
+export class TrppuTraficsCalculerComponent implements OnChanges, OnInit, OnDestroy {
 
  @Input() scenarioId: number | null = null;
  @Input() coRegate: string | null = null;
@@ -52,13 +53,15 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
 
  hasManuel = false;
  displayedColumns: string[] = [
-  'exclure', 'produit', 'constateBrut', 'previsionnelBrut', 'volumeBrut', 'traficMoyenHebdo', 'motif', 'manuel'
+  'collapse', 'exclure', 'produit', 'constateBrut', 'previsionnelBrut', 'volumeBrut', 'traficMoyenHebdo', 'motif', 'manuel'
  ];
  displayedFooters: string[] = [
   'exclure', 'produit', 'constateBrut', 'manuel'
  ];
 
  trafics: TraficCalcule[] = [];
+ private collapsedProduits = new Set<string>();
+ private hoveredManualIconKeys = new Set<string>();
  private rawTrafics: Tmh[] = [];
 
  /** Ajustements courants du scénario (jours neutralisés + variations %). */
@@ -75,6 +78,9 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
  private longProcessTimeoutId: ReturnType<typeof setTimeout> | null = null;
  private longProcessDialogRef: MatDialogRef<MessageDialogComponent> | null = null;
 
+ /** Résiliation des souscriptions à la destruction du composant. */
+ private destroy$ = new Subject<void>();
+
  constructor(
   private traficService: TraficService,
   private scenarioService: ScenarioService,
@@ -88,6 +94,22 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
 
  ngOnInit(): void {
   this.userService.getUserTrppuAsync().subscribe(user => this.utilisateurConnecter = user);
+
+  // Rafraîchissement dynamique : après chaque recalcul persisté (variation %
+  // modifiée depuis /parameters, neutralisations…), on recharge le tableau —
+  // refresh() relit aussi les ajustements, donc le % du tooltip reste frais.
+  this.tmhRecalcul.recalculTermine$
+   .pipe(takeUntil(this.destroy$))
+   .subscribe(idScenario => {
+    if (idScenario === this.scenarioId) {
+     this.refresh();
+    }
+   });
+ }
+
+ ngOnDestroy(): void {
+  this.destroy$.next();
+  this.destroy$.complete();
  }
 
  ngOnChanges(changes: SimpleChanges): void {
@@ -176,6 +198,8 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
  private loadTraficsScenario(update: boolean = false): void {
   if (this.scenarioId === null) {
    this.trafics = [];
+   this.collapsedProduits.clear();
+    this.hoveredManualIconKeys.clear();
    return;
   }
 
@@ -184,6 +208,8 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
   }).subscribe({
    next: ({ tmh }) => {
     this.manuelsProduits = [];
+    this.collapsedProduits.clear();
+    this.hoveredManualIconKeys.clear();
     this.trafics = tmh.map(t => {
      const produitRef = this.availableProduits.find(p => p.co_produit === t.produit);
 
@@ -207,6 +233,8 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
    },
    error: () => {
     this.trafics = [];
+    this.collapsedProduits.clear();
+    this.hoveredManualIconKeys.clear();
    }
   });
  }
@@ -244,6 +272,8 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
  private loadTraficsWithPivot(): void {
   if (this.scenarioId === null || !this.coRegate || !this.dateDebut || !this.dateFin || !this.datePivot) {
    this.trafics = [];
+   this.collapsedProduits.clear();
+    this.hoveredManualIconKeys.clear();
    this.rawTrafics = [];
    return;
   }
@@ -296,12 +326,16 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
    .subscribe({
      next: () => {
       this.trafics  = [];
+      this.collapsedProduits.clear();
+        this.hoveredManualIconKeys.clear();
       this.rawTrafics = [];
      },
      complete: () => this.refresh(),
      error: (err) => {
       this.clearLongProcessTimer();
       this.trafics = [];
+      this.collapsedProduits.clear();
+      this.hoveredManualIconKeys.clear();
       this.rawTrafics = [];
       this.openError(err, 'Erreur lors du calcul des trafics après plusieurs tentatives.');
     }
@@ -506,6 +540,85 @@ export class TrppuTraficsCalculerComponent implements OnChanges, OnInit {
    this.longProcessDialogRef.close();
    this.longProcessDialogRef = null;
   }
+ }
+
+ isParentRow(row: TraficCalcule): boolean {
+  return !row.manuel || row.manuelCalc;
+ }
+
+ isChildRow(row: TraficCalcule): boolean {
+  return row.manuel && !row.manuelCalc;
+ }
+
+ hasChildRows(row: TraficCalcule): boolean {
+  if (!this.isParentRow(row)) {
+   return false;
+  }
+
+  const produitKey = this.getProduitKey(row);
+  return this.trafics.some(t => this.getProduitKey(t) === produitKey && this.isChildRow(t));
+ }
+
+ isProduitCollapsed(row: TraficCalcule): boolean {
+  return this.collapsedProduits.has(this.getProduitKey(row));
+ }
+
+ toggleProduitRows(row: TraficCalcule): void {
+  if (!this.hasChildRows(row)) {
+   return;
+  }
+
+  const produitKey = this.getProduitKey(row);
+  if (this.collapsedProduits.has(produitKey)) {
+   this.collapsedProduits.delete(produitKey);
+  } else {
+   this.collapsedProduits.add(produitKey);
+  }
+ }
+
+ isRowHidden(row: TraficCalcule): boolean {
+  return this.isChildRow(row) && this.collapsedProduits.has(this.getProduitKey(row));
+ }
+
+ setManualIconHover(row: TraficCalcule, hovered: boolean): void {
+  const rowKey = this.getManualRowKey(row);
+  if (hovered) {
+   this.hoveredManualIconKeys.add(rowKey);
+  } else {
+   this.hoveredManualIconKeys.delete(rowKey);
+  }
+ }
+
+ isManualIconHovered(row: TraficCalcule): boolean {
+  return this.hoveredManualIconKeys.has(this.getManualRowKey(row));
+ }
+
+ /** Vrai si un prévisionnel recalculé (variation %) distinct de la base doit être mis en avant. */
+ hasRecalcule(row: TraficCalcule): boolean {
+  return !row.manuel
+   && row.previsionnelRecalcule !== null
+   && row.previsionnelRecalcule !== undefined
+   && Number(row.previsionnelRecalcule) !== Number(row.previsionnelBrut);
+ }
+
+ /** Variation % appliquée au produit (0 si absente), depuis les ajustements chargés. */
+ getVariationPct(row: TraficCalcule): number {
+  return this.ajustements?.variations.get(row.coProduit) ?? 0;
+ }
+
+ /** Tooltip de la cellule prévisionnel : valeur de base + variation % appliquée. */
+ getRecalculeTooltip(row: TraficCalcule): string {
+  const base = formatNumber(row.previsionnelBrut ?? 0, 'fr');
+  const pct = this.getVariationPct(row);
+  return `Valeur de base : ${base} — Variation appliquée : ${pct > 0 ? '+' : ''}${pct} %`;
+ }
+
+ private getProduitKey(row: TraficCalcule): string {
+  return row.coProduit ?? row.produit;
+ }
+
+ private getManualRowKey(row: TraficCalcule): string {
+  return `${row.id ?? 'no-id'}-${this.getProduitKey(row)}`;
  }
 
  /** Ouvre une MessageDialog d'information (ici : erreurs). */

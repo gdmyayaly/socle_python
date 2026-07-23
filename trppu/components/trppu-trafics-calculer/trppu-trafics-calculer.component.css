@@ -14,6 +14,18 @@
   margin-bottom: 20px;
 }
 
+/* Prévisionnel recalculé (variation %) : valeur principale + base en petit. */
+.previsionnel-recalcule {
+  cursor: help;
+}
+
+.previsionnel-base {
+  display: block;
+  font-size: 11px;
+  color: #757575;
+  line-height: 1.1;
+}
+
 .header-icon {
   color: #3f51b5;
   font-size: 28px;
@@ -75,12 +87,21 @@ table {
   color: #3f51b5;
 }
 
+.mat-column-collapse {
+  width: 50px;
+}
+
 .mat-column-exclure {
   width: 70px;
 }
 
 .mat-column-manuel {
-  width: 100px;
+  width: 70px;
+}
+
+.collapse-toggle {
+  text-align: center;
+  vertical-align: middle;
 }
 
 .mat-column-motif, .mat-column-produit {

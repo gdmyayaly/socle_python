@@ -23,6 +23,7 @@ import { TrppuVariationTraficComponent } from './components/trppu-variation-traf
 import { TrppuNeutralisationPeakComponent } from './components/trppu-neutralisation-peak/trppu-neutralisation-peak.component';
 import { TrppuNeutralisationSecondaireComponent } from './components/trppu-neutralisation-secondaire/trppu-neutralisation-secondaire.component';
 import { TrppuProduitAExclureComponent } from './components/trppu-produit-a-exclure/trppu-produit-a-exclure.component';
+import { ScenarioValidationDialogComponent } from './components/trppu-recap-scenario/scenario-validation-dialog/scenario-validation-dialog.component';
 // import { TrppuLoadderComponent } from './components/trppu-loadder/trppu-loadder.component';
 import { HTTP_INTERCEPTORS } from '@angular/common/http';
 import { LoaderInterceptor } from './components/trppu-loadder/loader.interceptor';
@@ -46,6 +47,7 @@ import { TrppuVariationPrevisionnelleComponent } from './components/trppu-variat
     TrppuNeutralisationPeakComponent,
     TrppuNeutralisationSecondaireComponent,
     TrppuProduitAExclureComponent,
+    ScenarioValidationDialogComponent,
     // TrppuLoadderComponent,
     TrppuVariationPrevisionnelleComponent
   ],

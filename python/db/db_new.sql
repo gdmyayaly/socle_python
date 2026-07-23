@@ -1,9 +1,5 @@
--- Schéma de la base `dsr_mercure_aa` — 20 objet(s), schéma uniquement (sans données)
--- Compatible MariaDB (10.4+). Converti depuis un dump MySQL 8.0 :
---   * collation utf8mb4_0900_ai_ci -> utf8mb4_general_ci (0900 inexistante sur MariaDB)
---   * trppu_agrebal_pdi : colonne générée `agrebal_pdi_ids` + index multi-valué
---     `((cast(... as unsigned array)))` supprimés (index multi-valués = MySQL 8.0.17+,
---     non supportés par MariaDB ; non référencés par les modules applicatifs).
+-- Dump du schéma de la base `dsr_mercure_aa`
+-- 24 objet(s) — schéma uniquement (sans données)
 
 CREATE DATABASE IF NOT EXISTS `dsr_mercure_aa`;
 USE `dsr_mercure_aa`;
@@ -32,7 +28,7 @@ CREATE TABLE `demande_dsr` (
   `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=45 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=47 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trafic_staging` -----
 DROP TABLE IF EXISTS `trafic_staging`;
@@ -58,7 +54,7 @@ CREATE TABLE `trafic_staging` (
   `libelle_dex` text,
   `erreur_colonne` varchar(255) DEFAULT NULL,
   `erreur_detail` varchar(255) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_agrebal_pdi` -----
 DROP TABLE IF EXISTS `trppu_agrebal_pdi`;
@@ -75,11 +71,13 @@ CREATE TABLE `trppu_agrebal_pdi` (
   `agrebal_createdAt` datetime NOT NULL,
   `agrebal_updatedAt` datetime NOT NULL,
   `agrebal_deleteddAt` datetime DEFAULT NULL,
+  `agrebal_pdi_ids` json GENERATED ALWAYS AS (ifnull(json_extract(`agrebal_pdiList`,_utf8mb4'$[*].pdi_id'),json_array())) STORED,
   PRIMARY KEY (`agrebal_id_pdi`),
   UNIQUE KEY `uq_agrpdi_courant` (`agrebal_id`,`agrebal_code_regate`),
   KEY `idx_agrpdi_site` (`agrebal_code_regate`),
-  KEY `idx_updated_at` (`agrebal_updatedAt`)
-) ENGINE=InnoDB AUTO_INCREMENT=9389 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  KEY `idx_updated_at` (`agrebal_updatedAt`),
+  KEY `idx_pdi_ids` ((cast(`agrebal_pdi_ids` as unsigned array)))
+) ENGINE=InnoDB AUTO_INCREMENT=9389 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_api_log` -----
 DROP TABLE IF EXISTS `trppu_api_log`;
@@ -95,32 +93,49 @@ CREATE TABLE `trppu_api_log` (
   KEY `id_scenario` (`id_scenario`),
   KEY `idx_api_when` (`api_name`,`dt_appel`),
   CONSTRAINT `trppu_api_log_ibfk_1` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_cles_repartition` -----
 DROP TABLE IF EXISTS `trppu_cles_repartition`;
 CREATE TABLE `trppu_cles_repartition` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
   `id_pdi` bigint NOT NULL,
   `pdi_rattache` bigint NOT NULL,
-  `trafic_colis_signe` decimal(18,10) NOT NULL,
-  `trafic_colis_suivi` decimal(18,10) NOT NULL,
-  `trafic_colis` decimal(18,10) NOT NULL,
-  `trafic_pf` decimal(18,10) NOT NULL,
-  `trafic_gf` decimal(18,10) NOT NULL,
-  `trafic_oo` decimal(18,10) NOT NULL,
-  `trafic_suivi` decimal(18,10) NOT NULL,
-  `trafic_signe` decimal(18,10) NOT NULL,
-  `trafic_3s` decimal(18,10) NOT NULL,
+  `trafic_colis` decimal(25,19) NOT NULL,
+  `trafic_oo` decimal(25,19) NOT NULL,
+  `trafic_3s` decimal(25,19) NOT NULL,
   `nature` char(3) NOT NULL,
   `co_regate_site` char(6) NOT NULL,
   `type_site` varchar(10) NOT NULL,
   `lb_regate` varchar(100) NOT NULL,
-  `co_regate_etablissement` char(6) NOT NULL,
-  `lb_etablissement` varchar(100) NOT NULL,
+  `co_regate_etablissement` char(6) DEFAULT NULL,
+  `lb_etablissement` varchar(100) DEFAULT NULL,
   `co_regate_dex` char(6) NOT NULL,
   `lb_dex` varchar(100) NOT NULL,
-  PRIMARY KEY (`id_pdi`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  `nb_pre` smallint DEFAULT NULL,
+  `potentielip` smallint DEFAULT NULL,
+  `id_referentiel` int NOT NULL,
+  `date_debut_validite` date NOT NULL,
+  `date_fin_validite` date DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_pdi_ref` (`id_pdi`,`id_referentiel`)
+) ENGINE=InnoDB AUTO_INCREMENT=24247952 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ----- TABLE `trppu_cles_repartition_calcule` -----
+DROP TABLE IF EXISTS `trppu_cles_repartition_calcule`;
+CREATE TABLE `trppu_cles_repartition_calcule` (
+  `id_cle_repartition` bigint NOT NULL AUTO_INCREMENT,
+  `id_version_cle` int NOT NULL,
+  `id_referentiel` int NOT NULL,
+  `id_pdi` bigint NOT NULL,
+  `co_regate_site` varchar(10) NOT NULL,
+  `cle_colis` decimal(24,18) NOT NULL,
+  `cle_oo` decimal(24,18) NOT NULL,
+  `cle_3s` decimal(24,18) NOT NULL,
+  `cle_potentielip` decimal(24,18) NOT NULL,
+  `date_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_cle_repartition`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_neutralisations` -----
 DROP TABLE IF EXISTS `trppu_neutralisations`;
@@ -138,14 +153,14 @@ CREATE TABLE `trppu_neutralisations` (
   CONSTRAINT `fk_neutre_scen` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`) ON DELETE CASCADE,
   CONSTRAINT `chk_neutre_dates` CHECK ((`dt_debut` <= `dt_fin`)),
   CONSTRAINT `chk_neutre_jour` CHECK ((`nb_jour` > 0))
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_pic_coefficients` -----
 DROP TABLE IF EXISTS `trppu_pic_coefficients`;
 CREATE TABLE `trppu_pic_coefficients` (
   `id_pic_coef` bigint NOT NULL AUTO_INCREMENT,
   `id_pic_version` int NOT NULL,
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `jour_semaine` enum('LUNDI','MARDI','MERCREDI','JEUDI','VENDREDI','SAMEDI') NOT NULL,
   `dt_effet` datetime NOT NULL,
   `dt_fin` datetime DEFAULT NULL,
@@ -153,7 +168,7 @@ CREATE TABLE `trppu_pic_coefficients` (
   `densite` tinyint NOT NULL,
   `dt_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `dt_maj` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `id_rh` varchar(40) DEFAULT NULL,
+  `id_rh` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id_pic_coef`),
   UNIQUE KEY `uq_picc` (`id_pic_version`,`co_produit`,`jour_semaine`,`densite`),
   KEY `idx_picc_produit` (`co_produit`),
@@ -161,7 +176,7 @@ CREATE TABLE `trppu_pic_coefficients` (
   CONSTRAINT `fk_picc_version` FOREIGN KEY (`id_pic_version`) REFERENCES `trppu_pic_version` (`id_pic_version`) ON DELETE CASCADE,
   CONSTRAINT `chk_pic_coefs` CHECK ((`coef` >= 0)),
   CONSTRAINT `chk_pic_densite` CHECK ((`densite` in (0,1,2)))
-) ENGINE=InnoDB AUTO_INCREMENT=127 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=130 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_pic_coefficients_ko` -----
 DROP TABLE IF EXISTS `trppu_pic_coefficients_ko`;
@@ -181,7 +196,7 @@ CREATE TABLE `trppu_pic_coefficients_ko` (
   PRIMARY KEY (`id_pic_coef`),
   UNIQUE KEY `uq_picc` (`id_pic_version`,`co_produit`,`jour_semaine`),
   KEY `idx_picc_produit` (`co_produit`)
-) ENGINE=InnoDB AUTO_INCREMENT=43 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=43 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_pic_version` -----
 DROP TABLE IF EXISTS `trppu_pic_version`;
@@ -198,13 +213,13 @@ CREATE TABLE `trppu_pic_version` (
   `est_par_defaut` tinyint(1) NOT NULL DEFAULT '0',
   `dt_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `dt_maj` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `id_rh_creation` varchar(40) DEFAULT NULL,
-  `id_rh_maj` varchar(40) DEFAULT NULL,
+  `id_rh_creation` varchar(255) DEFAULT NULL,
+  `id_rh_maj` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id_pic_version`),
   KEY `idx_picv_site` (`co_regate`),
   KEY `idx_picv_defaut` (`co_regate`,`est_par_defaut`),
   CONSTRAINT `chk_picv_dates` CHECK (((`dt_desactivation` is null) or (`dt_desactivation` > `dt_activation`)))
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_produit` -----
 DROP TABLE IF EXISTS `trppu_produit`;
@@ -215,7 +230,7 @@ CREATE TABLE `trppu_produit` (
   `dt_desactivation` date DEFAULT NULL,
   `motif_desactivation` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`co_produit`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_recalcul_log` -----
 DROP TABLE IF EXISTS `trppu_recalcul_log`;
@@ -229,7 +244,16 @@ CREATE TABLE `trppu_recalcul_log` (
   PRIMARY KEY (`id_log`),
   KEY `idx_log_scenario` (`id_scenario`,`dt_recalcul`),
   CONSTRAINT `trppu_recalcul_log_ibfk_1` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ----- TABLE `trppu_referentiel` -----
+DROP TABLE IF EXISTS `trppu_referentiel`;
+CREATE TABLE `trppu_referentiel` (
+  `id_referentiel` int NOT NULL AUTO_INCREMENT,
+  `date_reference` date NOT NULL,
+  `commentaire` varchar(255) NOT NULL,
+  PRIMARY KEY (`id_referentiel`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_scenario` -----
 DROP TABLE IF EXISTS `trppu_scenario`;
@@ -238,7 +262,7 @@ CREATE TABLE `trppu_scenario` (
   `co_roc` char(6) NOT NULL,
   `co_regate` char(6) NOT NULL,
   `lb_scenario` varchar(20) NOT NULL,
-  `statut` enum('EN COURS','VALIDE','EN PRODUCTION','ARCHIVE') NOT NULL,
+  `statut` enum('EN COURS','SIMULATION','VALIDE','EN PRODUCTION','ARCHIVE') NOT NULL,
   `dt_creation` datetime NOT NULL,
   `dt_validation` datetime DEFAULT NULL,
   `dt_mise_en_oeuvre` datetime DEFAULT NULL,
@@ -262,10 +286,13 @@ CREATE TABLE `trppu_scenario` (
   `id_rh_maj` varchar(255) DEFAULT NULL,
   `trafic_pdi_calcule` smallint DEFAULT '0',
   `trafic_agrebal_calcule` smallint DEFAULT '0',
+  `Calcul_trafic_en_cours` smallint DEFAULT '0',
+  `id_referentiel` int NOT NULL DEFAULT '0',
+  `id_version_cle` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id_scenario`),
   KEY `idx_scenario_site_statut` (`co_regate`,`statut`),
   CONSTRAINT `trppu_scenario_chk_1` CHECK ((`nb_jours_semaine` in (5,6)))
-) ENGINE=InnoDB AUTO_INCREMENT=47 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=98 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_scenario_comptages_manuels` -----
 DROP TABLE IF EXISTS `trppu_scenario_comptages_manuels`;
@@ -273,31 +300,31 @@ CREATE TABLE `trppu_scenario_comptages_manuels` (
   `id_comptage` int NOT NULL AUTO_INCREMENT,
   `id_scenario` bigint NOT NULL,
   `dt_comptage` date NOT NULL,
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `nb_produit` int NOT NULL,
   PRIMARY KEY (`id_comptage`),
   KEY `idx_scm` (`id_scenario`,`dt_comptage`,`co_produit`),
   CONSTRAINT `trppu_scenario_comptages_manuels_ibfk_1` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`)
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_scenario_exclusions` -----
 DROP TABLE IF EXISTS `trppu_scenario_exclusions`;
 CREATE TABLE `trppu_scenario_exclusions` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `id_scenario` bigint NOT NULL,
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `motif` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_exclusion` (`id_scenario`,`co_produit`),
   CONSTRAINT `trppu_scenario_exclusions_ibfk_1` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_scenario_pic_coeffs` -----
 DROP TABLE IF EXISTS `trppu_scenario_pic_coeffs`;
 CREATE TABLE `trppu_scenario_pic_coeffs` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `id_scenario` bigint NOT NULL,
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `jour_semaine` enum('LUN','MAR','MER','JEU','VEN','SAM') NOT NULL,
   `coef_dense` decimal(8,5) NOT NULL,
   `coef_faible1` decimal(8,5) NOT NULL,
@@ -305,14 +332,14 @@ CREATE TABLE `trppu_scenario_pic_coeffs` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_tspc` (`id_scenario`,`co_produit`,`jour_semaine`),
   CONSTRAINT `trppu_scenario_pic_coeffs_ibfk_1` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_scenario_variations_prev` -----
 DROP TABLE IF EXISTS `trppu_scenario_variations_prev`;
 CREATE TABLE `trppu_scenario_variations_prev` (
   `id_variation` bigint NOT NULL AUTO_INCREMENT,
   `id_scenario` bigint NOT NULL,
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `variation_pct` decimal(6,2) NOT NULL,
   `dt_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `id_rh` varchar(255) DEFAULT NULL,
@@ -322,7 +349,7 @@ CREATE TABLE `trppu_scenario_variations_prev` (
   CONSTRAINT `fk_var_produit` FOREIGN KEY (`co_produit`) REFERENCES `trppu_produit` (`co_produit`) ON DELETE RESTRICT,
   CONSTRAINT `fk_var_scen` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`) ON DELETE CASCADE,
   CONSTRAINT `chk_var_borne` CHECK ((`variation_pct` between -(100) and 100))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=57 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_site` -----
 DROP TABLE IF EXISTS `trppu_site`;
@@ -334,14 +361,30 @@ CREATE TABLE `trppu_site` (
   `dt_maj` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`co_regate`),
   KEY `idx_site_roc` (`co_roc`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ----- TABLE `trppu_site_trafic` -----
+DROP TABLE IF EXISTS `trppu_site_trafic`;
+CREATE TABLE `trppu_site_trafic` (
+  `id_site_trafic` bigint NOT NULL AUTO_INCREMENT,
+  `id_referentiel` int NOT NULL,
+  `co_regate_site` varchar(10) NOT NULL,
+  `trafic_colis_total` decimal(24,18) NOT NULL,
+  `trafic_oo_total` decimal(24,18) NOT NULL,
+  `trafic_3s_total` decimal(24,18) NOT NULL,
+  `potentielip_total` bigint NOT NULL,
+  `date_debut_validite` date NOT NULL,
+  `date_fin_validite` date DEFAULT NULL,
+  `date_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_site_trafic`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_tmh` -----
 DROP TABLE IF EXISTS `trppu_tmh`;
 CREATE TABLE `trppu_tmh` (
   `id_tmh` bigint NOT NULL AUTO_INCREMENT,
   `id_scenario` bigint NOT NULL,
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `volume_realise` int DEFAULT NULL,
   `volume_previsionnel` int DEFAULT NULL,
   `moyenne_journaliere` decimal(12,2) DEFAULT NULL,
@@ -351,6 +394,7 @@ CREATE TABLE `trppu_tmh` (
   `bl_manuel` tinyint(1) NOT NULL,
   `id_rh` varchar(255) DEFAULT NULL,
   `motif` varchar(255) DEFAULT NULL,
+  `volume_previsionnel_recalcule` int DEFAULT NULL,
   PRIMARY KEY (`id_tmh`),
   UNIQUE KEY `uq_tmh` (`id_tmh`,`id_scenario`,`co_produit`),
   KEY `fk_tmh_scen` (`id_scenario`),
@@ -358,7 +402,7 @@ CREATE TABLE `trppu_tmh` (
   CONSTRAINT `fk_tmh_produit` FOREIGN KEY (`co_produit`) REFERENCES `trppu_produit` (`co_produit`) ON DELETE RESTRICT,
   CONSTRAINT `fk_tmh_scen` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`) ON DELETE CASCADE,
   CONSTRAINT `chk_tmh_volumes` CHECK ((((`volume_realise` is null) or (`volume_realise` >= 0)) and ((`volume_previsionnel` is null) or (`volume_previsionnel` >= 0))))
-) ENGINE=InnoDB AUTO_INCREMENT=161 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=454 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_trafic_agrebal` -----
 DROP TABLE IF EXISTS `trppu_trafic_agrebal`;
@@ -367,7 +411,7 @@ CREATE TABLE `trppu_trafic_agrebal` (
   `id_scenario` bigint NOT NULL,
   `co_regate` char(6) NOT NULL,
   `id_agrebal` int NOT NULL,
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `jour_semaine` enum('LUN','MAR','MER','JEU','VEN','SAM') NOT NULL,
   `couleur_pic` enum('DENSE','FAIBLE1','FAIBLE2') NOT NULL,
   `volume` decimal(12,4) NOT NULL,
@@ -375,7 +419,7 @@ CREATE TABLE `trppu_trafic_agrebal` (
   KEY `idx_scen_site_agrebal` (`id_scenario`,`co_regate`,`id_agrebal`),
   KEY `idx_agrebal_prod` (`id_agrebal`,`co_produit`),
   CONSTRAINT `trppu_trafic_agrebal_ibfk_1` FOREIGN KEY (`id_scenario`) REFERENCES `trppu_scenario` (`id_scenario`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ----- TABLE `trppu_trafic_pdi` -----
 DROP TABLE IF EXISTS `trppu_trafic_pdi`;
@@ -385,7 +429,7 @@ CREATE TABLE `trppu_trafic_pdi` (
   `co_regate` char(6) NOT NULL,
   `id_agrebal` bigint NOT NULL,
   `id_pdi` bigint NOT NULL,
-  `co_produit` char(2) NOT NULL,
+  `co_produit` varchar(3) NOT NULL,
   `jour_semaine` enum('LUNDI','MARDI','MERCREDI','JEUDI','VENDREDI','SAMEDI') NOT NULL,
   `dense` smallint unsigned DEFAULT NULL,
   `faible1` smallint unsigned DEFAULT NULL,
@@ -397,6 +441,19 @@ CREATE TABLE `trppu_trafic_pdi` (
   KEY `idx_tp_pdi_agr` (`id_pdi`,`id_agrebal`),
   KEY `idx_tp_site` (`co_regate`),
   KEY `idx_tp_batch` (`id_calcul_batch`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ----- TABLE `trppu_version_cle` -----
+DROP TABLE IF EXISTS `trppu_version_cle`;
+CREATE TABLE `trppu_version_cle` (
+  `id_version_cle` int NOT NULL AUTO_INCREMENT,
+  `id_referentiel` int NOT NULL,
+  `libelle` varchar(100) DEFAULT NULL,
+  `actif` char(1) NOT NULL DEFAULT 'O',
+  `date_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `commentaire` varchar(500) DEFAULT NULL,
+  PRIMARY KEY (`id_version_cle`),
+  KEY `idx_ref` (`id_referentiel`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { forkJoin, of, Observable, Subject } from 'rxjs';
-import { map, switchMap, debounceTime, concatMap, catchError, retry } from 'rxjs/operators';
+import { map, switchMap, debounceTime, concatMap, catchError, retry, tap } from 'rxjs/operators';
 
 import { Scenario } from '../models/scenario.model';
 import { Tmh } from '../models/tmh.model';
@@ -45,14 +45,20 @@ const RECALCUL_RETRY_DELAY_MS = 2_000;
  * Recalcul et persistance des moyennes TMH d'un scénario en appliquant :
  * - la déduction des jours neutralisés du nombre de jours ouvrables,
  * - la variation prévisionnelle % sur le volume prévisionnel des lignes auto.
- * Les volumes stockés restent BRUTS : seules les moyennes intègrent les
- * ajustements, ce qui rend le recalcul ré-exécutable sans cumul.
+ * Le volume prévisionnel de BASE (volume_previsionnel) reste brut, jamais
+ * modifié : le prévisionnel ajusté est persisté dans
+ * volume_previsionnel_recalcule et les moyennes intègrent les ajustements,
+ * ce qui rend le recalcul ré-exécutable sans cumul.
  */
 @Injectable({ providedIn: 'root' })
 export class TmhRecalculService {
 
   /** Erreurs de recalcul (après relances), pour affichage par les composants. */
   readonly recalculErrors$ = new Subject<any>();
+
+  /** Émet l'idScenario après chaque recalcul persisté : permet aux vues
+   *  (ex. trafics calculés) de se rafraîchir dynamiquement. */
+  readonly recalculTermine$ = new Subject<number>();
 
   private readonly demandes$ = new Subject<DemandeRecalcul>();
 
@@ -70,6 +76,7 @@ export class TmhRecalculService {
         debounceTime(RECALCUL_DEBOUNCE_MS),
         concatMap(demande =>
           this.recalculerEtPersister(demande.idScenario, demande.idRh).pipe(
+            tap(() => this.recalculTermine$.next(demande.idScenario)),
             catchError(err => {
               this.recalculErrors$.next(err);
               return of(null);
@@ -128,8 +135,9 @@ export class TmhRecalculService {
    * Applique les ajustements aux lignes TMH (fonction pure) :
    * - lignes manuelles : moyennes recalculées sur le volume réalisé seul
    *   (un comptage mesuré ne reçoit pas de variation prévisionnelle) ;
-   * - lignes auto : prévisionnel ajusté de ±pct% avant calcul des moyennes.
-   * Volumes, flags et id_tmh inchangés — seuls les moyennes changent.
+   * - lignes auto : prévisionnel ajusté de ±pct% avant calcul des moyennes,
+   *   et persisté dans volume_previsionnel_recalcule (la base reste intacte).
+   * Volumes de base, flags et id_tmh inchangés.
    */
   applyAjustements(rows: TmhInput[], ajustements: AjustementsScenario): TmhInput[] {
     const jEff = ajustements.joursOuvrablesEffectifs;
@@ -140,6 +148,8 @@ export class TmhRecalculService {
       if (row.manuel) {
         return {
           ...row,
+          // Un comptage mesuré ne reçoit pas de variation : recalculé = base.
+          volume_previsionnel_recalcule: Number(row.volume_previsionnel) || 0,
           moyenne_journaliere: this.traficService.calculateMoyenneJournaliere(volumeRealise, 0, jEff),
           moyenne_hebdo: this.traficService.calculateMoyenneHebdo(volumeRealise, 0, jEff, ajustements.joursSemaine),
         };
@@ -150,6 +160,8 @@ export class TmhRecalculService {
 
       return {
         ...row,
+        // Le prévisionnel ajusté est persisté ; volume_previsionnel reste la base.
+        volume_previsionnel_recalcule: volumePrevisionnelAjuste,
         moyenne_journaliere: this.traficService.calculateMoyenneJournaliere(volumeRealise, volumePrevisionnelAjuste, jEff),
         moyenne_hebdo: this.traficService.calculateMoyenneHebdo(volumeRealise, volumePrevisionnelAjuste, jEff, ajustements.joursSemaine),
       };
@@ -187,6 +199,7 @@ export class TmhRecalculService {
       co_produit: row.co_produit,
       volume_realise: row.volume_realise,
       volume_previsionnel: row.volume_previsionnel,
+      volume_previsionnel_recalcule: row.volume_previsionnel_recalcule ?? null,
       moyenne_journaliere: Number(row.moyenne_journaliere) || 0,
       moyenne_hebdo: Number(row.moyenne_hebdo) || 0,
       exclusion: row.bl_exclu,

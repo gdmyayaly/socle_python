@@ -31,7 +31,6 @@ export class ParametersComponent implements OnInit {
   currentNeutralisationsSecondaires: PeriodeNeutralisee[] = [];
   currentProduitsExclus: ProduitExclu[] = [];
   currentNeutralisations : Neutralisation[] = [];
-  lastValidatedPayload: ParamPayload | null = null;
   userIdrh : string ="";
   constructor(private scenarioService: ScenarioService,private trppuContextService : TrppuContextService) { }
 
@@ -71,26 +70,12 @@ export class ParametersComponent implements OnInit {
     this.currentProduitsExclus = produits;
   }
 
-  onValidate(): void {
-    const payload: ParamPayload = {
-      site: this.selectedSite,
-      periodesNeutralisees: this.currentPeriodesNeutralisees,
-      variationsTrafic: this.currentVariationsTrafic,
-      neutralisationsPeak: this.currentNeutralisationsPeak,
-      neutralisationsSecondaires: this.currentNeutralisationsSecondaires,
-      produitsExclus: this.currentProduitsExclus
-    };
-    this.lastValidatedPayload = payload;
-    console.log('[ParamComponent] Payload prêt pour soumission:', payload);
-  }
-
   private resetChildrenState(): void {
     this.currentPeriodesNeutralisees = [];
     this.currentVariationsTrafic = [];
     this.currentNeutralisationsPeak = [];
     this.currentNeutralisationsSecondaires = [];
     this.currentProduitsExclus = [];
-    this.lastValidatedPayload = null;
   }
    onPeriodesNeutraliseesChange(list: Neutralisation[]): void {
   this.currentNeutralisations = list;

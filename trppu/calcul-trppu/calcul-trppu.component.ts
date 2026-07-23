@@ -10,6 +10,7 @@ import { Periode } from '../models/periode.model';
 import { AmasServiceService } from '../../../service/amas-service/amas-service.service';
 import { Comptage } from '../models/comptage.model';
 import { JoursParSemaine, TrppuTraficsCalculerComponent } from '../components/trppu-trafics-calculer/trppu-trafics-calculer.component';
+import { TrppuScenarioListComponent } from '../components/trppu-scenario-list/trppu-scenario-list.component';
 import { ScenarioService } from '../services/scenario.service';
 import { AuthOidcService } from '@cddng/auth-oidc-apim';
 import { ConfirmDialogComponent, ConfirmDialogData } from '../../../shared/dialog/confirm-dialog/confirm-dialog.component';
@@ -24,6 +25,7 @@ import { ConfirmDialogComponent, ConfirmDialogData } from '../../../shared/dialo
 })
 export class CalculTrppuComponent implements OnInit {
  @ViewChild(TrppuTraficsCalculerComponent) traficsCalculerRef!: TrppuTraficsCalculerComponent;
+ @ViewChild(TrppuScenarioListComponent) scenarioList!: TrppuScenarioListComponent;
 
  idRh: string | null = null;
  selectedSite: Site | null = null;
@@ -190,5 +192,10 @@ export class CalculTrppuComponent implements OnInit {
    return { dateDebut: debut, dateFin: fin, datePivot: pivot };
   }
   return null;
+ }
+
+ onScenarioStatusUpdated(scenario: Scenario): void {
+  this.selectedScenario = scenario;
+  this.scenarioList?.refreshScenarios();
  }
 }

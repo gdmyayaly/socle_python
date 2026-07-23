@@ -1,0 +1,10 @@
+<h2 mat-dialog-title class="uit-accent-fg">
+  <mat-icon class="uit-accent-fg v-align-middle">check_circle</mat-icon> Confirmation de validation
+</h2>
+<div mat-dialog-content>
+  <p [innerHtml]="data.message"></p>
+</div>
+<div mat-dialog-actions align="end">
+  <button mat-raised-button (click)="onCancel()" style="margin-right: 10px;">Annuler</button>
+  <button mat-raised-button color="accent" (click)="onConfirm()">Valider</button>
+</div>

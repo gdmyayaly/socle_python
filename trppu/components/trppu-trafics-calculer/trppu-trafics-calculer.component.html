@@ -15,12 +15,27 @@
 
  <table mat-table [dataSource]="trafics">
 
+  <ng-container matColumnDef="collapse">
+   <th mat-header-cell *matHeaderCellDef></th>
+   <td mat-cell *matCellDef="let row">    
+    <button mat-icon-button
+        *ngIf="isParentRow(row) && hasChildRows(row)"
+        class="collapse-toggle"
+        (click)="toggleProduitRows(row)"
+        [attr.aria-label]="isProduitCollapsed(row) ? 'Afficher les comptages manuels' : 'Réduire les comptages manuels'"
+        matTooltip="{{ isProduitCollapsed(row) ? 'Afficher les comptages manuels' : 'Réduire les comptages manuels' }}">
+        <mat-icon>{{ isProduitCollapsed(row) ? 'keyboard_arrow_right' : 'keyboard_arrow_down' }}</mat-icon>
+    </button>
+   </td>
+   <td mat-footer-cell *matFooterCellDef></td>
+  </ng-container>
+
   <ng-container matColumnDef="exclure">
    <th mat-header-cell *matHeaderCellDef>Exclure</th>
    <td mat-cell *matCellDef="let row">
      <mat-checkbox *ngIf="!row.manuel" [ngModel]="row.exclure"
            (ngModelChange)="onExclureChange(row, $event)"
-           aria-label="Exclure le trafic {{ row.produit }}">
+           aria-label="Exclure le trafic {{ row.produit }}" matTooltip="Exclure le trafic {{ row.produit }}">
     </mat-checkbox>
    </td>
    <td mat-footer-cell *matFooterCellDef></td>
@@ -56,7 +71,19 @@
 
   <ng-container matColumnDef="previsionnelBrut">
    <th mat-header-cell *matHeaderCellDef>Prévisionnel brut</th>
-   <td mat-cell *matCellDef="let row">{{ !row.manuel ? (row.previsionnelBrut | number:'':'fr') : '' }}</td>
+   <td mat-cell *matCellDef="let row">
+    <!-- Valeur recalculée (variation %) différente de la base : on l'affiche en
+         principal, la base en petite écriture, détails au survol. Sinon la base. -->
+    <ng-container *ngIf="!hasRecalcule(row); else avecRecalcule">
+     {{ !row.manuel ? (row.previsionnelBrut | number:'':'fr') : '' }}
+    </ng-container>
+    <ng-template #avecRecalcule>
+     <span class="previsionnel-recalcule" [matTooltip]="getRecalculeTooltip(row)">
+      {{ row.previsionnelRecalcule | number:'':'fr' }}
+      <span class="previsionnel-base">{{ row.previsionnelBrut | number:'':'fr' }}</span>
+     </span>
+    </ng-template>
+   </td>
    <td mat-footer-cell *matFooterCellDef></td>
   </ng-container>
 
@@ -87,16 +114,18 @@
   <ng-container matColumnDef="manuel">
    <th mat-header-cell *matHeaderCellDef>Manuel</th>
    <td mat-cell *matCellDef="let row">
-    <button mat-icon-button *ngIf="!row.manuel" color="primary" (click)="onAddComptageProduit(row)" aria-label="Ajouter Comptage Manuel">
+    <button mat-icon-button *ngIf="(!row.manuel && !row.exclure)" color="primary" (click)="onAddComptageProduit(row)" aria-label="Ajouter Comptage Manuel" matTooltip="Ajouter un comptage manuel de {{ row.produit }}">
      <mat-icon>add_circle</mat-icon>
     </button>
-    <button mat-icon-button *ngIf="row.manuel" color="warn" (click)="onRemoveManual(row)" aria-label="Supprimer">
-     <mat-icon>delete</mat-icon>
+    <button mat-icon-button *ngIf="row.manuel" color="warn" (click)="onRemoveManual(row)" aria-label="Supprimer" matTooltip="Supprimer comptage manuel">
+     <mat-icon 
+            (mouseenter)="setManualIconHover(row, true)"
+            (mouseleave)="setManualIconHover(row, false)">{{ isManualIconHovered(row) ? 'delete' : 'check' }}
+     </mat-icon>
     </button>
-    <mat-icon *ngIf="row.manuel">check</mat-icon>
    </td>
    <td mat-footer-cell *matFooterCellDef>
-    <button *ngIf="enableAddComptage" mat-icon-button color="primary" [disabled]="!canAddComptage" (click)="onAddComptage()" aria-label="Ajouter">
+    <button *ngIf="enableAddComptage" mat-icon-button color="primary" [disabled]="!canAddComptage" (click)="onAddComptage()" aria-label="Ajouter comptage manuel" matTooltip="Ajouter comptage manuel">
      <mat-icon>add_circle</mat-icon>
     </button>
    </td>
@@ -104,7 +133,9 @@
 
   <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
   <tr mat-row *matRowDef="let row; columns: displayedColumns;" 
-      [class.row-excluded]="row.exclure" ></tr>
+      [class.row-excluded]="row.exclure"
+      [style.display]="isRowHidden(row) ? 'none' : ''"
+      [id]="isParentRow(row) ? 'parent_'+row.produit : 'child_'+row.produit"></tr>
   <tr mat-footer-row *matFooterRowDef="displayedColumns" class="add-footer-row"></tr>
  </table>
 
