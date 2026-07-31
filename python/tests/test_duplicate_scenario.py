@@ -1,6 +1,8 @@
 """Tests de la duplication profonde de scénario (helpers + schéma)."""
 
 import asyncio
+import re
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -12,6 +14,85 @@ from app.routes.trppu_scenario.helpers import (
     duplicate_scenario_pic_version,
 )
 from app.routes.trppu_scenario.schemas import DuplicateRequest
+
+SCHEMA_SQL = Path(__file__).resolve().parents[1] / "db" / "db_new.sql"
+
+# Une ligne de colonne commence par une backtick ; les lignes d'index et de
+# contrainte commencent par un mot-clé (PRIMARY KEY / UNIQUE KEY / KEY /
+# CONSTRAINT) et sont donc naturellement écartées.
+_COLUMN_RE = re.compile(r"^\s*`(\w+)`\s+(.*?),?\s*$")
+_TABLE_RE = re.compile(r"CREATE TABLE `(\w+)` \((.*?)\n\) ENGINE", re.S)
+
+
+def _parse_schema() -> dict[str, dict[str, str]]:
+    """{table: {colonne: définition}} extrait de db/db_new.sql."""
+    sql = SCHEMA_SQL.read_text(encoding="utf-8")
+    tables: dict[str, dict[str, str]] = {}
+    for match in _TABLE_RE.finditer(sql):
+        name, body = match.group(1), match.group(2)
+        colonnes: dict[str, str] = {}
+        for ligne in body.splitlines():
+            col = _COLUMN_RE.match(ligne)
+            if col:
+                colonnes[col.group(1)] = col.group(2)
+        tables[name] = colonnes
+    return tables
+
+
+def _colonnes_obligatoires(colonnes: dict[str, str]) -> set[str]:
+    """Colonnes NOT NULL sans valeur automatique : elles DOIVENT être fournies."""
+    return {
+        nom
+        for nom, definition in colonnes.items()
+        if "NOT NULL" in definition
+        and "DEFAULT" not in definition
+        and "AUTO_INCREMENT" not in definition
+        and "GENERATED" not in definition
+    }
+
+
+SCHEMA = _parse_schema()
+
+
+def test_schema_de_reference_lisible():
+    """Garde-fou du parseur : si db_new.sql change de forme, les tests suivants
+    deviendraient silencieusement vides au lieu d'échouer."""
+    assert len(SCHEMA) == 25
+    for table, _, _ in DUPLICATE_CHILD_SPECS:
+        assert table in SCHEMA, f"Table {table} absente du schéma de référence."
+        assert SCHEMA[table], f"Aucune colonne extraite pour {table}."
+
+
+@pytest.mark.parametrize("table,cols,replace_rh", DUPLICATE_CHILD_SPECS)
+def test_duplicate_specs_colonnes_existent(table, cols, replace_rh):
+    """Chaque colonne copiée existe réellement dans la table.
+
+    Sans ce contrôle, une colonne inventée ne se voit qu'à l'exécution, sous forme
+    d'un ERROR 1054 qui fait échouer toute la duplication.
+    """
+    reelles = SCHEMA[table]
+    inconnues = [c for c in cols if c not in reelles]
+    assert not inconnues, (
+        f"{table} : colonne(s) copiée(s) inexistante(s) en base : {inconnues}. "
+        f"Colonnes réelles : {sorted(reelles)}"
+    )
+
+
+@pytest.mark.parametrize("table,cols,replace_rh", DUPLICATE_CHILD_SPECS)
+def test_duplicate_specs_couvre_colonnes_obligatoires(table, cols, replace_rh):
+    """Toute colonne NOT NULL sans défaut est fournie par l'INSERT ... SELECT.
+
+    id_scenario est ajouté par la requête elle-même, id_rh l'est quand la table le
+    porte. Une colonne obligatoire oubliée provoque un ERROR 1364 à l'exécution.
+    """
+    fournies = set(cols) | {"id_scenario"}
+    if replace_rh:
+        fournies.add("id_rh")
+    manquantes = _colonnes_obligatoires(SCHEMA[table]) - fournies
+    assert not manquantes, (
+        f"{table} : colonne(s) NOT NULL sans défaut non copiée(s) : "
+        f"{sorted(manquantes)}"
+    )
 
 
 class FakeTx:
@@ -48,8 +129,12 @@ def test_duplicate_children_sql_et_params():
     for (sql, params), (table, cols, replace_rh) in zip(tx.calls, DUPLICATE_CHILD_SPECS):
         assert sql.startswith(f"INSERT INTO {table} (id_scenario, ")
         assert f"FROM {table} WHERE id_scenario = %s" in sql
-        for col in cols:
-            assert col in sql
+        # La liste de colonnes doit apparaître à l'identique côté INSERT et côté
+        # SELECT — sinon les valeurs seraient décalées d'une colonne à l'autre.
+        # La validité des noms eux-mêmes est vérifiée contre db/db_new.sql par
+        # test_duplicate_specs_colonnes_existent (un `assert col in sql` ne
+        # pourrait pas la détecter : il relit le SQL qu'on vient de générer).
+        assert sql.count(", ".join(cols)) == 2
         if replace_rh:
             assert "id_rh) " in sql
             assert params == (99, "RH-TOKEN", 10)

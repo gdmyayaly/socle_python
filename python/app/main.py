@@ -24,6 +24,7 @@ from app.config import (
     CORS_ALLOW_ORIGINS,
 )
 from app.json_formatter import setup_logging
+from app.log_utils import reset_id_session_ihm, set_id_session_ihm
 from app.services.jours_fermes_client import JoursFermesAPIError
 from app.routes import databricks as databricks_routes
 from app.routes import health as health_routes
@@ -119,14 +120,16 @@ async def _jours_fermes_unavailable(request: Request, exc: JoursFermesAPIError):
 @app.exception_handler(RequestValidationError)
 async def _validation_error(request: Request, exc: RequestValidationError):
     """Trace les paramètres invalides/manquants (DSR-661 critère 4) avant de renvoyer le
-    422 standard. `id_session_ihm` (query) repris si présent pour le regroupement Kibana.
+    422 standard.
+
+    `id_session_ihm` n'est plus relu ici : le middleware `log_requests` l'a posé dans le
+    contexte de log, donc `JsonFormatter` l'ajoute d'office à cet enregistrement (champ
+    racine `id_session_ihm`) pour le regroupement Kibana.
     """
-    id_session_ihm = request.query_params.get("id_session_ihm")
     log.warning(
-        "Validation des paramètres échouée (%s %s, id_session_ihm=%s) : %s",
+        "Validation des paramètres échouée (%s %s) : %s",
         request.method,
         request.url.path,
-        id_session_ihm,
         exc.errors(),
     )
     return JSONResponse(
@@ -137,28 +140,40 @@ async def _validation_error(request: Request, exc: RequestValidationError):
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    """Trace chaque requête et publie `id_session_ihm` dans le contexte de log.
+
+    L'IHM pose ce query param sur tous les appels /trppu-api (cf.
+    session-ihm.interceptor.ts). En l'alimentant ici, `JsonFormatter` l'ajoute
+    ensuite à *toutes* les lignes de log de la requête — y compris celles émises
+    par les handlers d'exception ou les couches basses, sans que les endpoints
+    aient à le déclarer.
+    """
+    token = set_id_session_ihm(request.query_params.get("id_session_ihm"))
     start = time.time()
-    log.info(">>> %s %s", request.method, request.url.path)
     try:
-        response = await call_next(request)
-    except Exception:
+        log.info(">>> %s %s", request.method, request.url.path)
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.time() - start) * 1000
+            log.exception(
+                "<<< %s %s 500 (%.1fms) — UNHANDLED",
+                request.method,
+                request.url.path,
+                duration_ms,
+            )
+            raise
         duration_ms = (time.time() - start) * 1000
-        log.exception(
-            "<<< %s %s 500 (%.1fms) — UNHANDLED",
+        log.info(
+            "<<< %s %s %d (%.1fms)",
             request.method,
             request.url.path,
+            response.status_code,
             duration_ms,
         )
-        raise
-    duration_ms = (time.time() - start) * 1000
-    log.info(
-        "<<< %s %s %d (%.1fms)",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-    )
-    return response
+        return response
+    finally:
+        reset_id_session_ihm(token)
  
  
 app.include_router(health_routes.router)

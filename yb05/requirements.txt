@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+aiomysql
+pydantic>=2,<3
+python-dotenv
+sqlparse>=0.4,<1
+
+# Tests (dev)
+pytest

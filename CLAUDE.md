@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Monorepo with three independent sub-projects (part of the La Poste / DSR "TRPPU" ecosystem — TRPPU = average traffic per product for a postal site, computed via parameterizable scenarios). Code comments, docs, and Jira tickets are in French.
+Monorepo with four independent sub-projects (part of the La Poste / DSR "TRPPU" ecosystem — TRPPU = average traffic per product for a postal site, computed via parameterizable scenarios). Code comments, docs, and Jira tickets are in French.
 
 - **`python/`** — the main, active project: FastAPI backend ("trppu API", module YS04) backed by MySQL and Databricks SQL Warehouse.
+- **`yb05/`** — technical base (socle) extracted from `python/` for module YB05: MySQL connection, JSON logging, health routes, and a `.sql` script runner on the `Database` class. No business logic, no Databricks. Has its own `yb05/README.md`.
 - **`as03/`** — Angular 14 app skeleton. Has its own `as03/CLAUDE.md`; read it when working there.
 - **`trppu/`** — Angular module source extracted from the larger front-end, kept here for reference/study only (no build setup). `trppu/ETUDE-COMPREHENSION.md` explains the front-end module and which backend endpoints it consumes.
 

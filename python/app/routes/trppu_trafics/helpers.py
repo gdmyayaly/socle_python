@@ -1,10 +1,26 @@
-"""DSR-679 — Helpers de récupération des trafics pivot (nouvelle structure gold `_3`).
+"""DSR-679 — Helpers de récupération des trafics pivot (nouvelle structure gold).
 
-Package autonome : les tables trafics `g_trppu_trafics_{jour,semaine,mois}_3` portent
-DIRECTEMENT l'objet TRPPU dans `co_type_objet` (OO/OS/PR/PP/CO/IP) + `trafic_constate`
-/ `trafic_prevu` + `co_regate` + `co_annee_comptage` / `co_mois_comptage` /
-`co_semaine_comptage`. Aucune jointure, aucun mapping en dur : la requête agrège par
-`co_type_objet` et le service restitue tel quel le résultat du SQL (objets dynamiques).
+Package autonome. Les tables `g_trppu_trafics_{jour,semaine,mois}` sont **auto-suffisantes** :
+elles portent déjà l'objet/produit TRPPU (`co_type_objet`), le code régate, les dates et les
+colonnes de partition, ainsi que `trafic_constate` / `trafic_prevu`. La requête est donc
+mono-table : `SUM(<valeur>) GROUP BY co_type_objet`, avec pruning sur les partitions.
+
+Aucune jointure de dimension n'est faite — les `DESCRIBE` en base montrent que celles
+décrites par le ticket ne sont pas exploitables ici :
+
+- `g_trppu_obj_mapping` (comptage CTR -> objet) : les tables trafics ne portent **pas** de
+  code comptage, le mapping est déjà appliqué en amont dans le gold ;
+- `g_trppu_entite` : une unique colonne STRUCT `s_mdp_entite` (pas de `co_regate` à plat),
+  et elle n'apporte rien à l'agrégation ;
+- `s_commun_calendrier_jour` (silver) : partitionnée par `zone`, donc **plusieurs lignes par
+  jour** -> la joindre transformerait la requête en produit cartésien.
+
+Point capital : une même régate est présente à plusieurs niveaux de regroupement
+(SITE / ETABLISSEMENT / PIC / NATIONAL...). Le filtre `co_niveau_regroupement_operationnel`
+est donc obligatoire, sans quoi les `SUM` sont silencieusement gonflés.
+
+Chaque nom de table/colonne reste surchargeable par variable d'environnement, pour absorber
+un renommage côté data sans relivrer.
 """
 
 import logging
@@ -22,11 +38,11 @@ from app.config import (
 
 logger = logging.getLogger(__name__)
 
-# --- Tables & colonnes (structure gold réelle `_3`, surchargeables par env) ---
+# --- Tables trafics (noms du ticket DSR-679, surchargeables par env) ---
 TABLES_PERIODE = {
-    "jours": os.getenv("TRAFIC679_TABLE_JOUR", "g_trppu_trafics_jour_3"),
-    "semaines": os.getenv("TRAFIC679_TABLE_SEMAINE", "g_trppu_trafics_semaine_3"),
-    "mois": os.getenv("TRAFIC679_TABLE_MOIS", "g_trppu_trafics_mois_3"),
+    "jours": os.getenv("TRAFIC679_TABLE_JOUR", "g_trppu_trafics_jour"),
+    "semaines": os.getenv("TRAFIC679_TABLE_SEMAINE", "g_trppu_trafics_semaine"),
+    "mois": os.getenv("TRAFIC679_TABLE_MOIS", "g_trppu_trafics_mois"),
 }
 
 DATE_COLUMN_PERIODE = {
@@ -35,20 +51,28 @@ DATE_COLUMN_PERIODE = {
     "mois": "co_mois_comptage",
 }
 
-TRAFIC_COL_OBJET = os.getenv("TRAFIC679_COL_OBJET", "co_type_objet")  # objet TRPPU (agrégation)
+# Alias SQL de la table trafics.
+ALIAS_TRAFIC = "t"
+
+# --- Colonnes table trafics ---
+TRAFIC_COL_REGATE = os.getenv("TRAFIC679_COL_REGATE", "co_regate")
+TRAFIC_COL_OBJET = os.getenv("TRAFIC679_COL_OBJET", "co_type_objet")  # objet/produit TRPPU
 TRAFIC_COL_CONSTATE = os.getenv("TRAFIC679_COL_CONSTATE", "trafic_constate")
 TRAFIC_COL_PREVISIONNEL = os.getenv("TRAFIC679_COL_PREVISIONNEL", "trafic_prevu")
 TRAFIC_COL_ANNEE = os.getenv("TRAFIC679_COL_ANNEE", "co_annee_comptage")
 TRAFIC_COL_MOIS = os.getenv("TRAFIC679_COL_MOIS", "co_mois_comptage")  # partition mois (table jour)
 
+# Niveau de regroupement : les tables gold empilent SITE / ETABLISSEMENT / DEXC / DEPARTEMENT /
+# PIC / PFC / NATIONAL / SIEGE. Sans ce filtre, une régate présente à plusieurs niveaux gonfle
+# silencieusement les SUM.
+TRAFIC_COL_NIVEAU = os.getenv(
+    "TRAFIC679_COL_NIVEAU", "co_niveau_regroupement_operationnel"
+)
+NIVEAU_REGROUPEMENT = os.getenv("TRAFIC679_NIVEAU_REGROUPEMENT", "SITE")
+
 # Alias exposés dans le SELECT agrégé (clés des dicts renvoyés par fetch_all).
 OBJ_ALIAS = "co_objet_trppu"
 SOMME_ALIAS = "somme"
-
-# Dimensions (références debug uniquement — non utilisées par la requête agrégée).
-OBJ_MAPPING_TABLE = os.getenv("TRAFIC679_OBJ_MAPPING_TABLE", "g_trppu_obj_mapping")
-ENTITE_TABLE = os.getenv("TRAFIC679_ENTITE_TABLE", "g_trppu_entite")
-CALENDRIER_TABLE = os.getenv("TRAFIC679_CALENDRIER_TABLE", "s_commun_calendrier_jour")
 
 PARAMETRES_RAPPEL_PIVOT = (
     "Paramètres attendus : "
@@ -80,12 +104,21 @@ def render_sql(sql: str, params: dict) -> str:
     """Substitue les paramètres nommés (:name) dans le SQL pour l'affichage debug.
 
     Les clés sont substituées de la plus longue à la plus courte pour éviter qu'un
-    préfixe (`:part_mo_1`) ne corrompe une clé plus longue (`:part_mo_10`).
+    préfixe (`:part_mo_1`) ne corrompe une clé plus longue (`:part_mo_10`). Les nombres
+    ne sont pas quotés : la SQL rendue reste typée comme celle réellement exécutée
+    (`co_annee_comptage IN (2025)`), donc directement rejouable en base.
     """
     rendered = sql
     for key in sorted(params, key=len, reverse=True):
         value = params[key]
-        literal = "NULL" if value is None else f"'{str(value).replace(chr(39), chr(39) * 2)}'"
+        if value is None:
+            literal = "NULL"
+        elif isinstance(value, bool):
+            literal = "true" if value else "false"
+        elif isinstance(value, (int, float)):
+            literal = str(value)
+        else:
+            literal = f"'{str(value).replace(chr(39), chr(39) * 2)}'"
         rendered = rendered.replace(f":{key}", literal)
     return rendered
 
@@ -250,8 +283,9 @@ def build_partition_conditions(
 ) -> list[str]:
     """Prédicats de partition (pruning) : co_annee_comptage IN (...) [+ co_mois_comptage pour le jour].
 
-    Union des années/mois de toutes les plages (superset sûr). Alimente `params` avec des
-    clés uniques et retourne la liste des conditions SQL.
+    Toujours portés par la table trafics (alias `t`), jamais par une dimension, sinon le
+    pruning de partitions ne s'applique plus. Union des années/mois de toutes les plages
+    (superset sûr). Alimente `params` avec des clés uniques et retourne les conditions SQL.
     """
     annees: set[int] = set()
     mois: set[str] = set()
@@ -268,7 +302,7 @@ def build_partition_conditions(
         params[k] = an
         annee_keys.append(f":{k}")
     if annee_keys:
-        conditions.append(f"{TRAFIC_COL_ANNEE} IN ({', '.join(annee_keys)})")
+        conditions.append(f"{ALIAS_TRAFIC}.{TRAFIC_COL_ANNEE} IN ({', '.join(annee_keys)})")
 
     if periode == "jours" and mois:
         mois_keys: list[str] = []
@@ -276,9 +310,14 @@ def build_partition_conditions(
             k = f"part_mo_{i}"
             params[k] = mo
             mois_keys.append(f":{k}")
-        conditions.append(f"{TRAFIC_COL_MOIS} IN ({', '.join(mois_keys)})")
+        conditions.append(f"{ALIAS_TRAFIC}.{TRAFIC_COL_MOIS} IN ({', '.join(mois_keys)})")
 
     return conditions
+
+
+def fqtn(table: str, schema: str | None = None) -> str:
+    """Nom pleinement qualifié `catalogue.schéma.table` (schéma gold par défaut)."""
+    return f"{DATABRICKS_CATALOG}.{schema or DATABRICKS_SCHEMA}.{table}"
 
 
 def build_query(
@@ -287,33 +326,39 @@ def build_query(
     ranges: list[tuple[datetime, datetime]],
     value_col: str,
 ) -> tuple[str, dict]:
-    """Requête agrégée par objet sur la table de la période (sans jointure).
+    """Requête agrégée par objet sur la table de la période (mono-table, sans jointure).
 
-    `SUM(value_col) GROUP BY co_type_objet`, filtre co_regate + dates (BETWEEN par plage,
-    OR entre plages) + prédicats de partition. `value_col` est une constante contrôlée.
+    `SUM(t.value_col) GROUP BY t.co_type_objet` avec filtre code régate + niveau de
+    regroupement + dates (BETWEEN par plage, OR entre plages) + prédicats de partition.
+    `value_col` est une constante contrôlée ; les valeurs restent paramétrées.
     """
-    table = f"{DATABRICKS_CATALOG}.{DATABRICKS_SCHEMA}.{TABLES_PERIODE[periode]}"
-    date_col = DATE_COLUMN_PERIODE[periode]
+    table = fqtn(TABLES_PERIODE[periode])
+    objet_expr = f"{ALIAS_TRAFIC}.{TRAFIC_COL_OBJET}"
+    date_expr = f"{ALIAS_TRAFIC}.{DATE_COLUMN_PERIODE[periode]}"
 
-    params: dict = {"co_regate": co_regate}
+    params: dict = {"co_regate": co_regate, "niveau": NIVEAU_REGROUPEMENT}
     date_conditions: list[str] = []
     for i, (dt_start, dt_end) in enumerate(ranges):
         s_key, e_key = f"dt_start_{i}", f"dt_end_{i}"
         params[s_key] = fmt_date(dt_start, periode)
         params[e_key] = fmt_date(dt_end, periode)
-        date_conditions.append(f"{date_col} BETWEEN :{s_key} AND :{e_key}")
+        date_conditions.append(f"{date_expr} BETWEEN :{s_key} AND :{e_key}")
 
     part_conditions = build_partition_conditions(periode, ranges, params)
 
-    where = ["co_regate = :co_regate", f"({' OR '.join(date_conditions)})"]
+    where = [
+        f"{ALIAS_TRAFIC}.{TRAFIC_COL_REGATE} = :co_regate",
+        f"{ALIAS_TRAFIC}.{TRAFIC_COL_NIVEAU} = :niveau",
+        f"({' OR '.join(date_conditions)})",
+    ]
     where.extend(part_conditions)
 
     sql = (
-        f"SELECT {TRAFIC_COL_OBJET} AS {OBJ_ALIAS}, "
-        f"SUM({value_col}) AS {SOMME_ALIAS} "
-        f"FROM {table} "
+        f"SELECT {objet_expr} AS {OBJ_ALIAS}, "
+        f"SUM({ALIAS_TRAFIC}.{value_col}) AS {SOMME_ALIAS} "
+        f"FROM {table} {ALIAS_TRAFIC} "
         f"WHERE {' AND '.join(where)} "
-        f"GROUP BY {TRAFIC_COL_OBJET}"
+        f"GROUP BY {objet_expr}"
     )
     return sql, params
 

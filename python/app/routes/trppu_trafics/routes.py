@@ -43,10 +43,12 @@ async def get_trafics_pivot(
 ):
     """DSR-679 : trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot.
 
-    Structure gold `_3` : l'objet est porté par `co_type_objet` (OO/OS/PR/PP/CO/IP) ;
-    valeurs `trafic_constate` / `trafic_prevu`. La requête agrège directement par objet
-    (`GROUP BY co_type_objet`) avec pruning sur les partitions (`co_annee_comptage`,
-    + `co_mois_comptage` pour le jour), et restitue le résultat tel quel.
+    Structure gold : l'objet est porté directement par `co_type_objet` (OO/OS/PQ/EQ/CO/IP/PPI
+    — liste dynamique, non figée) ; valeurs `trafic_constate` / `trafic_prevu`. La requête est
+    mono-table (aucune jointure de dimension) : `GROUP BY co_type_objet`, filtrée sur le
+    niveau de regroupement `SITE` (sans quoi les niveaux ETABLISSEMENT/PIC/NATIONAL cumulent
+    et gonflent les sommes), avec pruning sur les partitions (`co_annee_comptage`,
+    + `co_mois_comptage` pour le jour). Le résultat est restitué tel quel.
 
     - dates < pivot  -> trafic réel (constaté) ; prévisionnel = 0
     - dates >= pivot -> trafic prévisionnel ; réel = 0

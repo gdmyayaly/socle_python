@@ -19,7 +19,6 @@ from app.config import (
     LOGS_DIR as CONFIG_LOGS_DIR,
     MODULE,
 )
-from app.log_utils import get_id_session_ihm
 
 DEFAULT_LOGS_DIR = os.path.join(os.getcwd(), "logs")
 
@@ -27,43 +26,34 @@ DEFAULT_LOGS_DIR = os.path.join(os.getcwd(), "logs")
 class JsonFormatter(logging.Formatter):
     """
     Formateur personnalisé pour les logs au format JSON.
-    
+
     Cette classe hérite de logging.Formatter et transforme les messages de log
     en format JSON structuré avec des métadonnées contextuelles spécifiques
     à l'application (environnement, plateforme, etc.).
     """
-    
+
     def format(self, record):
         """
         Formate un enregistrement de log en JSON.
-        
+
         Args:
             record (logging.LogRecord): L'enregistrement de log à formater
-            
+
         Returns:
             str: L'enregistrement formaté en JSON contenant :
                 - app_datetime : horodatage du log
                 - app_ccx : contexte applicatif ('dsr')
                 - app_env : environnement (par défaut 'sdev')
                 - app_ptf : plateforme ('build')
+                - app_tm : code module ('yb05')
                 - app_version : version de l'application (par défaut '1.0.0')
                 - severity_label : niveau de log (INFO, ERROR, etc.)
                 - app_message : message du log
-                - id_session_ihm : id de session IHM de la requête courante
-                  (null hors requête HTTP) — permet le regroupement par session
-                  dans Kibana (DSR-660/661)
                 - name : nom du logger
                 - filename : fichier source du log
                 - lineno : numéro de ligne du log
         """
         app_run_mode = 'run' if APP_ENV == 'prod' else 'build'
-        # La clé est toujours posée (à null hors contexte requête) pour que le
-        # mapping Kibana reste stable. `format()` ne doit jamais lever : on se
-        # protège d'un contexte inattendu.
-        try:
-            id_session_ihm = get_id_session_ihm()
-        except Exception:
-            id_session_ihm = None
         log_record = {
             'app_datetime': datetime.fromtimestamp(record.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             'app_ccx': APP,
@@ -73,7 +63,6 @@ class JsonFormatter(logging.Formatter):
             'app_version': APP_VERSION,
             'severity_label': record.levelname,
             'app_message': record.getMessage(),
-            'id_session_ihm': id_session_ihm,
             'name': record.name,
             'filename': record.filename,
             'lineno': record.lineno

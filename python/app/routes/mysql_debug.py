@@ -498,8 +498,16 @@ async def import_table(payload: ImportPayload = Body(...)):
     Workflow type : `GET /mysql/export?table=X&fmt=json` en prod -> renvoyer le corps
     obtenu à `POST /mysql/import` en dev pour repeupler la table.
 
-    - `truncate=True` (défaut) : vide la table avant insertion (contrôles FK désactivés
-      le temps de l'opération, le tout dans une transaction atomique).
+    - `truncate=True` (défaut) : vide la table avant insertion. Le vidage se fait par
+      `DELETE FROM` et non `TRUNCATE` : ce dernier est du DDL, donc auto-commité par
+      MySQL — un échec d'insertion laissait la table définitivement vide malgré le
+      rollback. Avec `DELETE`, l'opération est réellement atomique : si un lot échoue,
+      les données d'origine sont restaurées. Contrepartie : l'AUTO_INCREMENT n'est pas
+      remis à zéro, sans incidence pour un rechargement d'export où les identifiants
+      sont fournis explicitement.
+    - Les contrôles FK sont désactivés le temps de l'opération et systématiquement
+      rétablis (y compris en cas d'erreur) : la connexion étant rendue au pool sans
+      reset de session, les laisser à 0 contaminerait les requêtes suivantes.
     - Seules les colonnes réellement présentes dans la table sont insérées (les clés
       inconnues du payload sont ignorées, pas d'injection d'identifiant arbitraire).
     """
@@ -536,16 +544,29 @@ async def import_table(payload: ImportPayload = Body(...)):
     try:
         async with db_write.transaction() as tx:
             await tx.execute("SET FOREIGN_KEY_CHECKS = 0")
-            if payload.truncate:
-                await tx.execute(f"TRUNCATE TABLE `{MYSQL_DATABASE}`.`{table}`")
-            # Insertion par lots pour éviter un paquet réseau trop volumineux.
-            chunk = 500
-            for i in range(0, len(params_seq), chunk):
-                batch = params_seq[i : i + chunk]
-                if batch:
-                    await tx.execute_many(insert_sql, batch)
-                    inserted += len(batch)
-            await tx.execute("SET FOREIGN_KEY_CHECKS = 1")
+            try:
+                if payload.truncate:
+                    # DELETE et non TRUNCATE : transactionnel, donc annulable.
+                    await tx.execute(f"DELETE FROM `{MYSQL_DATABASE}`.`{table}`")
+                # Insertion par lots pour éviter un paquet réseau trop volumineux.
+                chunk = 500
+                for i in range(0, len(params_seq), chunk):
+                    batch = params_seq[i : i + chunk]
+                    if batch:
+                        await tx.execute_many(insert_sql, batch)
+                        inserted += len(batch)
+            finally:
+                # Impératif sur tous les chemins : la connexion retourne au pool
+                # sans reset de session, et FOREIGN_KEY_CHECKS survit au rollback.
+                # Le rétablissement ne doit jamais masquer l'erreur d'origine.
+                try:
+                    await tx.execute("SET FOREIGN_KEY_CHECKS = 1")
+                except Exception:
+                    logger.warning(
+                        "Impossible de rétablir FOREIGN_KEY_CHECKS sur la connexion "
+                        "(import de %s) — connexion probablement rompue.",
+                        table,
+                    )
     except Exception as e:
         logger.error("Erreur import de %s : %s", table, e)
         raise HTTPException(status_code=500, detail=f"Erreur import de {table} : {e}") from e

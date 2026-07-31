@@ -169,6 +169,9 @@ async def delete_scenario_cascade(tx, id_scenario: int) -> None:
 # Les PK auto-increment ne sont jamais listées ; dt_calcul / dt_creation sont
 # copiées explicitement pour préserver l'historique (sinon les DEFAULT
 # CURRENT_TIMESTAMP écraseraient les dates d'origine).
+# Toute colonne NOT NULL sans DEFAULT doit figurer ici, sinon l'INSERT ... SELECT
+# échoue en base : tests/test_duplicate_scenario.py confronte ces specs aux
+# colonnes réelles de db/db_new.sql pour l'empêcher.
 DUPLICATE_CHILD_SPECS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
     (
         "trppu_tmh",
@@ -209,7 +212,15 @@ DUPLICATE_CHILD_SPECS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
     ),
     (
         "trppu_trafic_agrebal",
-        ("co_regate", "id_agrebal", "co_produit", "jour_semaine", "couleur_pic", "volume"),
+        (
+            "co_regate",
+            "id_agrebal",
+            "agrebal_uuid",
+            "co_produit",
+            "jour_semaine",
+            "couleur_pic",
+            "volume",
+        ),
         False,
     ),
     (
@@ -217,6 +228,7 @@ DUPLICATE_CHILD_SPECS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
         (
             "co_regate",
             "id_agrebal",
+            "agrebal_uuid",
             "id_pdi",
             "co_produit",
             "jour_semaine",
@@ -224,7 +236,6 @@ DUPLICATE_CHILD_SPECS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
             "faible1",
             "faible2",
             "dt_calcul",
-            "id_calcul_batch",
         ),
         False,
     ),
