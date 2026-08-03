@@ -16,11 +16,13 @@ from starlette.concurrency import run_in_threadpool
 from app.config import DEBUG_SHOW_QUERY
 from app.db.databricks import databricks
 from app.routes.trppu_trafics.helpers import (
+    OBJ_MAPPING_TABLE,
     TRAFIC_COL_CONSTATE,
     TRAFIC_COL_PREVISIONNEL,
     accumulate_trafics,
     build_period_queries,
     empty_accumulator,
+    fetch_libelles_objets,
     fmt_date,
     render_sql,
     split_by_pivot,
@@ -43,8 +45,9 @@ async def get_trafics_pivot(
 ):
     """DSR-679 : trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot.
 
-    Structure gold : l'objet est porté directement par `co_type_objet` (OO/OS/PQ/EQ/CO/IP/PPI
-    — liste dynamique, non figée) ; valeurs `trafic_constate` / `trafic_prevu`. La requête est
+    Structure gold `_3` : l'objet est porté directement par `co_type_objet` (OO/OS/PR/PPI/CO/IP
+    relevés en base — liste dynamique, non figée) ; valeurs `trafic_constate` / `trafic_prevu`,
+    toutes deux renseignées quelle que soit la date (c'est le pivot qui choisit). La requête est
     mono-table (aucune jointure de dimension) : `GROUP BY co_type_objet`, filtrée sur le
     niveau de regroupement `SITE` (sans quoi les niveaux ETABLISSEMENT/PIC/NATIONAL cumulent
     et gonflent les sommes), avec pruning sur les partitions (`co_annee_comptage`,
@@ -101,15 +104,30 @@ async def get_trafics_pivot(
         json.dumps(raw_rows, ensure_ascii=False, default=str),
     )
 
+    # Libellés depuis la dimension `g_trppu_obj_mapping` (lecture à part + cache : la joindre
+    # à la requête agrégée gonflerait les SUM, plusieurs codes comptage pointant le même objet).
+    libelles = await run_in_threadpool(fetch_libelles_objets)
+
     # Restitution dynamique : uniquement les objets présents dans le résultat SQL.
     trafics = [
         {
             "co_produit": objet,
+            "lb_produit": libelles.get(objet),
             "trafic_brut": acc[objet]["trafic_brut"],
             "trafic_previsionnel": acc[objet]["trafic_previsionnel"],
         }
         for objet in sorted(acc)
     ]
+
+    # Un objet des tables trafics absent du mapping sort avec un libellé nul : on le trace et
+    # on l'expose, plutôt que d'inventer une correspondance (cf. écart PR/PPI vs PQ/EQ).
+    objets_sans_libelle = sorted(objet for objet in acc if objet not in libelles)
+    if objets_sans_libelle and libelles:
+        logger.warning(
+            "Objets absents de %s (libellé nul) : %s",
+            OBJ_MAPPING_TABLE,
+            ", ".join(objets_sans_libelle),
+        )
 
     logger.info(
         "Trafics pivot DSR-679 (co_regate=%s) — réponse transformée : %s",
@@ -139,6 +157,7 @@ async def get_trafics_pivot(
         "is_day": is_day,
         "count": len(trafics),
         "trafics": trafics,
+        "objets_sans_libelle": objets_sans_libelle,
         "nb_jours": nb_jours,
     }
     if DEBUG_SHOW_QUERY:

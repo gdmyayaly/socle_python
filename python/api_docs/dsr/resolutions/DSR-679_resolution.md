@@ -11,7 +11,7 @@ requêtes exploitent les **colonnes de partition** pour l'optimisation.
 ### Écarts relevés entre le texte du ticket et la base
 | Hypothèse (texte du ticket) | Réalité (`DESCRIBE`) | Conséquence |
 | --- | --- | --- |
-| trafics portent `co_comptage` à joindre à `g_trppu_obj_mapping` | colonne absente ; `co_type_objet` déjà présent | mapping **non joint** (déjà appliqué en amont) |
+| trafics portent `co_comptage` à joindre à `g_trppu_obj_mapping` | `DESCRIBE g_trppu_trafics_jour_3` : **aucune colonne de code comptage** — les 10 colonnes sont `co_niveau_regroupement_operationnel`, `co_regate`, `co_type_regate`, `co_type_objet`, `da_comptage`, `co_annee_comptage`, `co_mois_comptage`, `co_semaine_comptage`, `trafic_constate`, `trafic_prevu` | mapping **non joignable** : pas de clé. Le mapping CTR→objet est déjà appliqué en amont, la table est agrégée à l'objet TRPPU |
 | une ligne = un site | `co_niveau_regroupement_operationnel` : SITE / ETABLISSEMENT / DEXC / DEPARTEMENT / PIC / PFC / NATIONAL / SIEGE | filtre **obligatoire**, sinon `SUM` gonflés |
 | `g_trppu_entite` a un `co_regate` | une seule colonne STRUCT `s_mdp_entite` (34 sous-champs) | dimension **non jointe** (et inutile à l'agrégat) |
 | `s_commun_calendrier_jour` : une ligne par jour | partitionnée `(co_annee, no_mois, zone)` | **non jointe** : produit cartésien garanti |
@@ -53,7 +53,7 @@ requêtes exploitent les **colonnes de partition** pour l'optimisation.
 - période passée → que du réel ; future → que du prévisionnel ; mixte → les deux.
 
 ### Structure exploitée — requête mono-table
-Tables trafics : `g_trppu_trafics_{jour,semaine,mois}` (schéma gold), **sans aucune jointure**.
+Tables trafics : `g_trppu_trafics_{jour,semaine,mois}_3` (schéma gold), **sans aucune jointure**.
 Elles portent déjà tout ce dont la requête a besoin : `co_regate`, `co_type_objet`,
 `co_niveau_regroupement_operationnel`, la date de la maille, les partitions et
 `trafic_constate` / `trafic_prevu`.
@@ -61,7 +61,7 @@ Elles portent déjà tout ce dont la requête a besoin : `co_regate`, `co_type_o
 SQL générée (zone réelle, maille mois) :
 ```sql
 SELECT t.co_type_objet AS co_objet_trppu, SUM(t.trafic_constate) AS somme
-FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_mois t
+FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_mois_3 t
 WHERE t.co_regate = '400300'
   AND t.co_niveau_regroupement_operationnel = 'SITE'
   AND (t.co_mois_comptage BETWEEN '2025-03' AND '2025-09')
@@ -96,7 +96,7 @@ Paramètre manquant (dont `date_pivot`), `date_debut > date_fin`, ou période > 
 ## 4. Tables & colonnes — toutes surchargeables par env
 | Rôle | Valeur par défaut | Env de surcharge |
 | ---- | ----------------- | ---------------- |
-| tables trafics | `g_trppu_trafics_{jour,semaine,mois}` | `TRAFIC679_TABLE_{JOUR,SEMAINE,MOIS}` |
+| tables trafics | `g_trppu_trafics_{jour,semaine,mois}_3` | `TRAFIC679_TABLE_{JOUR,SEMAINE,MOIS}` |
 | code régate | `co_regate` | `TRAFIC679_COL_REGATE` |
 | objet TRPPU (agrégation) | `co_type_objet` | `TRAFIC679_COL_OBJET` |
 | niveau de regroupement | `co_niveau_regroupement_operationnel` | `TRAFIC679_COL_NIVEAU` |
@@ -110,28 +110,84 @@ Colonne de date par maille : `da_comptage` (jour), `co_semaine_comptage` `AAAA-N
 `co_mois_comptage` `AAAA-MM` (mois) — formats zéro-paddés, donc le `BETWEEN` sur chaîne est
 lexicographiquement correct, y compris à cheval sur un changement d'année.
 
-### Points tranchés par les schémas relevés
-1. **Colonnes (maille mois) — confirmées** : `co_regate`, `co_type_objet`, `co_mois_comptage`
-   (string), `co_annee_comptage` (smallint, seule colonne de partition), `trafic_constate` /
-   `trafic_prevu` (bigint), plus `co_niveau_regroupement_operationnel` et `co_type_regate`.
+### Points tranchés en base
+1. **Colonnes — confirmées sur les mailles mois et jour** (`DESCRIBE` + `/test/jour_check` sur
+   400300) : `co_regate`, `co_type_objet`, `co_niveau_regroupement_operationnel`,
+   `da_comptage` (jour) / `co_mois_comptage` (string `AAAA-MM`), `co_annee_comptage`
+   (smallint, colonne de partition), `trafic_constate` / `trafic_prevu` (bigint).
 2 et 3. **Cardinalité et couverture du mapping — sans objet** : il n'y a plus de jointure.
-4. **Pré-découpage Databricks — confirmé** : `trafic_prevu` est `null` sur le passé
-   (2025-01→03) et renseigné sur 2025-10. La règle pivot reste correcte : `SUM()` ignore les
-   `NULL` et `accumulate_trafics` traite `None` comme 0.
+4. **Pas de pré-découpage Databricks** — `trafic_constate` **et** `trafic_prevu` sont
+   renseignées quelle que soit la date. Sur 400300 / 01-03-2025 → 31-03-2026 (pivot
+   01-10-2025), la sonde donne pour `OO` un constaté total de 1 232 587 alors que la zone
+   réelle (avant pivot) n'en somme que 733 179 : du constaté existe donc après le pivot, et
+   symétriquement du prévisionnel avant. **C'est bien le pivot qui choisit la colonne** —
+   comportement attendu par le ticket. (Les `trafic_prevu` à `null` observés sur la maille
+   mois sont des trous de données, pas un découpage systématique.)
+5. **Pas de cumul de niveaux sur le site test** : la sonde ne renvoie que `SITE` pour 400300,
+   et exactement 396 lignes par objet sur 396 jours — une ligne par jour et par objet, aucune
+   duplication. Le filtre reste nécessaire pour les régates têtes de PIC/établissement.
+6. **Valeurs d'objets** : `OO / OS / PR / PPI / CO / IP` — exactement les 6 du ticket. `PR` et
+   `PPI` ne figurent **pas** dans `g_trppu_obj_mapping`, qui déclare de son côté `PQ` (« PRESSE
+   QUOTIDIENNE ») et `EQ` (« E-PAQ / PPI »). Deux référentiels distincts sans correspondance
+   déclarée — question posée à l'équipe data (rapport métier §5).
+7. **Types et partitions (maille jour) confirmés** : `da_comptage` est une **string**
+   `AAAA-MM-JJ` (le `BETWEEN` sur chaîne est donc correct, aucun cast nécessaire) ; partitions
+   `co_annee_comptage` **et** `co_mois_comptage`, soit exactement les deux prédicats générés.
+   `trafic_constate` peut être `null` au même titre que `trafic_prevu` — `SUM()` les ignore.
+
+### Cohérence des 3 tables — contrôle croisé (`GET /test/pivot_test?paire=toutes`)
+> Rapport à destination du métier / de l'équipe data, avec les requêtes Databricks prêtes à
+> exécuter : **`api_docs/dsr/DSR-679_controle_donnees_gold.md`**.
+
+Chaque maille confrontée à la table jour sur sa plage effective, site 400300 :
+
+| Paire | Constaté | Prévisionnel |
+| ----- | -------- | ------------ |
+| jour vs semaine (plage 03-03-2025 → 29-03-2026, pivot 29-09-2025, alignée lun→dim) | identique, **sauf PPI −48** | **identique** |
+| jour vs mois (plage 01-03-2025 → 31-03-2026, pivot 01-10-2025, mois entiers) | identique, **sauf PPI −48** | **diverge sur les 6 objets** |
+
+**La table semaine est un agrégat fidèle de la table jour** — tous les écarts nuls sur les deux
+zones. Le routage vers la maille semaine est donc validé.
+
+**Anomalie 1 — le prévisionnel mensuel n'est pas la somme des prévisionnels journaliers.**
+Sur 10-2025 → 03-2026 (mois entiers, donc aucun effet de bord) :
+
+| Objet | jour | mois | delta | % |
+| ----- | ---: | ---: | ----: | -: |
+| OO | 45 477 | 73 530 | **+28 053** | **+61,7 %** |
+| PR | 88 251 | 83 937 | −4 314 | −4,9 % |
+| IP | 136 968 | 135 008 | −1 960 | −1,4 % |
+| CO | 67 937 | 67 278 | −659 | −1,0 % |
+| OS | 24 350 | 24 219 | −131 | −0,5 % |
+| PPI | 9 212 | 9 191 | −21 | −0,2 % |
+| **Total** | **372 195** | **393 163** | **+20 968** | **+5,6 %** |
+
+Les écarts vont dans les deux sens : ce n'est pas un décalage de bornes (la maille semaine, sur
+exactement les mêmes jours, tombe juste). Hypothèse à confirmer avec l'équipe data : le
+prévisionnel mensuel est calculé **au niveau mois** (`nb_objet_prevu_recadre_bu`, recadrage BU)
+et non comme somme des prévisions journalières.
+
+**Impact endpoint** : `decompose_auto` route les mois entiers vers `g_trppu_trafics_mois_3` ;
+une période prévisionnelle longue renvoie donc le chiffre « mois », pas la somme des jours.
+Décision à prendre avec le métier : quelle maille fait foi pour le prévisionnel.
+
+**Anomalie 2 — PPI, −48 en constaté** dans la semaine **et** dans le mois (même valeur) :
+la table jour porte 48 objets PPI que les deux agrégats ne reprennent pas. Faible volume mais
+systématique.
 
 ### Points restant à valider en base
-1. **Mailles jour et semaine** : seule la maille mois a été relevée. `GET /test/jour_check`
-   valide la maille jour en un appel (colonnes, niveaux, sommes des 2 zones) ;
-   `GET /test/schema` couvre les 3 tables.
-2. **Ampleur du cumul de niveaux** : le témoin avec/sans filtre (`/test/queries_preview` →
-   `requetes_de_controle`) chiffre le sur-comptage que le filtre `SITE` corrige.
-3. **Objets absents** : restitution dynamique → un objet sans trafic sur la période n'apparaît
+1. **Prévisionnel : quelle maille fait foi ?** (anomalie 1 ci-dessus) — question **bloquante
+   pour la recette**, à poser à l'équipe data. Si la maille jour fait foi, il faudra router la
+   zone prévisionnelle vers `g_trppu_trafics_jour_3` quelle que soit la durée.
+2. **Référentiel des codes objets** : `PR`/`PPI` (trafics) contre `PQ`/`EQ` (mapping), sans
+   correspondance déclarée. **Bloquant** : conditionne les codes restitués par l'API.
+3. **PPI −48 en constaté** (anomalie 2) — localiser le jour concerné, puis remonter à l'équipe
+   data. Requête de ciblage mois par mois fournie dans le rapport métier.
+4. **Régate multi-niveaux** : rejouer `/test/jour_check` sur une régate tête de PIC ou
+   d'établissement pour chiffrer le sur-comptage que le filtre `SITE` corrige.
+4. **Objets absents** : restitution dynamique → un objet sans trafic sur la période n'apparaît
    pas (pas d'hydratation à 0) — choix confirmé avec le métier. Si l'IHM exige tous les objets
    systématiquement, l'hydratation est à faire côté consommateur.
-4. **Valeurs d'objets** : les tables trafics exposent `OO / OS / IP / CO / PQ / EQ / PPI` ;
-   noter que `PPI` apparaît côté trafics alors que `g_trppu_obj_mapping` porte `EQ`
-   (« E-PAQ / PPI ») — les deux référentiels ne coïncident pas exactement, raison de plus pour
-   ne pas joindre le mapping.
 
 ## 5. Comment tester
 
@@ -161,7 +217,7 @@ GET /trppu-api/trafics/test/schema?limit=1&co_regate=400300   -> colonnes réell
 GET /trppu-api/trafics/test/objets?co_regate=400300&table=mois -> objets et niveaux du site
 GET /trppu-api/trafics/test/schema_raw?table=g_trppu_obj_mapping&limit=20 -> SELECT * libre
 ```
-`jour_check` enchaîne 3 requêtes sur `g_trppu_trafics_jour` : la sonde `GROUP BY niveau, objet`
+`jour_check` enchaîne 3 requêtes sur `g_trppu_trafics_jour_3` : la sonde `GROUP BY niveau, objet`
 **sans** filtre de niveau (si elle passe, les colonnes sont confirmées ; si elle renvoie
 plusieurs niveaux, le filtre est indispensable), puis les 2 requêtes de production
 (zone réelle / zone prévisionnelle). Les erreurs Databricks sont renvoyées telles quelles.
@@ -170,6 +226,18 @@ Le dry-run rejoue **exactement** la règle pivot (constaté avant, prévu à par
 filtre de niveau et l'agrégation par objet en mémoire, sur des cadences journalières codées en
 dur (sommes vérifiables à la main : cadence × nb jours). L'objet sans trafic (IP) est couvert
 — il n'apparaît pas dans le résultat, conformément à la restitution dynamique.
+
+Résultat de référence (`/test/jour_check` sur 400300, 01-03-2025 → 31-03-2026, pivot
+01-10-2025) — à comparer à la réponse de l'endpoint :
+
+| Objet | trafic_brut (réel) | trafic_previsionnel |
+| ----- | -----------------: | ------------------: |
+| OO    | 733 179 | 45 477 |
+| IP    | 161 369 | 136 968 |
+| PR    | 106 190 | 88 251 |
+| CO    | 60 769 | 67 937 |
+| OS    | 27 966 | 24 350 |
+| PPI   | 9 201 | 9 212 |
 
 ### Avec Databricks réel
 Activer `DEBUG_SHOW_QUERY=true`, appeler `get_trafics_pivot_dsr679` sur 400300, vérifier dans

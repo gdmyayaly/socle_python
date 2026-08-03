@@ -9,6 +9,11 @@
 --   4. Clés de répartition        : cles_repartition(_calcule), site_trafic
 --   5. Trafics calculés / agrebal : trafic_pdi, trafic_agrebal, agrebal_pdi, staging
 --   6. Exploitation / logs        : api_log, recalcul_log, suivi_batch, demande_dsr
+--
+-- Compatibilité : dump issu de MySQL 8, chargeable tel quel sur MariaDB. La seule
+-- construction propre à MySQL 8 (l'index multi-valué de `trppu_agrebal_pdi`) est
+-- isolée dans un commentaire versionné `/*!80017 ... */`, exécuté par MySQL >= 8.0.17
+-- et ignoré par MariaDB.
 -- =============================================================================
 
 CREATE DATABASE IF NOT EXISTS `dsr_mercure_aa`;
@@ -425,8 +430,15 @@ CREATE TABLE `trppu_agrebal_pdi` (
   PRIMARY KEY (`agrebal_id_pdi`),
   UNIQUE KEY `uq_agrpdi_courant` (`agrebal_id`,`agrebal_code_regate`),
   KEY `idx_agrpdi_site` (`agrebal_code_regate`),
-  KEY `idx_updated_at` (`agrebal_updatedAt`),
-  KEY `idx_pdi_ids` ((cast(`agrebal_pdi_ids` as unsigned array)))
+  KEY `idx_updated_at` (`agrebal_updatedAt`)
+  -- `idx_pdi_ids` est un index multi-valué : réservé à MySQL 8.0.17+, MariaDB ne
+  -- l'implémente pas (erreur 1064 sur `CAST(... AS UNSIGNED ARRAY)`). Le commentaire
+  -- versionné le crée sur MySQL >= 8.0.17 (la prod) et est ignoré partout ailleurs,
+  -- ce qui rend ce dump chargeable tel quel sur un poste MariaDB.
+  -- Sans lui, la recherche par pdi_id reste fonctionnelle mais non indexée :
+  -- utiliser JSON_CONTAINS(`agrebal_pdi_ids`, '<id>'), portable, plutôt que
+  -- `<id> MEMBER OF (...)` qui est également propre à MySQL 8.
+  /*!80017 , KEY `idx_pdi_ids` ((cast(`agrebal_pdi_ids` as unsigned array))) */
 ) ENGINE=InnoDB AUTO_INCREMENT=9389 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 

@@ -7,6 +7,7 @@ class TraficObjet(BaseModel):
     """Trafics agrégés (somme sur la période) pour un objet TRPPU (co_type_objet)."""
 
     co_produit: str
+    lb_produit: str | None = None  # libellé issu de g_trppu_obj_mapping, null si non mappé
     trafic_brut: float
     trafic_previsionnel: float
 
@@ -29,5 +30,6 @@ class TraficsPivotResponse(BaseModel):
     is_day: bool
     count: int
     trafics: list[TraficObjet]
+    objets_sans_libelle: list[str] = []  # objets des tables trafics absents du mapping
     nb_jours: NbJours | None = None
     queries: list[str] | None = None

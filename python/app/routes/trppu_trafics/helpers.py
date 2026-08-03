@@ -1,30 +1,19 @@
-"""DSR-679 — Helpers de récupération des trafics pivot (nouvelle structure gold).
+"""DSR-679 — Helpers de récupération des trafics pivot (structure gold `_3`).
 
-Package autonome. Les tables `g_trppu_trafics_{jour,semaine,mois}` sont **auto-suffisantes** :
-elles portent déjà l'objet/produit TRPPU (`co_type_objet`), le code régate, les dates et les
-colonnes de partition, ainsi que `trafic_constate` / `trafic_prevu`. La requête est donc
-mono-table : `SUM(<valeur>) GROUP BY co_type_objet`, avec pruning sur les partitions.
+Les tables `g_trppu_trafics_{jour,semaine,mois}_3` sont auto-suffisantes : elles portent déjà
+l'objet TRPPU (`co_type_objet`), le code régate, les dates, les partitions et
+`trafic_constate` / `trafic_prevu`. La requête est donc mono-table —
+`SUM(<valeur>) GROUP BY co_type_objet` avec pruning sur les partitions.
 
-Aucune jointure de dimension n'est faite — les `DESCRIBE` en base montrent que celles
-décrites par le ticket ne sont pas exploitables ici :
-
-- `g_trppu_obj_mapping` (comptage CTR -> objet) : les tables trafics ne portent **pas** de
-  code comptage, le mapping est déjà appliqué en amont dans le gold ;
-- `g_trppu_entite` : une unique colonne STRUCT `s_mdp_entite` (pas de `co_regate` à plat),
-  et elle n'apporte rien à l'agrégation ;
-- `s_commun_calendrier_jour` (silver) : partitionnée par `zone`, donc **plusieurs lignes par
-  jour** -> la joindre transformerait la requête en produit cartésien.
-
-Point capital : une même régate est présente à plusieurs niveaux de regroupement
-(SITE / ETABLISSEMENT / PIC / NATIONAL...). Le filtre `co_niveau_regroupement_operationnel`
-est donc obligatoire, sans quoi les `SUM` sont silencieusement gonflés.
-
-Chaque nom de table/colonne reste surchargeable par variable d'environnement, pour absorber
-un renommage côté data sans relivrer.
+Aucune dimension n'est jointe : les `DESCRIBE` montrent que celles du ticket ne sont pas
+joignables ici (pas de code comptage dans les trafics, `g_trppu_entite` réduite à un STRUCT,
+calendrier silver partitionné par `zone` donc à plusieurs lignes par jour). Seuls les
+**libellés** sont repris du mapping, hors requête agrégée (voir `fetch_libelles_objets`).
 """
 
 import logging
 import os
+import time
 from calendar import monthrange
 from datetime import datetime, timedelta
 
@@ -35,14 +24,15 @@ from app.config import (
     DATABRICKS_SCHEMA,
     MAX_DATE_RANGE_DAYS,
 )
+from app.db.databricks import databricks
 
 logger = logging.getLogger(__name__)
 
 # --- Tables trafics (noms du ticket DSR-679, surchargeables par env) ---
 TABLES_PERIODE = {
-    "jours": os.getenv("TRAFIC679_TABLE_JOUR", "g_trppu_trafics_jour"),
-    "semaines": os.getenv("TRAFIC679_TABLE_SEMAINE", "g_trppu_trafics_semaine"),
-    "mois": os.getenv("TRAFIC679_TABLE_MOIS", "g_trppu_trafics_mois"),
+    "jours": os.getenv("TRAFIC679_TABLE_JOUR", "g_trppu_trafics_jour_3"),
+    "semaines": os.getenv("TRAFIC679_TABLE_SEMAINE", "g_trppu_trafics_semaine_3"),
+    "mois": os.getenv("TRAFIC679_TABLE_MOIS", "g_trppu_trafics_mois_3"),
 }
 
 DATE_COLUMN_PERIODE = {
@@ -73,6 +63,63 @@ NIVEAU_REGROUPEMENT = os.getenv("TRAFIC679_NIVEAU_REGROUPEMENT", "SITE")
 # Alias exposés dans le SELECT agrégé (clés des dicts renvoyés par fetch_all).
 OBJ_ALIAS = "co_objet_trppu"
 SOMME_ALIAS = "somme"
+
+# --- Libellés d'objets (dimension `g_trppu_obj_mapping`) ---
+# Le mapping porte une ligne par code comptage CTR : plusieurs lignes pointent le même objet.
+# Le joindre à la requête agrégée produirait un produit cartésien et gonflerait les SUM. Il est
+# donc lu à part, dédoublonné, mis en cache, et rattaché en mémoire après agrégation.
+OBJ_MAPPING_TABLE = "g_trppu_obj_mapping"
+MAPPING_COL_OBJET = "co_type_objet"
+MAPPING_COL_LIBELLE = "lb_type_objet"
+LIBELLES_TTL_S = 3600
+LIBELLE_ALIAS = "lb_objet_trppu"
+
+_libelles_cache: dict[str, str] | None = None
+_libelles_cache_ts: float = 0.0
+
+
+def build_libelles_query() -> str:
+    """`SELECT DISTINCT` des couples (objet, libellé) du mapping — une ligne par objet."""
+    return (
+        f"SELECT DISTINCT {MAPPING_COL_OBJET} AS {OBJ_ALIAS}, "
+        f"{MAPPING_COL_LIBELLE} AS {LIBELLE_ALIAS} "
+        f"FROM {fqtn(OBJ_MAPPING_TABLE)}"
+    )
+
+
+def fetch_libelles_objets(force: bool = False) -> dict[str, str]:
+    """Dictionnaire `{co_type_objet: lb_type_objet}`, en cache pendant `LIBELLES_TTL_S`.
+
+    Appel Databricks synchrone — à envelopper dans `run_in_threadpool` côté route. Les libellés
+    étant décoratifs, une indisponibilité du mapping ne fait pas échouer la restitution : on
+    renvoie le dernier cache connu et les libellés sortent à `null`.
+    """
+    global _libelles_cache, _libelles_cache_ts
+
+    maintenant = time.monotonic()
+    if (
+        not force
+        and _libelles_cache is not None
+        and maintenant - _libelles_cache_ts < LIBELLES_TTL_S
+    ):
+        return _libelles_cache
+
+    try:
+        rows = databricks.fetch_all(build_libelles_query())
+    except Exception as e:
+        logger.warning("Libellés d'objets indisponibles (%s) — restitution sans libellé.", e)
+        _libelles_cache = _libelles_cache or {}
+        _libelles_cache_ts = maintenant  # évite de réinterroger à chaque requête
+        return _libelles_cache
+
+    libelles: dict[str, str] = {}
+    for row in rows:
+        code, libelle = row.get(OBJ_ALIAS), row.get(LIBELLE_ALIAS)
+        if code is not None and libelle is not None:
+            libelles.setdefault(str(code).strip(), str(libelle).strip())
+
+    _libelles_cache, _libelles_cache_ts = libelles, maintenant
+    return libelles
 
 PARAMETRES_RAPPEL_PIVOT = (
     "Paramètres attendus : "
