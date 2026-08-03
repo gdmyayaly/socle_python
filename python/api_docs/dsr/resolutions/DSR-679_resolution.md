@@ -3,15 +3,17 @@
 ## 1. Statut
 **Livré, aligné sur les schémas réels relevés en base.** Nouvel endpoint YS04 qui adapte la
 récupération pivot (DSR-666) à la **nouvelle structure des tables gold TRPPU**. Les `DESCRIBE`
-ont invalidé les hypothèses tirées du texte du ticket : les tables trafics sont
-**auto-suffisantes** (elles portent déjà `co_type_objet`, pas de code comptage CTR), aucune
-dimension n'est jointe, et un **filtre sur le niveau de regroupement** est obligatoire. Les
-requêtes exploitent les **colonnes de partition** pour l'optimisation.
+ont invalidé une partie des hypothèses tirées du texte du ticket : les tables trafics portent
+déjà `co_type_objet` (pas de code comptage CTR), et un **filtre sur le niveau de regroupement**
+est obligatoire. La dimension `g_trppu_obj_mapping` est **jointe** à la requête agrégée — elle
+porte le regroupement restitué et le libellé — mais **pré-regroupée**, sans quoi ses multiples
+lignes par objet dupliqueraient les lignes de trafic. Les requêtes exploitent les **colonnes de
+partition** pour l'optimisation.
 
 ### Écarts relevés entre le texte du ticket et la base
 | Hypothèse (texte du ticket) | Réalité (`DESCRIBE`) | Conséquence |
 | --- | --- | --- |
-| trafics portent `co_comptage` à joindre à `g_trppu_obj_mapping` | `DESCRIBE g_trppu_trafics_jour_3` : **aucune colonne de code comptage** — les 10 colonnes sont `co_niveau_regroupement_operationnel`, `co_regate`, `co_type_regate`, `co_type_objet`, `da_comptage`, `co_annee_comptage`, `co_mois_comptage`, `co_semaine_comptage`, `trafic_constate`, `trafic_prevu` | mapping **non joignable** : pas de clé. Le mapping CTR→objet est déjà appliqué en amont, la table est agrégée à l'objet TRPPU |
+| trafics portent `co_comptage` à joindre à `g_trppu_obj_mapping` | `DESCRIBE g_trppu_trafics_jour_3` : **aucune colonne de code comptage** — les 10 colonnes sont `co_niveau_regroupement_operationnel`, `co_regate`, `co_type_regate`, `co_type_objet`, `da_comptage`, `co_annee_comptage`, `co_mois_comptage`, `co_semaine_comptage`, `trafic_constate`, `trafic_prevu` | le mapping CTR→objet est déjà appliqué en amont : la jointure se fait sur `co_type_objet` (clé surchargeable par `TRAFIC679_MAPPING_COL_CLE`), pas sur un code comptage |
 | une ligne = un site | `co_niveau_regroupement_operationnel` : SITE / ETABLISSEMENT / DEXC / DEPARTEMENT / PIC / PFC / NATIONAL / SIEGE | filtre **obligatoire**, sinon `SUM` gonflés |
 | `g_trppu_entite` a un `co_regate` | une seule colonne STRUCT `s_mdp_entite` (34 sous-champs) | dimension **non jointe** (et inutile à l'agrégat) |
 | `s_commun_calendrier_jour` : une ligne par jour | partitionnée `(co_annee, no_mois, zone)` | **non jointe** : produit cartésien garanti |
@@ -52,23 +54,41 @@ requêtes exploitent les **colonnes de partition** pour l'optimisation.
 - découpe au jour près **avant** requête → aucune granularité mois/semaine à cheval.
 - période passée → que du réel ; future → que du prévisionnel ; mixte → les deux.
 
-### Structure exploitée — requête mono-table
-Tables trafics : `g_trppu_trafics_{jour,semaine,mois}_3` (schéma gold), **sans aucune jointure**.
-Elles portent déjà tout ce dont la requête a besoin : `co_regate`, `co_type_objet`,
+### Structure exploitée — trafics joints à la dimension objets
+Tables trafics : `g_trppu_trafics_{jour,semaine,mois}_3` (schéma gold), jointes à
+`g_trppu_obj_mapping`. Les tables trafics portent `co_regate`, `co_type_objet`,
 `co_niveau_regroupement_operationnel`, la date de la maille, les partitions et
-`trafic_constate` / `trafic_prevu`.
+`trafic_constate` / `trafic_prevu` ; le mapping porte le **regroupement restitué** et le
+**libellé** de l'objet.
 
 SQL générée (zone réelle, maille mois) :
 ```sql
-SELECT t.co_type_objet AS co_objet_trppu, SUM(t.trafic_constate) AS somme
+SELECT COALESCE(m.co_objet_trppu, t.co_type_objet) AS co_objet_trppu,
+       m.lb_objet_trppu                            AS lb_objet_trppu,
+       SUM(t.trafic_constate)                      AS somme
 FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_mois_3 t
+LEFT JOIN (
+    SELECT co_type_objet      AS cle_jointure,
+           MAX(co_type_objet) AS co_objet_trppu,
+           MAX(lb_type_objet) AS lb_objet_trppu
+    FROM ppd_dd_kairos_int.03_gold.g_trppu_obj_mapping
+    GROUP BY co_type_objet
+) m ON m.cle_jointure = t.co_type_objet
 WHERE t.co_regate = '400300'
   AND t.co_niveau_regroupement_operationnel = 'SITE'
   AND (t.co_mois_comptage BETWEEN '2025-03' AND '2025-09')
   AND t.co_annee_comptage IN (2025)
-GROUP BY t.co_type_objet
+GROUP BY 1, 2
 ```
 
+- **Mapping pré-regroupé** : il porte une ligne par code comptage CTR, donc plusieurs lignes par
+  objet. Joint tel quel, il dupliquerait les lignes de trafic et gonflerait les `SUM`
+  silencieusement. Le `GROUP BY` de la sous-requête garantit une ligne par code (`MAX` départage
+  un éventuel double libellé) — c'est la condition de justesse de la jointure.
+- **`LEFT JOIN` + `COALESCE`** : les objets présents dans les trafics mais absents du mapping
+  (`PR`, `PPI` — cf. §5 du contrôle données gold) restent restitués, avec `lb_produit` à `null`
+  et listés dans `objets_sans_libelle`. Un `INNER JOIN` les ferait disparaître, un `COALESCE`
+  manquant les fondrait dans un unique groupe `NULL`.
 - **Filtre de niveau de regroupement** (`= 'SITE'`) : la même régate apparaît à plusieurs
   niveaux (ETABLISSEMENT, PIC, NATIONAL…). Sans ce filtre, les `SUM` cumulent silencieusement
   plusieurs niveaux — c'est le principal risque de résultat faux sur cette structure.

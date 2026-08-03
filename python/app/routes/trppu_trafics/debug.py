@@ -17,6 +17,8 @@ from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA
 from app.db.databricks import databricks
 from app.routes.trppu_trafics.helpers import (
     DATE_COLUMN_PERIODE,
+    MAPPING_COL_CLE,
+    MAPPING_COL_OBJET,
     NIVEAU_REGROUPEMENT,
     OBJ_ALIAS,
     OBJ_MAPPING_TABLE,
@@ -30,6 +32,7 @@ from app.routes.trppu_trafics.helpers import (
     TRAFIC_COL_REGATE,
     accumulate_trafics,
     build_libelles_query,
+    build_mapping_subquery,
     build_query,
     empty_accumulator,
     fetch_libelles_objets,
@@ -76,11 +79,19 @@ def _config_effective() -> dict:
         "catalog": DATABRICKS_CATALOG,
         "schema_gold": DATABRICKS_SCHEMA,
         "tables_trafics": {p: fqtn(t) for p, t in TABLES_PERIODE.items()},
-        "jointures": "aucune — les tables trafics portent déjà l'objet (co_type_objet)",
+        "jointures": (
+            f"LEFT JOIN {fqtn(OBJ_MAPPING_TABLE)} pré-regroupé "
+            f"({MAPPING_COL_CLE} = {TRAFIC_COL_OBJET}) — regroupement sur "
+            f"{MAPPING_COL_OBJET} du mapping"
+        ),
+        "mapping_pre_regroupe": build_mapping_subquery(),
         "libelles": {
             "source": fqtn(OBJ_MAPPING_TABLE),
             "query": build_libelles_query(),
-            "note": "lu hors requête agrégée (une ligne par code comptage) puis mis en cache",
+            "note": (
+                "portés par la jointure de la requête agrégée ; cette lecture séparée "
+                "(mise en cache) sert au debug et à la création auto des produits"
+            ),
         },
         "filtre_niveau": {
             "colonne": TRAFIC_COL_NIVEAU,
@@ -229,11 +240,14 @@ async def _sommes_par_objet(periode, co_regate, zones, execute):
 
 
 def _trafics(acc, libelles) -> list[dict]:
-    """Accumulateur au format de sortie de l'API (une ligne par objet présent)."""
+    """Accumulateur au format de sortie de l'API (une ligne par objet présent).
+
+    Le libellé vient de la jointure ; `libelles` sert de repli quand la requête n'a pas été
+    exécutée (`execute=false`)."""
     return [
         {
             "co_produit": objet,
-            "lb_produit": libelles.get(objet),
+            "lb_produit": acc[objet]["lb_produit"] or libelles.get(objet),
             "trafic_brut": acc[objet]["trafic_brut"],
             "trafic_previsionnel": acc[objet]["trafic_previsionnel"],
         }

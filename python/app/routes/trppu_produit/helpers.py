@@ -31,6 +31,51 @@ UPSERT_SQL = (
 )
 
 
+# Création à la volée d'un produit référencé par un TMH. `ON DUPLICATE KEY UPDATE` no-op
+# plutôt qu'un SELECT puis INSERT : idempotent, insensible aux accès concurrents, et ne
+# touche jamais le libellé d'un produit déjà saisi par le métier.
+ENSURE_PRODUIT_SQL = (
+    "INSERT INTO trppu_produit (co_produit, lb_produit) VALUES (%s, %s) "
+    "ON DUPLICATE KEY UPDATE co_produit = co_produit"
+)
+
+
+def normalize_co_produit_ref(value: Any) -> str:
+    """Normalise un code produit venant d'un référentiel externe (Databricks, TMH).
+
+    Contrairement à `_normalize_co_produit` (import Excel), **pas de `zfill(2)`** : un code
+    d'un seul caractère est accepté par le pattern TMH et doit être stocké tel quel, sinon la
+    ligne `trppu_tmh` pointerait un `co_produit` différent de celui créé ici.
+    """
+    return "" if value is None else str(value).strip().upper()
+
+
+async def ensure_produits_exist(tx, codes, libelles: dict[str, str] | None = None) -> list[str]:
+    """Crée dans `trppu_produit` les codes absents, avant tout INSERT sur `trppu_tmh`.
+
+    L'agrégation des trafics est dynamique et pilotée par Databricks : un objet peut apparaître
+    dans `g_trppu_trafics_*_3` sans exister côté applicatif. Sans cette création, la FK
+    `fk_tmh_produit` casse la transaction et l'API remonte une 500 opaque.
+
+    `libelles` = mapping `{co_produit: lb_produit}` issu de `g_trppu_obj_mapping`, à résoudre
+    **avant** l'ouverture de la transaction. `lb_produit` étant NOT NULL, on retombe sur le
+    code lui-même quand le mapping ne connaît pas l'objet (cas `PR` / `PPI`) ; le libellé se
+    corrige ensuite via `PUT /trppu-api/produits/{co_produit}`.
+
+    Retourne les codes réellement créés.
+    """
+    libelles = libelles or {}
+    crees: list[str] = []
+    for code in dict.fromkeys(normalize_co_produit_ref(c) for c in codes):
+        if not code:
+            continue
+        libelle = libelles.get(code) or code
+        rowcount = await tx.execute(ENSURE_PRODUIT_SQL, (code, libelle))
+        if rowcount == 1:  # 1 = insertion, 0 = déjà présent (UPDATE no-op)
+            crees.append(code)
+    return crees
+
+
 def _normalize_date(value: Any) -> date | None:
     if value is None or value == "":
         return None

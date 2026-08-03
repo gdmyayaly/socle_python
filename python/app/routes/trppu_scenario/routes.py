@@ -51,6 +51,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/trppu-api/scenarios", tags=["Scenarios"])
 
 
+async def _libelles_produits(tmh) -> dict[str, str]:
+    """Libellés objets Databricks, pour créer à la volée les produits d'un lot TMH.
+
+    Interrogé uniquement s'il y a des lignes TMH à écrire, et toujours **hors** transaction.
+    """
+    if not tmh:
+        return {}
+    from app.routes.trppu_tmh.helpers import resolve_libelles_produits
+
+    return await resolve_libelles_produits()
+
+
 @router.get("", response_model=list[ScenarioOut])
 async def list_scenarios(
     co_regate: str | None = Query(None, min_length=6, max_length=6),
@@ -202,6 +214,10 @@ async def create_scenario(payload: ScenarioCreate):
     dt_mise_en_oeuvre = payload.dt_mise_en_oeuvre or date.today()
     id_rh_token = encrypt_id_rh(payload.id_rh)
 
+    # Résolu hors transaction (appel Databricks synchrone) : sert à libeller les produits
+    # créés à la volée pour les lignes TMH.
+    libelles_produits = await _libelles_produits(payload.tmh)
+
     try:
         async with db_write.transaction() as tx:
             site_created = await ensure_site_exists(
@@ -259,7 +275,14 @@ async def create_scenario(payload: ScenarioCreate):
 
             # Trafics TMH (1 ligne par produit) — DSR-634 (réutilise le service TMH).
             if payload.tmh:
+                from app.routes.trppu_produit.helpers import ensure_produits_exist
                 from app.routes.trppu_tmh.helpers import upsert_tmh_rows
+
+                crees = await ensure_produits_exist(
+                    tx, [item.co_produit for item in payload.tmh], libelles_produits
+                )
+                if crees:
+                    logger.info("Produits créés automatiquement : %s", ", ".join(crees))
 
                 nb_ins, _ = await upsert_tmh_rows(
                     tx, id_scenario, payload.tmh, id_rh=id_rh_token
@@ -345,6 +368,8 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
         params.insert(6, payload.dt_mise_en_oeuvre)
     params.append(id_scenario)
 
+    libelles_produits = await _libelles_produits(payload.tmh)
+
     try:
         async with db_write.transaction() as tx:
             await tx.execute(
@@ -353,7 +378,14 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
             )
             await increment_version(tx, id_scenario)
             if payload.tmh:
+                from app.routes.trppu_produit.helpers import ensure_produits_exist
                 from app.routes.trppu_tmh.helpers import upsert_tmh_rows
+
+                crees = await ensure_produits_exist(
+                    tx, [item.co_produit for item in payload.tmh], libelles_produits
+                )
+                if crees:
+                    logger.info("Produits créés automatiquement : %s", ", ".join(crees))
 
                 nb_ins, nb_upd = await upsert_tmh_rows(
                     tx, id_scenario, payload.tmh, id_rh=id_rh_token

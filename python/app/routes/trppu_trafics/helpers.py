@@ -1,14 +1,18 @@
 """DSR-679 — Helpers de récupération des trafics pivot (structure gold `_3`).
 
-Les tables `g_trppu_trafics_{jour,semaine,mois}_3` sont auto-suffisantes : elles portent déjà
-l'objet TRPPU (`co_type_objet`), le code régate, les dates, les partitions et
-`trafic_constate` / `trafic_prevu`. La requête est donc mono-table —
-`SUM(<valeur>) GROUP BY co_type_objet` avec pruning sur les partitions.
+Les tables `g_trppu_trafics_{jour,semaine,mois}_3` portent le code régate, les dates, les
+partitions, `trafic_constate` / `trafic_prevu` et l'objet TRPPU (`co_type_objet`). La requête
+agrégée **joint la dimension `g_trppu_obj_mapping`** et regroupe sur le `co_type_objet` de
+cette dimension : c'est le mapping qui fait référence pour l'objet restitué et son libellé.
 
-Aucune dimension n'est jointe : les `DESCRIBE` montrent que celles du ticket ne sont pas
-joignables ici (pas de code comptage dans les trafics, `g_trppu_entite` réduite à un STRUCT,
-calendrier silver partitionné par `zone` donc à plusieurs lignes par jour). Seuls les
-**libellés** sont repris du mapping, hors requête agrégée (voir `fetch_libelles_objets`).
+Le mapping porte plusieurs lignes par objet (une par code comptage CTR) : le joindre tel quel
+dupliquerait les lignes de trafic et gonflerait les `SUM`. Il est donc joint **pré-regroupé**
+(sous-requête `GROUP BY` objet, une seule ligne par code) — voir `build_mapping_subquery`.
+Un `LEFT JOIN` + `COALESCE` conserve les objets absents du mapping (`PR`, `PPI`), qui sortent
+avec un libellé nul.
+
+Les autres dimensions du ticket ne sont pas joignables ici : `g_trppu_entite` est réduite à un
+STRUCT et le calendrier silver, partitionné par `zone`, porte plusieurs lignes par jour.
 """
 
 import logging
@@ -63,27 +67,46 @@ NIVEAU_REGROUPEMENT = os.getenv("TRAFIC679_NIVEAU_REGROUPEMENT", "SITE")
 # Alias exposés dans le SELECT agrégé (clés des dicts renvoyés par fetch_all).
 OBJ_ALIAS = "co_objet_trppu"
 SOMME_ALIAS = "somme"
-
-# --- Libellés d'objets (dimension `g_trppu_obj_mapping`) ---
-# Le mapping porte une ligne par code comptage CTR : plusieurs lignes pointent le même objet.
-# Le joindre à la requête agrégée produirait un produit cartésien et gonflerait les SUM. Il est
-# donc lu à part, dédoublonné, mis en cache, et rattaché en mémoire après agrégation.
-OBJ_MAPPING_TABLE = "g_trppu_obj_mapping"
-MAPPING_COL_OBJET = "co_type_objet"
-MAPPING_COL_LIBELLE = "lb_type_objet"
-LIBELLES_TTL_S = 3600
 LIBELLE_ALIAS = "lb_objet_trppu"
+
+# --- Dimension objets `g_trppu_obj_mapping` (jointe à la requête agrégée) ---
+# `MAPPING_COL_CLE` est la colonne rapprochée de `TRAFIC_COL_OBJET` côté trafics ;
+# `MAPPING_COL_OBJET` est le code sur lequel porte le regroupement restitué. Les deux valent
+# `co_type_objet` par défaut : le mapping CTR a déjà été appliqué en amont des tables `_3`.
+OBJ_MAPPING_TABLE = os.getenv("TRAFIC679_OBJ_MAPPING_TABLE", "g_trppu_obj_mapping")
+MAPPING_COL_CLE = os.getenv("TRAFIC679_MAPPING_COL_CLE", "co_type_objet")
+MAPPING_COL_OBJET = os.getenv("TRAFIC679_MAPPING_COL_OBJET", "co_type_objet")
+MAPPING_COL_LIBELLE = os.getenv("TRAFIC679_MAPPING_COL_LIBELLE", "lb_type_objet")
+ALIAS_MAPPING = "m"
+CLE_ALIAS = "cle_jointure"
+LIBELLES_TTL_S = 3600
 
 _libelles_cache: dict[str, str] | None = None
 _libelles_cache_ts: float = 0.0
 
 
-def build_libelles_query() -> str:
-    """`SELECT DISTINCT` des couples (objet, libellé) du mapping — une ligne par objet."""
+def build_mapping_subquery() -> str:
+    """Mapping pré-regroupé : **exactement une ligne par code de jointure**.
+
+    C'est ce pré-regroupement qui rend la jointure sûre. Le mapping brut porte une ligne par
+    code comptage CTR ; le joindre tel quel dupliquerait les lignes de trafic et gonflerait les
+    `SUM`. Le `GROUP BY` sur la clé garantit l'unicité même si un code portait deux libellés
+    (`MAX` en départage) — ce qu'un simple `SELECT DISTINCT` ne garantit pas.
+    """
     return (
-        f"SELECT DISTINCT {MAPPING_COL_OBJET} AS {OBJ_ALIAS}, "
-        f"{MAPPING_COL_LIBELLE} AS {LIBELLE_ALIAS} "
-        f"FROM {fqtn(OBJ_MAPPING_TABLE)}"
+        f"SELECT {MAPPING_COL_CLE} AS {CLE_ALIAS}, "
+        f"MAX({MAPPING_COL_OBJET}) AS {OBJ_ALIAS}, "
+        f"MAX({MAPPING_COL_LIBELLE}) AS {LIBELLE_ALIAS} "
+        f"FROM {fqtn(OBJ_MAPPING_TABLE)} "
+        f"GROUP BY {MAPPING_COL_CLE}"
+    )
+
+
+def build_libelles_query() -> str:
+    """Couples (objet, libellé) du mapping — une ligne par objet."""
+    return (
+        f"SELECT {OBJ_ALIAS}, {LIBELLE_ALIAS} "
+        f"FROM ({build_mapping_subquery()}) {ALIAS_MAPPING}"
     )
 
 
@@ -373,14 +396,23 @@ def build_query(
     ranges: list[tuple[datetime, datetime]],
     value_col: str,
 ) -> tuple[str, dict]:
-    """Requête agrégée par objet sur la table de la période (mono-table, sans jointure).
+    """Requête agrégée par objet sur la table de la période, jointe au mapping objets.
 
-    `SUM(t.value_col) GROUP BY t.co_type_objet` avec filtre code régate + niveau de
-    regroupement + dates (BETWEEN par plage, OR entre plages) + prédicats de partition.
-    `value_col` est une constante contrôlée ; les valeurs restent paramétrées.
+    `SUM(t.value_col)` regroupé sur le `co_type_objet` de `g_trppu_obj_mapping`, avec filtre
+    code régate + niveau de regroupement + dates (BETWEEN par plage, OR entre plages) +
+    prédicats de partition. `value_col` est une constante contrôlée ; les valeurs restent
+    paramétrées.
+
+    Le mapping est joint **pré-regroupé** (`build_mapping_subquery`) : une ligne par code, donc
+    aucune duplication des lignes de trafic et des `SUM` inchangées. `LEFT JOIN` + `COALESCE`
+    conservent les objets absents du mapping (`PR`, `PPI`) au lieu de les fondre dans un groupe
+    `NULL` ou de les faire disparaître.
     """
     table = fqtn(TABLES_PERIODE[periode])
-    objet_expr = f"{ALIAS_TRAFIC}.{TRAFIC_COL_OBJET}"
+    objet_expr = (
+        f"COALESCE({ALIAS_MAPPING}.{OBJ_ALIAS}, {ALIAS_TRAFIC}.{TRAFIC_COL_OBJET})"
+    )
+    libelle_expr = f"{ALIAS_MAPPING}.{LIBELLE_ALIAS}"
     date_expr = f"{ALIAS_TRAFIC}.{DATE_COLUMN_PERIODE[periode]}"
 
     params: dict = {"co_regate": co_regate, "niveau": NIVEAU_REGROUPEMENT}
@@ -402,10 +434,13 @@ def build_query(
 
     sql = (
         f"SELECT {objet_expr} AS {OBJ_ALIAS}, "
+        f"{libelle_expr} AS {LIBELLE_ALIAS}, "
         f"SUM({ALIAS_TRAFIC}.{value_col}) AS {SOMME_ALIAS} "
         f"FROM {table} {ALIAS_TRAFIC} "
+        f"LEFT JOIN ({build_mapping_subquery()}) {ALIAS_MAPPING} "
+        f"ON {ALIAS_MAPPING}.{CLE_ALIAS} = {ALIAS_TRAFIC}.{TRAFIC_COL_OBJET} "
         f"WHERE {' AND '.join(where)} "
-        f"GROUP BY {objet_expr}"
+        f"GROUP BY 1, 2"
     )
     return sql, params
 
@@ -433,7 +468,7 @@ def build_period_queries(
 # Accumulation dynamique par objet
 # =============================================================================
 def empty_accumulator() -> dict:
-    """Accumulateur dynamique vide : `{objet: {trafic_brut, trafic_previsionnel}}`.
+    """Accumulateur dynamique vide : `{objet: {lb_produit, trafic_brut, trafic_previsionnel}}`.
 
     Aucun objet pré-hydraté — la restitution ne renvoie que les objets présents dans le SQL."""
     return {}
@@ -442,15 +477,23 @@ def empty_accumulator() -> dict:
 def accumulate_trafics(rows, target_key, acc) -> None:
     """Ajoute la somme agrégée (par objet) dans `acc[objet][target_key]` (dynamique).
 
-    `rows` = lignes `{co_objet_trppu, somme}` renvoyées par `build_query`. L'objet est créé
-    à la volée ; une somme nulle compte pour 0.
+    `rows` = lignes `{co_objet_trppu, lb_objet_trppu, somme}` renvoyées par `build_query`.
+    L'objet est créé à la volée ; une somme nulle compte pour 0. Le libellé vient de la
+    jointure : jusqu'à 3 mailles × 2 zones peuvent remonter le même objet avec le même
+    libellé, on retient la première valeur non nulle.
     """
     for row in rows:
         objet = row.get(OBJ_ALIAS)
         objet = str(objet).strip() if objet is not None else None
         if objet is None:
             continue
-        slot = acc.setdefault(objet, {"trafic_brut": 0, "trafic_previsionnel": 0})
+        slot = acc.setdefault(
+            objet, {"lb_produit": None, "trafic_brut": 0, "trafic_previsionnel": 0}
+        )
+        if slot["lb_produit"] is None:
+            libelle = row.get(LIBELLE_ALIAS)
+            if libelle is not None:
+                slot["lb_produit"] = str(libelle).strip()
         valeur = row.get(SOMME_ALIAS)
         if valeur is None:
             continue

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 
 from app.db.mysql import db_read, db_write
 from app.log_utils import safe_preview
+from app.routes.trppu_produit.helpers import ensure_produits_exist
 from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 from app.security.crypto import encrypt_id_rh
 
@@ -19,6 +20,7 @@ from .helpers import (
     SELECT_TMH_BY_ID_SQL,
     fetch_tmh,
     insert_tmh_row,
+    resolve_libelles_produits,
     upsert_tmh_rows,
 )
 from .schemas import (
@@ -77,8 +79,15 @@ async def create_tmh(id_scenario: int, payload: TmhCreate):
     assert_editable(scenario)
 
     id_rh_token = encrypt_id_rh(payload.id_rh)
+    libelles = await resolve_libelles_produits()
     try:
         async with db_write.transaction() as tx:
+            # Le référentiel produits est piloté par Databricks : un objet remonté par les
+            # trafics peut ne pas encore exister côté applicatif. On le crée plutôt que de
+            # laisser la FK fk_tmh_produit casser la transaction.
+            crees = await ensure_produits_exist(tx, [payload.co_produit], libelles)
+            if crees:
+                logger.info("Produits créés automatiquement : %s", ", ".join(crees))
             new_id = await insert_tmh_row(
                 tx,
                 id_scenario,
@@ -124,8 +133,14 @@ async def upsert_tmh(id_scenario: int, payload: TmhBatchUpdate):
     assert_editable(scenario)
 
     id_rh_token = encrypt_id_rh(payload.id_rh)
+    libelles = await resolve_libelles_produits()
     try:
         async with db_write.transaction() as tx:
+            crees = await ensure_produits_exist(
+                tx, [item.co_produit for item in payload.tmh], libelles
+            )
+            if crees:
+                logger.info("Produits créés automatiquement : %s", ", ".join(crees))
             nb_inserted, nb_updated = await upsert_tmh_rows(
                 tx, id_scenario, payload.tmh, id_rh=id_rh_token
             )

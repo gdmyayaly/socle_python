@@ -22,7 +22,6 @@ from app.routes.trppu_trafics.helpers import (
     accumulate_trafics,
     build_period_queries,
     empty_accumulator,
-    fetch_libelles_objets,
     fmt_date,
     render_sql,
     split_by_pivot,
@@ -45,12 +44,13 @@ async def get_trafics_pivot(
 ):
     """DSR-679 : trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot.
 
-    Structure gold `_3` : l'objet est porté directement par `co_type_objet` (OO/OS/PR/PPI/CO/IP
-    relevés en base — liste dynamique, non figée) ; valeurs `trafic_constate` / `trafic_prevu`,
-    toutes deux renseignées quelle que soit la date (c'est le pivot qui choisit). La requête est
-    mono-table (aucune jointure de dimension) : `GROUP BY co_type_objet`, filtrée sur le
-    niveau de regroupement `SITE` (sans quoi les niveaux ETABLISSEMENT/PIC/NATIONAL cumulent
-    et gonflent les sommes), avec pruning sur les partitions (`co_annee_comptage`,
+    Structure gold `_3` : l'objet est porté par `co_type_objet` (OO/OS/PR/PPI/CO/IP relevés en
+    base — liste dynamique, non figée) ; valeurs `trafic_constate` / `trafic_prevu`, toutes deux
+    renseignées quelle que soit la date (c'est le pivot qui choisit). La requête joint la
+    dimension `g_trppu_obj_mapping` (pré-regroupée, donc sans duplication des lignes de trafic)
+    et regroupe sur le `co_type_objet` du mapping, qui porte aussi le libellé. Elle est filtrée
+    sur le niveau de regroupement `SITE` (sans quoi les niveaux ETABLISSEMENT/PIC/NATIONAL
+    cumulent et gonflent les sommes), avec pruning sur les partitions (`co_annee_comptage`,
     + `co_mois_comptage` pour le jour). Le résultat est restitué tel quel.
 
     - dates < pivot  -> trafic réel (constaté) ; prévisionnel = 0
@@ -104,15 +104,12 @@ async def get_trafics_pivot(
         json.dumps(raw_rows, ensure_ascii=False, default=str),
     )
 
-    # Libellés depuis la dimension `g_trppu_obj_mapping` (lecture à part + cache : la joindre
-    # à la requête agrégée gonflerait les SUM, plusieurs codes comptage pointant le même objet).
-    libelles = await run_in_threadpool(fetch_libelles_objets)
-
-    # Restitution dynamique : uniquement les objets présents dans le résultat SQL.
+    # Restitution dynamique : uniquement les objets présents dans le résultat SQL. Le libellé
+    # provient de la jointure `g_trppu_obj_mapping` portée par la requête agrégée.
     trafics = [
         {
             "co_produit": objet,
-            "lb_produit": libelles.get(objet),
+            "lb_produit": acc[objet]["lb_produit"],
             "trafic_brut": acc[objet]["trafic_brut"],
             "trafic_previsionnel": acc[objet]["trafic_previsionnel"],
         }
@@ -121,8 +118,10 @@ async def get_trafics_pivot(
 
     # Un objet des tables trafics absent du mapping sort avec un libellé nul : on le trace et
     # on l'expose, plutôt que d'inventer une correspondance (cf. écart PR/PPI vs PQ/EQ).
-    objets_sans_libelle = sorted(objet for objet in acc if objet not in libelles)
-    if objets_sans_libelle and libelles:
+    objets_sans_libelle = sorted(
+        objet for objet in acc if acc[objet]["lb_produit"] is None
+    )
+    if objets_sans_libelle:
         logger.warning(
             "Objets absents de %s (libellé nul) : %s",
             OBJ_MAPPING_TABLE,
