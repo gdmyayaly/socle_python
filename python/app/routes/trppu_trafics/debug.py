@@ -4,17 +4,20 @@
 - `/test/objets`     : objets et niveaux de regroupement présents pour un site
 - `/test/pivot_test` : contrôle croisé de deux mailles sur le même jeu de données
 - `/test/schema_raw` : `SELECT *` libre sur une table (introspection)
+
+Contrairement à l'endpoint de production, ces routes exposent toujours le SQL et l'erreur
+Databricks : c'est leur raison d'être.
 """
 
 import logging
 from calendar import monthrange
 from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from starlette.concurrency import run_in_threadpool
 
 from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA
-from app.db.databricks import databricks
+from app.routes.trppu_trafics.errors import erreur_400
 from app.routes.trppu_trafics.helpers import (
     DATE_COLUMN_PERIODE,
     MAPPING_COL_CLE,
@@ -35,12 +38,16 @@ from app.routes.trppu_trafics.helpers import (
     build_mapping_subquery,
     build_query,
     empty_accumulator,
+    executer_requete,
+    executer_requete_async,
     fetch_libelles_objets,
     fmt_date,
+    formater_trafics,
     fqtn,
     render_sql,
     split_by_pivot,
     validate_params_pivot,
+    zones_pivot,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,7 +81,6 @@ PAIRES_PIVOT = {
 
 
 def _config_effective() -> dict:
-    """Tables, colonnes et filtres réellement utilisés par la requête."""
     return {
         "catalog": DATABRICKS_CATALOG,
         "schema_gold": DATABRICKS_SCHEMA,
@@ -110,19 +116,6 @@ def _config_effective() -> dict:
     }
 
 
-def _executer(sql: str, params: dict | None = None) -> dict:
-    """Exécute une requête de debug : SQL rendu + lignes, ou l'erreur Databricks telle quelle."""
-    resultat = {"sql": render_sql(sql, params or {})}
-    try:
-        rows = databricks.fetch_all(sql, params) if params else databricks.fetch_all(sql)
-        resultat["nb_lignes"] = len(rows)
-        resultat["lignes"] = rows
-    except Exception as e:
-        logger.warning("Requête de debug DSR-679 en échec : %s", e)
-        resultat["error"] = str(e)
-    return resultat
-
-
 @router.get("/config")
 def config():
     """DEBUG — configuration effective de la requête DSR-679."""
@@ -146,20 +139,29 @@ def objets(co_regate: str = SITE_TEST, table: str = "mois"):
         f"FROM {fqtn(tbl)} WHERE {TRAFIC_COL_REGATE} = :co_regate "
         f"GROUP BY 1, 2 ORDER BY 1, 2"
     )
-    resultat = {"table_trafics": fqtn(tbl), **_executer(sql, {"co_regate": co_regate})}
+    resultat = {
+        "table_trafics": fqtn(tbl),
+        **executer_requete(sql, {"co_regate": co_regate}),
+    }
+    if resultat["statut"] != "ok":
+        return resultat
 
-    lignes = resultat.get("lignes")
-    if lignes is not None:
-        libelles = fetch_libelles_objets()
-        niveaux = sorted({r["niveau"] for r in lignes if r.get("niveau") is not None})
-        objets_du_site = sorted(
-            {r[OBJ_ALIAS] for r in lignes
-             if r.get("niveau") == NIVEAU_REGROUPEMENT and r.get(OBJ_ALIAS) is not None}
-        )
-        resultat["niveaux_presents"] = niveaux
-        resultat["filtre_niveau_necessaire"] = len(niveaux) > 1
-        resultat["objets"] = [{"co_produit": o, "lb_produit": libelles.get(o)} for o in objets_du_site]
-        resultat["objets_sans_libelle"] = [o for o in objets_du_site if o not in libelles]
+    lignes = resultat["lignes"]
+    libelles = fetch_libelles_objets()
+    niveaux = sorted({r["niveau"] for r in lignes if r.get("niveau") is not None})
+    objets_du_site = sorted(
+        {
+            r[OBJ_ALIAS]
+            for r in lignes
+            if r.get("niveau") == NIVEAU_REGROUPEMENT and r.get(OBJ_ALIAS) is not None
+        }
+    )
+    resultat["niveaux_presents"] = niveaux
+    resultat["filtre_niveau_necessaire"] = len(niveaux) > 1
+    resultat["objets"] = [
+        {"co_produit": o, "lb_produit": libelles.get(o)} for o in objets_du_site
+    ]
+    resultat["objets_sans_libelle"] = [o for o in objets_du_site if o not in libelles]
     return resultat
 
 
@@ -195,8 +197,7 @@ def _chevauchement(reel, prev, periode: str):
     """Signale une maille à cheval sur le pivot, donc présente dans les deux zones.
 
     Artefact de ce test, qui force une maille grossière sur toute la période : l'endpoint de
-    production découpe au jour près avant de choisir la maille, et n'emploie semaine ou mois
-    que sur des périodes entières.
+    production découpe au jour près avant de choisir la maille.
     """
     if reel is None or prev is None or periode == "jours":
         return None
@@ -210,7 +211,6 @@ def _chevauchement(reel, prev, periode: str):
 
 
 def _ecart(reference, valeur) -> dict:
-    """Écart absolu et relatif par rapport à la référence (maille jour)."""
     delta = (valeur or 0) - (reference or 0)
     return {"delta": delta, "pct": round(100 * delta / reference, 2) if reference else None}
 
@@ -229,30 +229,14 @@ async def _sommes_par_objet(periode, co_regate, zones, execute):
             "bornes_maille": [fmt_date(rng[0], periode), fmt_date(rng[1], periode)],
         }
         if execute:
-            execution = await run_in_threadpool(_executer, sql, params)
-            if "lignes" in execution:
-                accumulate_trafics(execution["lignes"], target_key, acc)
-            detail.update(execution)
+            trace = await executer_requete_async(sql, params)
+            if trace["statut"] == "ok":
+                accumulate_trafics(trace["lignes"], target_key, acc)
+            detail.update(trace)
         else:
             detail["sql"] = render_sql(sql, params)
         requetes.append(detail)
     return acc, requetes
-
-
-def _trafics(acc, libelles) -> list[dict]:
-    """Accumulateur au format de sortie de l'API (une ligne par objet présent).
-
-    Le libellé vient de la jointure ; `libelles` sert de repli quand la requête n'a pas été
-    exécutée (`execute=false`)."""
-    return [
-        {
-            "co_produit": objet,
-            "lb_produit": acc[objet]["lb_produit"] or libelles.get(objet),
-            "trafic_brut": acc[objet]["trafic_brut"],
-            "trafic_previsionnel": acc[objet]["trafic_previsionnel"],
-        }
-        for objet in sorted(acc)
-    ]
 
 
 @router.get("/pivot_test")
@@ -269,12 +253,9 @@ async def pivot_test(
     `paire` = `jour_mois` (défaut) | `jour_semaine` | `semaine_mois` | `toutes`.
 
     L'endpoint de production découpe la période entre les 3 tables ; ici chaque maille de la
-    paire est forcée à couvrir toute la période (2 requêtes : zone réelle `trafic_constate`,
-    zone prévisionnelle `trafic_prevu`), puis confrontée à la table jour sur sa plage effective.
-
-    Chaque paire a sa plage pré-remplie, alignée sur la maille concernée. `execute=false`
-    renvoie le SQL sans toucher Databricks. `mailles_coherentes` vaut `true` quand tous les
-    écarts par objet sont nuls.
+    paire est forcée à couvrir toute la période, puis confrontée à la table jour sur sa plage
+    effective. `execute=false` renvoie le SQL sans toucher Databricks. `mailles_coherentes` vaut
+    `true` quand tous les écarts par objet sont nuls.
     """
     if paire == "toutes":
         resultats = {
@@ -293,10 +274,9 @@ async def pivot_test(
         }
 
     if paire not in PAIRES_PIVOT:
-        raise HTTPException(status_code=400, detail={
-            "error": True, "code": 400,
-            "message": f"paire inconnue '{paire}'. Valeurs : {', '.join(PAIRES_PIVOT)}, toutes.",
-        })
+        raise erreur_400(
+            f"paire inconnue '{paire}'. Valeurs : {', '.join(PAIRES_PIVOT)}, toutes."
+        )
 
     config_paire = PAIRES_PIVOT[paire]
     defaut = config_paire["defaut"]
@@ -313,15 +293,12 @@ async def pivot_test(
 
     par_maille: dict[str, dict] = {}
     for periode in config_paire["mailles"]:
-        zones = (
-            (reel_range, TRAFIC_COL_CONSTATE, "trafic_brut"),
-            (prev_range, TRAFIC_COL_PREVISIONNEL, "trafic_previsionnel"),
-        )
+        zones = zones_pivot(reel_range, prev_range, inclure_vides=True)
         acc, requetes = await _sommes_par_objet(periode, co_regate, zones, execute)
 
-        zones_eff = tuple(
+        zones_eff = [
             (_plage_effective(rng, periode), col, cle) for rng, col, cle in zones
-        )
+        ]
         if periode == "jours":
             acc_ref, requetes_ref = acc, []
         else:
@@ -344,8 +321,8 @@ async def pivot_test(
             },
             "requetes": requetes,
             "requetes_reference_jour": requetes_ref,
-            "trafics": _trafics(acc, libelles),
-            "trafics_reference_jour": _trafics(acc_ref, libelles),
+            "trafics": formater_trafics(acc, libelles),
+            "trafics_reference_jour": formater_trafics(acc_ref, libelles),
         }
 
     vide = {"trafic_brut": 0, "trafic_previsionnel": 0}
@@ -401,8 +378,7 @@ async def schema_raw(table: str, limit: int = 5, schema: str | None = None):
     """DEBUG — `SELECT *` libre sur une table (nom court résolu dans `schema`, ou FQTN)."""
     limit = max(1, min(int(limit), 100))
     table_fqtn = table if "." in table else fqtn(table, schema)
-    sql = f"SELECT * FROM {table_fqtn} LIMIT {limit}"
-    resultat = await run_in_threadpool(_executer, sql)
-    if "lignes" in resultat:
+    resultat = await executer_requete_async(f"SELECT * FROM {table_fqtn} LIMIT {limit}")
+    if resultat["statut"] == "ok":
         resultat["colonnes"] = list(resultat["lignes"][0].keys()) if resultat["lignes"] else []
     return {"table": table_fqtn, **resultat}

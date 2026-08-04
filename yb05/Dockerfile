@@ -9,6 +9,7 @@ COPY . .
 
 RUN mkdir -p /app/logs
 
-EXPOSE 8000
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Application console : pas de serveur, pas de port exposé.
+# La sous-commande est passée à l'exécution : docker compose run --rm yb05 db-info
+ENTRYPOINT ["python", "-m", "app.main"]
+CMD ["db-check"]

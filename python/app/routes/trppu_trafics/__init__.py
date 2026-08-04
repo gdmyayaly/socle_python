@@ -1,11 +1,7 @@
-"""DSR-679 — Package trafics pivot (nouvelle structure gold + dimensions).
+"""DSR-679 — Package trafics : endpoint de production + routes de contrôle des données gold.
 
-Implémentation autonome destinée à remplacer l'ancien `app/routes/trafics.py` :
-- `routes.py`  : endpoint production `GET /trppu-api/trafics/get_trafics_pivot`
-- `helpers.py` : validation, découpage pivot, construction SQL (jointures dimensions),
-                 agrégation dynamique
-- `debug.py`   : routes `GET /trppu-api/trafics/test/*` (config, aperçu SQL, schémas,
-                 échantillons, dry-run) pour stabiliser la requête avant bascule
+Seul module trafics du projet depuis la suppression de `app/routes/trafics.py` et de
+`app/routes/trafics_helpers.py`, qui en dupliquaient la moitié.
 """
 
 from fastapi import APIRouter

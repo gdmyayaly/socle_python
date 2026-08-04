@@ -32,12 +32,6 @@ LOGS_DIR = os.getenv("LOGS_DIR", "")
 # Debug
 DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"
 
-# CORS
-CORS_ALLOW_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()]
-CORS_ALLOW_METHODS = [m.strip() for m in os.getenv("CORS_ALLOW_METHODS", "*").split(",") if m.strip()]
-CORS_ALLOW_HEADERS = [h.strip() for h in os.getenv("CORS_ALLOW_HEADERS", "*").split(",") if h.strip()]
-CORS_ALLOW_CREDENTIALS = os.getenv("CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
-
 # Requêtes utilitaires pour les checks
 HEALTH_CHECK_QUERY = "SELECT 1 AS ok"
 

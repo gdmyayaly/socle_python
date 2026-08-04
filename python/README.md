@@ -87,46 +87,33 @@ Le serveur démarre sur `http://localhost:8000`.
 | GET     | `/databricks/trafics_jours?limit=10` | Données de `gold.trafics_jours` |
 | GET     | `/databricks/trafics_semaines?limit=10` | Données de `gold.trafics_semaines` |
 | GET     | `/databricks/trafics_mois?limit=10` | Données de `gold.trafics_mois`    |
-| POST    | `/trafics/get_trafics` | Récupère les trafics par code régate et période |
-| POST    | `/trafics/get_trafics_paginated` | Idem avec pagination |
+| GET     | `/trppu-api/trafics/get_trafics_pivot` | Trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot |
+| GET     | `/trppu-api/trafics/test/*` | Routes de contrôle des données gold (config, objets, pivot_test, schema_raw) |
 
-### Endpoint `/trafics/get_trafics`
+### Endpoint `/trppu-api/trafics/get_trafics_pivot`
 
-| Paramètre    | Défaut  | Description                                      |
-|--------------|---------|--------------------------------------------------|
-| `periode`    | `auto`  | `jours`, `semaines`, `mois`, `auto` ou `debug`  |
-| `co_regate`  | —       | Code régate du site                               |
-| `date_debut` | —       | Date de début (AAAAMMJJ ou AAAA-MM-JJ)           |
-| `date_fin`   | —       | Date de fin (AAAAMMJJ ou AAAA-MM-JJ)             |
-| `count_only` | `false` | Si `true`, retourne uniquement le count           |
+| Paramètre    | Défaut  | Description                                            |
+|--------------|---------|--------------------------------------------------------|
+| `co_regate`  | —       | Code régate du site                                     |
+| `date_debut` | —       | Date de début (AAAAMMJJ ou AAAA-MM-JJ)                 |
+| `date_fin`   | —       | Date de fin (AAAAMMJJ ou AAAA-MM-JJ), période ≤ 2 ans  |
+| `date_pivot` | —       | Sépare le trafic constaté (avant) du prévisionnel (à partir de) |
+| `is_day`     | `false` | Force la table jour au lieu du découpage mois/semaines/jours |
 
-Modes de période :
-
-- **`auto`** (par défaut) — découpe l'intervalle en requêtes optimales sur les tables mois, semaines et jours, puis exécute et agrège les résultats.
-- **`debug`** — même découpage qu'`auto` mais retourne uniquement un aperçu des requêtes générées sans les exécuter.
-- **`jours`**, **`semaines`**, **`mois`** — interroge directement la table correspondante.
-
-Exemple d'appel :
+L'intervalle est découpé en segments mois / semaines / jours, puis regroupé en une requête
+agrégée par table (3 au maximum). La liste des objets restitués est dynamique : elle sort du SQL
+et n'est pas figée côté applicatif.
 
 ```bash
-curl -X POST http://localhost:8000/trafics/get_trafics \
-  -H "Content-Type: application/json" \
-  -d '{
-    "periode": "auto",
-    "co_regate": "12345",
-    "date_debut": "20250101",
-    "date_fin": "20250331"
-  }'
+curl "http://localhost:8000/trppu-api/trafics/get_trafics_pivot?co_regate=400300\
+&date_debut=20250101&date_fin=20250331&date_pivot=20250201"
 ```
 
-### Constantes configurables (`app/routes/trafics.py`)
-
-| Constante               | Défaut | Description                                          |
-|--------------------------|--------|------------------------------------------------------|
-| `TRAFICS_SELECT_COLUMNS` | `*`    | Colonnes du SELECT (ex : `"co_regate, da_comptage"`) |
-| `TRAFICS_GROUP_BY`       | `""`   | Clause GROUP BY (vide = désactivé)                   |
-| `TRAFICS_IN_COLUMN`      | `""`   | Colonne pour la clause IN (vide = désactivé)         |
-| `TRAFICS_IN_VALUES`      | `[]`   | Valeurs pour la clause IN                            |
+Avec `DEBUG_SHOW_QUERY=true`, la réponse (200 comme 500) porte un bloc `debug.queries` listant
+les requêtes rendues — paramètres substitués, donc rejouables telles quelles. En cas d'erreur
+Databricks, `debug.requete_en_echec` isole la requête fautive et `debug.databricks_error` porte
+le message brut du warehouse. Avec `DEBUG_SHOW_QUERY=false` (défaut), aucun de ces éléments ne
+sort de l'API.
 
 ## Classe utilitaire `Database`
 

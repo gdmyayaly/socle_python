@@ -75,7 +75,7 @@ Seule exception : la transition `VERROUILLE → ARCHIVE` reste autorisée via `P
 - `GET` liste : `{"count": n, "total": N, "limit": ..., "offset": ..., "data": [...]}`.
 - `PATCH` / `DELETE` : `{"id_scenario|id": ..., "version_scenario": ...}` éventuellement enrichi.
 
-### Erreur (uniforme avec `trafics_helpers.py`)
+### Erreur (uniforme avec `app/routes/trppu_trafics/errors.py`)
 ```json
 {
   "detail": {

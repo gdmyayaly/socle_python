@@ -1,149 +1,151 @@
-"""Point d'entrée de l'application FastAPI socle yb05."""
+"""Point d'entrée console du socle yb05.
 
+Deux commandes de vérification de la base de données :
+
+    python -m app.main db-info    # informations de connexion et du serveur MySQL
+    python -m app.main db-check   # disponibilité des instances lecture et écriture
+
+Le code de retour vaut 0 si la vérification est concluante, 1 sinon (utilisable en
+ordonnanceur ou en probe).
+"""
+
+import argparse
+import asyncio
+import json
 import logging
-import time
-from contextlib import asynccontextmanager
-from pathlib import Path
+import sys
 
-from fastapi import FastAPI, Request
-from fastapi.encoders import jsonable_encoder
-from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.openapi.docs import (
-    get_redoc_html,
-    get_swagger_ui_html,
-    get_swagger_ui_oauth2_redirect_html,
-)
-from fastapi.staticfiles import StaticFiles
-
-from app.config import (
-    CORS_ALLOW_CREDENTIALS,
-    CORS_ALLOW_HEADERS,
-    CORS_ALLOW_METHODS,
-    CORS_ALLOW_ORIGINS,
-)
+from app.config import APP, APP_ENV, APP_VERSION, MODULE
 from app.db.mysql import db_read, db_write
+from app.health import (
+    check_config,
+    check_resources,
+    describe_connection,
+    fetch_server_info,
+)
 from app.json_formatter import setup_logging
-from app.routes import health as health_routes
 
-setup_logging()
 log = logging.getLogger("yb05")
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    log.info("Démarrage de l'application yb05")
-    yield
-    log.info("Arrêt de l'application yb05")
-    # Les pools sont créés à la volée (lazy) au premier appel : on ne les ouvre pas
-    # au démarrage pour que l'application démarre même sans MySQL joignable, mais
-    # on les ferme proprement à l'arrêt.
-    await db_read.disconnect()
-    await db_write.disconnect()
+EXIT_OK = 0
+EXIT_KO = 1
 
 
-app = FastAPI(
-    title="yb05 API",
-    description="Socle technique YB05 (MySQL, logs, health)",
-    lifespan=lifespan,
-    # On désactive les docs par défaut (qui chargent les assets depuis le CDN)
-    # pour les remplacer par des routes servant les assets en local.
-    docs_url=None,
-    redoc_url=None,
-)
-
-# Assets Swagger UI / ReDoc servis en local (fonctionne sans accès internet)
-_STATIC_DIR = Path(__file__).resolve().parent / "static"
-app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+def _print_json(payload: dict) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
 
-@app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui_html():
-    return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
-        title=f"{app.title} - Swagger UI",
-        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
-        swagger_js_url="/static/swagger-ui/swagger-ui-bundle.js",
-        swagger_css_url="/static/swagger-ui/swagger-ui.css",
-        swagger_favicon_url="/static/swagger-ui/favicon-32x32.png",
-    )
+def _print_connection(libelle: str, infos: dict) -> None:
+    print(f"  {libelle:<9}: {infos['user']}@{infos['host']}:{infos['port']}/{infos['database']}")
+    print(f"             retries={infos['max_retries']}, delai={infos['retry_delay']}s")
 
 
-@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
-async def swagger_ui_redirect():
-    return get_swagger_ui_oauth2_redirect_html()
+async def cmd_db_info(args: argparse.Namespace) -> int:
+    """Informations de connexion configurées, puis informations du serveur MySQL."""
+    config = check_config()
+    lecture = describe_connection(db_read)
+    ecriture = describe_connection(db_write)
+    serveur = await fetch_server_info(db_read)
 
-
-@app.get("/redoc", include_in_schema=False)
-async def custom_redoc_html():
-    return get_redoc_html(
-        openapi_url=app.openapi_url,
-        title=f"{app.title} - ReDoc",
-        redoc_js_url="/static/swagger-ui/redoc.standalone.js",
-        redoc_favicon_url="/static/swagger-ui/favicon-32x32.png",
-        with_google_fonts=False,
-    )
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ALLOW_ORIGINS,
-    allow_credentials=CORS_ALLOW_CREDENTIALS,
-    allow_methods=CORS_ALLOW_METHODS,
-    allow_headers=CORS_ALLOW_HEADERS,
-)
-
-
-@app.exception_handler(RequestValidationError)
-async def _validation_error(request: Request, exc: RequestValidationError):
-    """Trace les paramètres invalides/manquants avant de renvoyer le 422 standard.
-
-    `id_session_ihm` (query) est repris s'il est présent, pour le regroupement Kibana.
-    """
-    id_session_ihm = request.query_params.get("id_session_ihm")
-    log.warning(
-        "Validation des paramètres échouée (%s %s, id_session_ihm=%s) : %s",
-        request.method,
-        request.url.path,
-        id_session_ihm,
-        exc.errors(),
-    )
-    return JSONResponse(
-        status_code=422,
-        content={"detail": jsonable_encoder(exc.errors())},
-    )
-
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    start = time.time()
-    log.info(">>> %s %s", request.method, request.url.path)
-    try:
-        response = await call_next(request)
-    except Exception:
-        duration_ms = (time.time() - start) * 1000
-        log.exception(
-            "<<< %s %s 500 (%.1fms) — UNHANDLED",
-            request.method,
-            request.url.path,
-            duration_ms,
+    if args.json:
+        _print_json(
+            {
+                "application": {
+                    "app": APP,
+                    "env": APP_ENV,
+                    "module": MODULE,
+                    "version": APP_VERSION,
+                },
+                "config": config,
+                "connexion": {"lecture": lecture, "ecriture": ecriture},
+                "serveur": serveur,
+            }
         )
-        raise
-    duration_ms = (time.time() - start) * 1000
-    log.info(
-        "<<< %s %s %d (%.1fms)",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
+    else:
+        print(f"Application  : {APP}/{MODULE} v{APP_VERSION} (env {APP_ENV})")
+        print(f"Configuration: {config['status']}")
+        print("Connexion MySQL (mot de passe masqué)")
+        _print_connection("lecture", lecture)
+        _print_connection("écriture", ecriture)
+        print("Serveur MySQL (via l'instance de lecture)")
+        if serveur["status"] == "ok":
+            print(f"  version        : {serveur['version']}")
+            print(f"  schéma courant : {serveur['schema_courant']}")
+            print(f"  utilisateur    : {serveur['utilisateur']}")
+            print(f"  hôte serveur   : {serveur['hote_serveur']}")
+            print(f"  date serveur   : {serveur['date_serveur']}")
+            print(f"  nb tables      : {serveur['nb_tables']}")
+        else:
+            print(f"  injoignable : {serveur['error']}")
+
+    return EXIT_OK if config["mysql_config"] and serveur["status"] == "ok" else EXIT_KO
+
+
+async def cmd_db_check(args: argparse.Namespace) -> int:
+    """Disponibilité réelle des instances MySQL lecture et écriture."""
+    resultat = await check_resources()
+
+    if args.json:
+        _print_json(resultat)
+    else:
+        print(f"Disponibilité MySQL : {resultat['status']}")
+        print(f"  lecture  : {resultat['mysql_read']}")
+        print(f"  écriture : {resultat['mysql_write']}")
+
+    return EXIT_OK if resultat["status"] == "ok" else EXIT_KO
+
+
+COMMANDES = {
+    "db-info": cmd_db_info,
+    "db-check": cmd_db_check,
+}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m app.main",
+        description="Socle technique yb05 — vérifications de la base de données.",
     )
-    return response
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Affiche aussi les logs applicatifs (niveau INFO) en plus du résultat.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Sort le résultat en JSON plutôt qu'en texte.",
+    )
+
+    sous_commandes = parser.add_subparsers(dest="commande", required=True)
+    sous_commandes.add_parser(
+        "db-info",
+        help="Informations de connexion configurées et informations du serveur MySQL.",
+    )
+    sous_commandes.add_parser(
+        "db-check",
+        help="Vérifie la disponibilité des instances MySQL lecture et écriture.",
+    )
+    return parser
 
 
-app.include_router(health_routes.router)
+async def _run(args: argparse.Namespace) -> int:
+    try:
+        return await COMMANDES[args.commande](args)
+    finally:
+        # Les pools sont créés à la volée (lazy) : on les ferme proprement en sortie.
+        await db_read.disconnect()
+        await db_write.disconnect()
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    # Par défaut on limite les logs aux avertissements pour ne pas polluer la sortie console.
+    setup_logging(level=logging.INFO if args.verbose else logging.WARNING)
+    log.info("Commande %s", args.commande)
+    return asyncio.run(_run(args))
+
 
 if __name__ == "__main__":
-    import uvicorn
-    from app.config import APP_ENV
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=(APP_ENV == "local"))
+    sys.exit(main())

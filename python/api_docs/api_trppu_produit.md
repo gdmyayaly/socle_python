@@ -25,6 +25,28 @@ fait via `dt_desactivation` (et `motif_desactivation`).
 
 **Contrainte SQL** : `CHECK (dt_desactivation IS NULL OR dt_desactivation >= DATE(dt_creation))`.
 
+### 1.1 Création automatique depuis le TMH
+
+Le référentiel des objets traités est piloté par **Databricks** (`co_type_objet` des tables
+`g_trppu_trafics_*_3`, restitution dynamique par `get_trafics_pivot`) : un objet peut apparaître
+dans les trafics sans exister dans `trppu_produit`. Pour éviter que la FK `fk_tmh_produit` casse
+la transaction et remonte une 500 opaque, tout chemin d'écriture TMH crée le produit manquant
+avant l'insert :
+
+| Endpoint | Effet |
+|----------|-------|
+| `POST /trppu-api/scenarios/{id}/tmh` | crée le `co_produit` s'il est absent |
+| `PUT /trppu-api/scenarios/{id}/tmh` | idem pour chaque ligne du lot |
+| `POST` / `PUT /trppu-api/scenarios` | idem pour les lignes TMH du payload |
+
+- Implémentation : `ensure_produits_exist` (`app/routes/trppu_produit/helpers.py`), en
+  `INSERT ... ON DUPLICATE KEY UPDATE` no-op — idempotent, et le libellé d'un produit déjà saisi
+  par le métier n'est **jamais** écrasé.
+- `lb_produit` est repris de `g_trppu_obj_mapping` (`lb_type_objet`). La colonne étant NOT NULL,
+  un objet inconnu du mapping (`PR`, `PPI` — cf. DSR-679) est créé **avec son code pour
+  libellé** ; à corriger ensuite via `PUT /trppu-api/produits/{co_produit}`.
+- Les codes créés sont tracés dans les logs (`Produits créés automatiquement : …`).
+
 ---
 
 ## 2. Endpoints

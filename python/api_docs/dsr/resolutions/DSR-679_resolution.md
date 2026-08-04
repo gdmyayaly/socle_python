@@ -21,8 +21,9 @@ partition** pour l'optimisation.
 ## 2. Fichiers créés / modifiés
 - **Créés — package autonome `app/routes/trppu_trafics/`** (destiné à remplacer l'ancien
   `trafics.py` une fois validé) :
-  - `helpers.py` — validation, découpage pivot, `build_query` (mono-table : agrégation par
-    objet + filtre de niveau + partitions), `accumulate_trafics` (dynamique).
+  - `helpers.py` — validation, découpage pivot, `build_mapping_subquery` (mapping pré-regroupé),
+    `build_query` (agrégation par objet du mapping + filtre de niveau + partitions),
+    `accumulate_trafics` (dynamique, porte le libellé).
   - `routes.py` — endpoint production `GET /trppu-api/trafics/get_trafics_pivot`.
   - `debug.py` — routes de debug/test `GET /trppu-api/trafics/test/*` (jour_check, config,
     queries_preview, schema, schema_raw, objets, echantillons, pivot_dry_run).
@@ -34,6 +35,8 @@ partition** pour l'optimisation.
   - `app/main.py` — enregistre `trppu_trafics.router` (à la place de `trafics_test`).
 - **Ancien conservé mais superséded** : `app/routes/trafics_helpers.py` (bloc DSR-679 mort,
   non importé) — le package est autonome et n'en dépend pas.
+  > Obsolète depuis l'uniformisation : `trafics.py`, `trafics_helpers.py` et `schemas.py` ont
+  > été supprimés, cf. § 7 en fin de document.
 
 ## 3. Endpoint livré
 
@@ -106,9 +109,10 @@ GROUP BY 1, 2
 Une ligne par objet **présent dans le résultat** (restitution dynamique) avec la somme sur la
 période et le site :
 ```json
-{ "co_produit": "OO", "trafic_brut": 3500, "trafic_previsionnel": 2435 }
+{ "co_produit": "OO", "lb_produit": "OBJETS ORDINAIRES", "trafic_brut": 3500, "trafic_previsionnel": 2435 }
 ```
-Plus `date_debut/fin/pivot`, `count`, `nb_jours` (DSR-613), et `queries` si `DEBUG_SHOW_QUERY`.
+Plus `date_debut/fin/pivot`, `count`, `objets_sans_libelle` (objets absents du mapping),
+`nb_jours` (DSR-613), et `queries` si `DEBUG_SHOW_QUERY`.
 
 ### Erreurs (`400`, message rappelant les paramètres)
 Paramètre manquant (dont `date_pivot`), `date_debut > date_fin`, ou période > 2 ans.
@@ -125,6 +129,10 @@ Paramètre manquant (dont `date_pivot`), `date_debut > date_fin`, ou période > 
 | valeur prévisionnelle | `trafic_prevu` | `TRAFIC679_COL_PREVISIONNEL` |
 | partition année | `co_annee_comptage` (smallint) | `TRAFIC679_COL_ANNEE` |
 | partition mois (jour) | `co_mois_comptage` (string `AAAA-MM`) | `TRAFIC679_COL_MOIS` |
+| dimension objets | `g_trppu_obj_mapping` | `TRAFIC679_OBJ_MAPPING_TABLE` |
+| clé de jointure du mapping | `co_type_objet` | `TRAFIC679_MAPPING_COL_CLE` |
+| objet du mapping (regroupement) | `co_type_objet` | `TRAFIC679_MAPPING_COL_OBJET` |
+| libellé du mapping | `lb_type_objet` | `TRAFIC679_MAPPING_COL_LIBELLE` |
 
 Colonne de date par maille : `da_comptage` (jour), `co_semaine_comptage` `AAAA-NS` (semaine),
 `co_mois_comptage` `AAAA-MM` (mois) — formats zéro-paddés, donc le `BETWEEN` sur chaîne est
@@ -135,7 +143,10 @@ lexicographiquement correct, y compris à cheval sur un changement d'année.
    400300) : `co_regate`, `co_type_objet`, `co_niveau_regroupement_operationnel`,
    `da_comptage` (jour) / `co_mois_comptage` (string `AAAA-MM`), `co_annee_comptage`
    (smallint, colonne de partition), `trafic_constate` / `trafic_prevu` (bigint).
-2 et 3. **Cardinalité et couverture du mapping — sans objet** : il n'y a plus de jointure.
+2 et 3. **Cardinalité du mapping — neutralisée par le pré-regroupement** : `g_trppu_obj_mapping`
+   compte plusieurs lignes par objet (une par code comptage CTR). La jointure porte donc sur une
+   sous-requête `GROUP BY co_type_objet` : une ligne par code, aucune duplication des lignes de
+   trafic, `SUM` inchangées. La couverture reste partielle (point 6).
 4. **Pas de pré-découpage Databricks** — `trafic_constate` **et** `trafic_prevu` sont
    renseignées quelle que soit la date. Sur 400300 / 01-03-2025 → 31-03-2026 (pivot
    01-10-2025), la sonde donne pour `OO` un constaté total de 1 232 587 alors que la zone
@@ -260,9 +271,40 @@ Résultat de référence (`/test/jour_check` sur 400300, 01-03-2025 → 31-03-20
 | PPI   | 9 201 | 9 212 |
 
 ### Avec Databricks réel
-Activer `DEBUG_SHOW_QUERY=true`, appeler `get_trafics_pivot_dsr679` sur 400300, vérifier dans
-`queries` la jointure `g_trppu_obj_mapping`, le `GROUP BY` objet et les prédicats de partition,
-puis comparer la somme par objet à une requête manuelle en base (3 cas passé/mixte/futur).
+Activer `DEBUG_SHOW_QUERY=true`, appeler `get_trafics_pivot` sur 400300, vérifier dans `queries`
+la jointure `g_trppu_obj_mapping` (sous-requête pré-regroupée), le `GROUP BY` sur l'objet du
+mapping et les prédicats de partition, puis comparer la somme par objet à une requête manuelle
+en base (3 cas passé/mixte/futur).
+
+**Contrôle de non-régression de la jointure** — la même somme doit sortir avec et sans mapping ;
+tout écart signale une duplication des lignes de trafic :
+```sql
+SELECT COALESCE(j.objet, s.objet) AS objet, j.sans_jointure, s.avec_jointure,
+       s.avec_jointure - j.sans_jointure AS ecart
+FROM (
+    SELECT t.co_type_objet AS objet, SUM(t.trafic_constate) AS sans_jointure
+    FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_mois_3 t
+    WHERE t.co_regate = '400300' AND t.co_niveau_regroupement_operationnel = 'SITE'
+      AND t.co_mois_comptage BETWEEN '2025-03' AND '2025-09'
+      AND t.co_annee_comptage IN (2025)
+    GROUP BY 1
+) j
+FULL OUTER JOIN (
+    SELECT COALESCE(m.co_objet_trppu, t.co_type_objet) AS objet,
+           SUM(t.trafic_constate) AS avec_jointure
+    FROM ppd_dd_kairos_int.03_gold.g_trppu_trafics_mois_3 t
+    LEFT JOIN (
+        SELECT co_type_objet AS cle_jointure, MAX(co_type_objet) AS co_objet_trppu
+        FROM ppd_dd_kairos_int.03_gold.g_trppu_obj_mapping
+        GROUP BY co_type_objet
+    ) m ON m.cle_jointure = t.co_type_objet
+    WHERE t.co_regate = '400300' AND t.co_niveau_regroupement_operationnel = 'SITE'
+      AND t.co_mois_comptage BETWEEN '2025-03' AND '2025-09'
+      AND t.co_annee_comptage IN (2025)
+    GROUP BY 1
+) s ON j.objet = s.objet
+ORDER BY ABS(COALESCE(s.avec_jointure, 0) - COALESCE(j.sans_jointure, 0)) DESC
+```
 
 ## 6. Mapping critères d'acceptance
 | Critère | Couverture |
@@ -272,5 +314,74 @@ puis comparer la somme par objet à une requête manuelle en base (3 cas passé/
 | Période passée → réel + prév | `split_by_pivot` + `build_query_679` |
 | Période mixte → réel + prév | idem |
 | Période future → que du prévisionnel | `split_by_pivot` (reel=None) |
-| 1 ligne par objet = somme des trafics | `GROUP BY co_type_objet` (restitution dynamique) |
+| 1 ligne par objet = somme des trafics | `GROUP BY` sur le `co_type_objet` du mapping (restitution dynamique) |
+| Libellé de l'objet | jointure `g_trppu_obj_mapping` pré-regroupée ; `null` + `objets_sans_libelle` si absent |
 | Vérif base trafics & objets | `queries` tracées (DEBUG_SHOW_QUERY) + `/test/jour_check` |
+
+---
+
+## 7. Uniformisation du domaine trafics (post-DSR-679)
+
+Le domaine existait en deux exemplaires : l'ancien couple `app/routes/trafics.py` +
+`app/routes/trafics_helpers.py` (DSR-613/666) et le package `app/routes/trppu_trafics/`
+(DSR-679) qui l'avait supplanté sans que l'ancien soit retiré. Le package est désormais le
+**seul** module trafics du projet.
+
+### Supprimé
+- `app/routes/trafics.py` et l'endpoint `GET /trppu-api/trafics/get_trafics` (lignes brutes).
+  Aucun consommateur runtime : côté front, `TraficService.getTrafics()` n'était appelé que par
+  `loadTrafics()`, marqué `DEPRECATED` et jamais invoqué.
+  **Action front** : retirer `getTrafics()` et `loadTrafics()` de `trafics.service.ts` /
+  `trppu-trafics-calculer.component.ts`.
+- `app/routes/trafics_helpers.py` : dupliquait 12 symboles de `trppu_trafics/helpers.py`
+  (`parse_date`, `render_sql`, `fmt_date`, `decompose_auto`, `validate_params_pivot`,
+  `split_by_pivot`, `build_partition_conditions`, `TABLES_PERIODE`…) et portait ~250 lignes de
+  code mort (bloc `*_679` jamais importé, mapping produit en dur `TRAFIC_PRODUIT_MAPPING`).
+- `app/routes/trafics.txt` : ancienne version YS04, zéro référence dans le repo. C'était la
+  source des sections obsolètes du `README.md` (un `POST` avec paramètre `periode`).
+- `app/routes/trppu_trafics/schemas.py` : jamais importé, aucun `response_model` branché.
+  Non réintroduit — un `response_model` **supprime silencieusement toute clé non déclarée**, ce
+  qui masquerait le bloc `debug` ci-dessous. Le domaine est en lecture pure : 4 query params
+  scalaires validés à la main, sortie dynamique.
+- `app/main.py` : import et montage de `trafics_routes`.
+
+### Ajouté — `app/routes/trppu_trafics/errors.py`
+Point unique du format `{error, message, code}` (`erreur_400`, `erreur_500`) et du bloc debug.
+Seul module du package à lire `DEBUG_SHOW_QUERY` : il ne dépend que de `fastapi` + `app.config`,
+ce qui évite le cycle avec `helpers.py` (qui lève les 400). Remplace 7 blocs copiés-collés ;
+les messages des 400 sont inchangés.
+
+### Correction — la requête fautive était perdue
+`routes.py` ajoutait la requête à la liste tracée **après** son exécution : en cas d'erreur
+Databricks, le bloc debug ne montrait que les requêtes ayant réussi, jamais celle qui avait
+planté. `helpers.executer_requete` produit désormais la trace (SQL rendu + statut) **au moment
+de l'exécution**, donc il n'existe plus de chemin où une requête s'exécute sans être tracée.
+Couvert par `tests/test_trafics_erreurs.py::test_requete_fautive_tracee_des_le_premier_appel`.
+
+### Contrat du bloc debug (200 et 500, symétrique)
+Uniquement si `DEBUG_SHOW_QUERY=true` :
+
+```json
+"debug": {
+  "queries": [
+    {"index": 0, "statut": "ok", "nb_lignes": 6, "sql": "SELECT ... GROUP BY 1, 2"},
+    {"index": 1, "statut": "echec", "erreur": "[TABLE_OR_VIEW_NOT_FOUND] ...", "sql": "SELECT ..."}
+  ],
+  "requete_en_echec": {"index": 1, "statut": "echec", "erreur": "...", "sql": "SELECT ..."},
+  "databricks_error": "[TABLE_OR_VIEW_NOT_FOUND] ..."
+}
+```
+
+Le SQL est rendu (paramètres substitués, nombres non quotés) donc rejouable tel quel. Les lignes
+de données ne figurent jamais dans le bloc, seulement leur volume (`nb_lignes`). Avec
+`DEBUG_SHOW_QUERY=false`, un 500 se réduit à `{"error": true, "message": ..., "code": 500}`.
+Remplace l'ancien `queries: ["sql1", "sql2"]` à plat.
+
+### Mutualisation
+`debug.py` ne porte plus ni `_executer` ni `_trafics` : les routes `/test/*` passent par les
+mêmes `executer_requete` / `formater_trafics` / `zones_pivot` que la production. Les clés des
+routes de debug suivent la trace commune (`statut`, `erreur` au lieu de `error`).
+
+Bilan : ~1150 lignes supprimées, commentaires réduits aux pièges métier non déductibles du code
+(pré-regroupement du mapping, filtre `co_niveau_regroupement_operationnel`, découpage au jour
+près autour du pivot, pruning porté par l'alias `t`).

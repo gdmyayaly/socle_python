@@ -1,31 +1,23 @@
-"""DSR-679 — Endpoint de récupération des trafics pivot (nouvelle structure gold `_3`).
-
-Remplace la logique DSR-666 : pour un site + période + date pivot, agrège par objet
-(`co_type_objet`) le trafic constaté (avant pivot) et prévisionnel (à partir du pivot),
-et restitue une ligne par objet présent dans le résultat du SQL.
-"""
+"""DSR-679 — Endpoint de récupération des trafics pivot (structure gold `_3`)."""
 
 import json
 import logging
 import time
-from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
-from starlette.concurrency import run_in_threadpool
+from fastapi import APIRouter
 
-from app.config import DEBUG_SHOW_QUERY
-from app.db.databricks import databricks
+from app.routes.trppu_trafics.errors import bloc_debug, erreur_500
 from app.routes.trppu_trafics.helpers import (
-    OBJ_MAPPING_TABLE,
-    TRAFIC_COL_CONSTATE,
-    TRAFIC_COL_PREVISIONNEL,
     accumulate_trafics,
     build_period_queries,
     empty_accumulator,
+    executer_requete_async,
     fmt_date,
-    render_sql,
+    formater_trafics,
+    objets_sans_libelle,
     split_by_pivot,
     validate_params_pivot,
+    zones_pivot,
 )
 from app.services.jours_service import compute_nb_jours
 
@@ -44,17 +36,9 @@ async def get_trafics_pivot(
 ):
     """DSR-679 : trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot.
 
-    Structure gold `_3` : l'objet est porté par `co_type_objet` (OO/OS/PR/PPI/CO/IP relevés en
-    base — liste dynamique, non figée) ; valeurs `trafic_constate` / `trafic_prevu`, toutes deux
-    renseignées quelle que soit la date (c'est le pivot qui choisit). La requête joint la
-    dimension `g_trppu_obj_mapping` (pré-regroupée, donc sans duplication des lignes de trafic)
-    et regroupe sur le `co_type_objet` du mapping, qui porte aussi le libellé. Elle est filtrée
-    sur le niveau de regroupement `SITE` (sans quoi les niveaux ETABLISSEMENT/PIC/NATIONAL
-    cumulent et gonflent les sommes), avec pruning sur les partitions (`co_annee_comptage`,
-    + `co_mois_comptage` pour le jour). Le résultat est restitué tel quel.
-
-    - dates < pivot  -> trafic réel (constaté) ; prévisionnel = 0
-    - dates >= pivot -> trafic prévisionnel ; réel = 0
+    `trafic_constate` et `trafic_prevu` sont renseignés quelle que soit la date : c'est le pivot
+    qui choisit. Dates < pivot -> trafic réel (prévisionnel = 0) ; dates >= pivot -> l'inverse.
+    La liste des objets restitués est dynamique (elle sort du SQL), pas figée.
     Paramètres au format AAAAMMJJ ; période <= 2 ans. `is_day` force la table jour.
     """
     dt_debut, dt_fin, dt_pivot = validate_params_pivot(
@@ -62,79 +46,46 @@ async def get_trafics_pivot(
     )
     reel_range, prev_range = split_by_pivot(dt_debut, dt_fin, dt_pivot)
 
-    # Une requête par zone (réel/prév) ; on somme la bonne colonne par objet.
-    plan: list[tuple[tuple[datetime, datetime], str, str]] = []
-    if reel_range is not None:
-        plan.append((reel_range, TRAFIC_COL_CONSTATE, "trafic_brut"))
-    if prev_range is not None:
-        plan.append((prev_range, TRAFIC_COL_PREVISIONNEL, "trafic_previsionnel"))
-
     acc = empty_accumulator()
-    executed: list[tuple[str, dict]] = []
+    traces: list[dict] = []
     raw_rows: list[dict] = []
 
     start = time.perf_counter()
-    try:
-        for (rg_debut, rg_fin), value_col, target_key in plan:
-            for sql, params in build_period_queries(
-                co_regate, rg_debut, rg_fin, value_col, force_jours=is_day
-            ):
-                rows = await run_in_threadpool(databricks.fetch_all, sql, params)
-                raw_rows.extend(rows)
-                accumulate_trafics(rows, target_key, acc)
-                executed.append((sql, params))
-    except Exception as e:
-        logger.error("Erreur requête trafics pivot DSR-679 : %s", e)
-        detail = {
-            "error": True,
-            "message": "Erreur lors de la récupération des trafics.",
-            "code": 500,
-        }
-        if DEBUG_SHOW_QUERY:
-            detail["queries"] = [render_sql(sql, params) for sql, params in executed]
-            detail["databricks_error"] = str(e)
-        raise HTTPException(status_code=500, detail=detail) from e
+    for (rg_debut, rg_fin), value_col, target_key in zones_pivot(reel_range, prev_range):
+        for sql, params in build_period_queries(
+            co_regate, rg_debut, rg_fin, value_col, force_jours=is_day
+        ):
+            trace = await executer_requete_async(sql, params)
+            traces.append(trace)  # tracé AVANT le test : la requête fautive doit y figurer
+            if trace["statut"] == "echec":
+                logger.error("Erreur requête trafics pivot : %s", trace["erreur"])
+                raise erreur_500(
+                    "Erreur lors de la récupération des trafics.", traces, trace["erreur"]
+                )
+            raw_rows.extend(trace["lignes"])
+            accumulate_trafics(trace["lignes"], target_key, acc)
     duration_s = round(time.perf_counter() - start, 3)
 
-    # Réponse non transformée : lignes agrégées brutes renvoyées par Databricks.
     logger.info(
-        "Trafics pivot DSR-679 (co_regate=%s) — réponse non transformée (%d lignes) : %s",
+        "Trafics pivot (co_regate=%s) — réponse non transformée (%d lignes) : %s",
         co_regate,
         len(raw_rows),
         json.dumps(raw_rows, ensure_ascii=False, default=str),
     )
 
-    # Restitution dynamique : uniquement les objets présents dans le résultat SQL. Le libellé
-    # provient de la jointure `g_trppu_obj_mapping` portée par la requête agrégée.
-    trafics = [
-        {
-            "co_produit": objet,
-            "lb_produit": acc[objet]["lb_produit"],
-            "trafic_brut": acc[objet]["trafic_brut"],
-            "trafic_previsionnel": acc[objet]["trafic_previsionnel"],
-        }
-        for objet in sorted(acc)
-    ]
-
-    # Un objet des tables trafics absent du mapping sort avec un libellé nul : on le trace et
-    # on l'expose, plutôt que d'inventer une correspondance (cf. écart PR/PPI vs PQ/EQ).
-    objets_sans_libelle = sorted(
-        objet for objet in acc if acc[objet]["lb_produit"] is None
-    )
-    if objets_sans_libelle:
-        logger.warning(
-            "Objets absents de %s (libellé nul) : %s",
-            OBJ_MAPPING_TABLE,
-            ", ".join(objets_sans_libelle),
-        )
+    trafics = formater_trafics(acc)
+    sans_libelle = objets_sans_libelle(acc)
+    if sans_libelle:
+        # On expose l'objet avec un libellé nul plutôt que d'inventer une correspondance.
+        logger.warning("Objets absents du mapping (libellé nul) : %s", ", ".join(sans_libelle))
 
     logger.info(
-        "Trafics pivot DSR-679 (co_regate=%s) — réponse transformée : %s",
+        "Trafics pivot (co_regate=%s) — réponse transformée : %s",
         co_regate,
         json.dumps(trafics, ensure_ascii=False, default=str),
     )
 
-    # nb_jours (DSR-613)
+    # Le calcul des jours ouvrés (DSR-613) ne doit pas faire échouer la restitution des trafics.
     nb_jours = None
     try:
         nbj = await compute_nb_jours(dt_debut.date(), dt_fin.date())
@@ -156,9 +107,10 @@ async def get_trafics_pivot(
         "is_day": is_day,
         "count": len(trafics),
         "trafics": trafics,
-        "objets_sans_libelle": objets_sans_libelle,
+        "objets_sans_libelle": sans_libelle,
         "nb_jours": nb_jours,
     }
-    if DEBUG_SHOW_QUERY:
-        response["queries"] = [render_sql(sql, params) for sql, params in executed]
+    debug = bloc_debug(traces)
+    if debug is not None:
+        response["debug"] = debug
     return response

@@ -1,29 +1,19 @@
-# yb05 API
+# yb05
 
-Socle technique du module **YB05** : une application FastAPI réduite à l'infrastructure
-commune — connexion MySQL asynchrone (pool, retry, transactions, exécution de scripts
-`.sql`), logging JSON DSR, et routes de santé. Aucune logique métier.
-
-Le projet est extrait de `python/` (module YS04, « trppu API ») dont il reprend les
-conventions à l'identique : mêmes variables d'environnement `SGBD_*`, même format de log,
-mêmes assets Swagger servis en local.
+Socle technique du module **YB05** : une **application console** 
 
 ## Demarrage rapide
 
 ```bash
 cd yb05
-python -m venv .venv
-.venv/Scripts/activate          # Linux/macOS : source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env            # renseigner les SGBD_*
-python -m uvicorn app.main:app --reload
+python -m app.main db-check
 ```
-
-L'API écoute sur http://localhost:8000.
 
 ## Prerequis
 
-- Python >= 3.10
+- Python >= 3.12
 - MySQL (une instance en lecture, une en écriture — ou la même pour les deux)
 
 ## Configuration
@@ -47,7 +37,7 @@ de vérité en cas de doute.
 | `SGBD_RETRY_DELAY` | `1.0` | Délai de base entre tentatives (backoff linéaire : `délai × tentative`) |
 | `SQL_SCRIPT_WARN_SIZE` | `10485760` | Taille (octets) au-delà de laquelle un script `.sql` déclenche un avertissement |
 
-### Application / Logging / CORS
+### Application / Logging
 
 | Variable | Par défaut | Description |
 |---|---|---|
@@ -57,31 +47,57 @@ de vérité en cas de doute.
 | `APP_VERSION` | `1.0.0` | Champ `app_version` des logs |
 | `LOGS_DIR` | `""` | Dossier de logs ; vide = `./logs` |
 | `DEBUG_SHOW_QUERY` | `false` | Trace les requêtes |
-| `CORS_ALLOW_ORIGINS` / `_METHODS` / `_HEADERS` | `*` | Listes séparées par des virgules |
-| `CORS_ALLOW_CREDENTIALS` | `false` | |
 
-## Lancement
+## Commandes console
 
 ```bash
-# Développement
-python -m uvicorn app.main:app --reload
-
-# Docker (port 8000)
-docker compose up --build
+python -m app.main db-info      # infos de connexion configurées + infos du serveur MySQL
+python -m app.main db-check     # disponibilité des instances lecture et écriture
 ```
 
-## Routes disponibles
+| Commande | Description |
+|---|---|
+| `db-info` | Affiche l'identité applicative, l'état de la configuration, les paramètres de connexion **lecture** et **écriture** (mot de passe jamais affiché), puis interroge le serveur : version MySQL, schéma courant, utilisateur, hôte, date serveur et nombre de tables du schéma. |
+| `db-check` | Teste la connectivité réelle des deux instances. Chaque ressource est reportée à `connected`, `error` ou `disconnected`, l'échec étant journalisé en WARNING. |
 
-| Méthode | URL | Description |
-|---|---|---|
-| GET | `/` | Message de bienvenue |
-| GET | `/health` | Vérifie que la configuration MySQL est présente |
-| GET | `/health/resources` | Teste la connectivité réelle des pools lecture et écriture |
-| GET | `/docs` | Swagger UI (assets locaux) |
-| GET | `/redoc` | ReDoc (assets locaux) |
+Options communes :
 
-`/health/resources` ne renvoie jamais d'erreur HTTP : chaque ressource est reportée à
-`connected`, `error` ou `disconnected`, l'échec étant journalisé en WARNING.
+| Option | Effet |
+|---|---|
+| `--json` | Sort le résultat en JSON au lieu du texte (pour chaînage / supervision). |
+| `-v`, `--verbose` | Passe les logs applicatifs en INFO ; par défaut seuls les WARNING sont affichés pour ne pas polluer la sortie. |
+
+**Code de retour** : `0` si la vérification est concluante, `1` sinon — directement
+exploitable par un ordonnanceur ou une probe.
+
+```bash
+$ python -m app.main db-check
+Disponibilité MySQL : ok
+  lecture  : connected
+  écriture : connected
+
+$ python -m app.main db-info --json
+{
+  "application": { "app": "dsr", "env": "sdev", "module": "yb05", "version": "1.0.0" },
+  "config": { "status": "ok", "mysql_config": true },
+  "connexion": { "lecture": { "host": "localhost", "port": 3306, ... }, "ecriture": { ... } },
+  "serveur": { "status": "ok", "version": "8.0.36", "schema_courant": "yb05", "nb_tables": 12 }
+}
+```
+
+Les fonctions sous-jacentes vivent dans `app/health.py` (`check_config`,
+`describe_connection`, `fetch_server_info`, `check_resources`) : elles retournent de simples
+dictionnaires et sont réutilisables depuis un module métier, sans passer par la CLI.
+
+### Docker
+
+```bash
+docker compose build
+docker compose run --rm yb05 db-info
+docker compose run --rm yb05 db-check
+```
+
+Le conteneur exécute une commande puis s'arrête : aucun port n'est exposé.
 
 ## Classe utilitaire Database
 
@@ -91,8 +107,15 @@ configurées avec des hôtes et des identifiants distincts.
 ### Connexion avec pool et retry
 
 Le pool est créé **paresseusement**, au premier appel, avec `SGBD_MAX_RETRIES` tentatives
-et un backoff linéaire. L'application démarre donc même si MySQL est injoignable. Les pools
-sont fermés à l'arrêt de l'application (`lifespan` de `app/main.py`).
+et un backoff linéaire. Le programme démarre donc même si MySQL est injoignable.
+
+Il revient à l'appelant de fermer les pools en fin de traitement — c'est ce que fait la CLI
+dans un `finally` (`app/main.py`) :
+
+```python
+await db_read.disconnect()
+await db_write.disconnect()
+```
 
 ### Requêtes simples
 
@@ -184,9 +207,9 @@ except SqlScriptError as e:
 
 ### Fonctionnement
 
-`setup_logging()` est appelé à l'import de `app/main.py`, avant la création de
-l'application. Un handler console est toujours installé ; le handler fichier n'est activé
-que si `APP_ENV=local` (ou si un dossier est passé explicitement à `setup_logging`).
+`setup_logging()` doit être appelé **explicitement** au démarrage du programme (la CLI le
+fait dans `main()`). Un handler console est toujours installé ; le handler fichier n'est
+activé que si `APP_ENV=local` (ou si un dossier est passé explicitement à `setup_logging`).
 
 Le fichier est nommé `AAAA-MM-JJ.log` dans `LOGS_DIR` (ou `./logs`). Le nom est calculé
 **une seule fois au démarrage** : ce n'est pas une rotation quotidienne, un processus qui
@@ -195,15 +218,14 @@ tourne plusieurs jours continue d'écrire dans le fichier du jour de son démarr
 ### Format des logs (JSON)
 
 ```json
-{"app_datetime": "2026-07-31T07:49:35.874Z", "app_ccx": "dsr", "app_env": "sdev", "app_ptf": "build", "app_tm": "yb05", "app_version": "1.0.0", "severity_label": "INFO", "app_message": ">>> GET /health", "name": "yb05", "filename": "main.py", "lineno": 121}
+{"app_datetime": "2026-07-31T07:49:35.874Z", "app_ccx": "dsr", "app_env": "sdev", "app_ptf": "build", "app_tm": "yb05", "app_version": "1.0.0", "severity_label": "INFO", "app_message": "Commande db-check", "name": "yb05", "filename": "main.py", "lineno": 143}
 ```
 
 ### Ce qui est loggé
 
-- Chaque requête HTTP en entrée (`>>> METHOD /path`) et en sortie (`<<< METHOD /path STATUS (durée)`)
+- La commande exécutée (niveau INFO, visible avec `-v`)
 - Les exceptions non gérées, avec la stack trace
-- Les échecs de validation 422, avec `id_session_ihm` (query param) s'il est présent, pour le regroupement Kibana
-- Les tentatives de connexion MySQL et les health checks en échec
+- Les tentatives de connexion MySQL et les vérifications en échec
 - L'exécution des scripts SQL (début, fin, avertissements DDL, échecs) — l'aperçu des
   instructions est tronqué à 120 caractères et **jamais** le SQL complet, les scripts de
   données pouvant contenir des informations personnelles
@@ -218,7 +240,35 @@ python -m pytest tests/ -k split  # un sous-ensemble
 Les tests ne nécessitent ni base MySQL ni réseau : `aiomysql.connect` est remplacé par des
 doublures et le code async est lancé via `asyncio.run` (pas de dépendance à pytest-asyncio).
 
-## Documentation Swagger
+## Utilisation comme bibliothèque
 
-`/docs` (Swagger UI) et `/redoc` sont servis depuis `app/static/swagger-ui/` et
-fonctionnent **sans accès internet**. Ne pas réintroduire d'URL CDN.
+Le socle s'importe directement depuis un module métier, sans passer par la CLI :
+
+```python
+import asyncio
+
+from app.db.mysql import db_read, db_write
+from app.health import check_resources
+from app.json_formatter import setup_logging
+
+
+async def traitement():
+    if (await check_resources())["status"] != "ok":
+        raise RuntimeError("Base indisponible")
+    await db_write.execute_sql_file("db/schema.sql")
+    return await db_read.fetch_all("SELECT * FROM ma_table")
+
+
+async def main():
+    try:
+        lignes = await traitement()
+        print(len(lignes))
+    finally:
+        await db_read.disconnect()
+        await db_write.disconnect()
+
+
+if __name__ == "__main__":
+    setup_logging()
+    asyncio.run(main())
+```
