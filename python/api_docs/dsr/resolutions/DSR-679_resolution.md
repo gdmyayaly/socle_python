@@ -27,6 +27,7 @@ partition** pour l'optimisation.
   - `routes.py` — endpoint production `GET /trppu-api/trafics/get_trafics_pivot`.
   - `debug.py` — routes de debug/test `GET /trppu-api/trafics/test/*` (jour_check, config,
     queries_preview, schema, schema_raw, objets, echantillons, pivot_dry_run).
+    > Retiré depuis : ces contrôles sont passés en script, cf. § 8.
   - `schemas.py`, `__init__.py`.
   - `api_docs/dsr/news/DSR-679.md`, `api_docs/dsr/resolutions/DSR-679_resolution.md`.
 - **Modifiés**
@@ -166,7 +167,7 @@ lexicographiquement correct, y compris à cheval sur un changement d'année.
    `co_annee_comptage` **et** `co_mois_comptage`, soit exactement les deux prédicats générés.
    `trafic_constate` peut être `null` au même titre que `trafic_prevu` — `SUM()` les ignore.
 
-### Cohérence des 3 tables — contrôle croisé (`GET /test/pivot_test?paire=toutes`)
+### Cohérence des 3 tables — contrôle croisé (`python scripts/controle_trafics_679.py pivot-test --paire toutes`)
 > Rapport à destination du métier / de l'équipe data, avec les requêtes Databricks prêtes à
 > exécuter : **`api_docs/dsr/DSR-679_controle_donnees_gold.md`**.
 
@@ -222,43 +223,35 @@ systématique.
 
 ## 5. Comment tester
 
-### SQL à rejouer en base (aucune exécution Databricks côté API)
+Les contrôles ne sont **pas** exposés par l'API : ce sont des outils de recette, réunis dans
+`scripts/controle_trafics_679.py` (voir § 8). Ils appellent les helpers de production, donc ce
+qu'ils mesurent est ce que l'endpoint renvoie.
+
+### SQL à rejouer en base (aucune exécution Databricks)
 ```
-GET /trppu-api/trafics/test/config           -> tables, colonnes et jointures actives
-GET /trppu-api/trafics/test/queries_preview  -> SQL des 3 cas du ticket + requêtes de contrôle
-GET /trppu-api/trafics/test/queries_preview?co_regate=400300&date_debut=20260210&date_fin=20260715&date_pivot=20260404
-                                             -> cas libre (touche les 3 mailles jour/semaine/mois)
+python scripts/controle_trafics_679.py config                              -> tables, colonnes et jointures actives
+python scripts/controle_trafics_679.py pivot-test --paire toutes --sql-seulement
+python scripts/controle_trafics_679.py pivot-test --co-regate 400300 \
+    --date-debut 20260210 --date-fin 20260715 --date-pivot 20260404 --sql-seulement
 ```
 Chaque SQL est rendue **paramètres substitués** (nombres non quotés) : copier/coller direct
 dans Databricks, puis comparer aux sommes renvoyées par l'endpoint.
 
-### Sans Databricks — route de test (banc d'essai)
+### Contrôles exécutés sur Databricks
 ```
-GET /trppu-api/trafics/test/echantillons        -> échantillons trafics + dimensions
-GET /trppu-api/trafics/test/pivot_dry_run?co_regate=400300&date_debut=20250301&date_fin=20260331&date_pivot=20251001   -> réel + prév
-GET /trppu-api/trafics/test/pivot_dry_run?co_regate=400300&date_debut=20261001&date_fin=20270331&date_pivot=20261001   -> que du prévisionnel
-GET /trppu-api/trafics/test/pivot_dry_run?co_regate=400300   -> 400 (params manquants)
+python scripts/controle_trafics_679.py pivot-test --paire toutes            -> les 3 paires de mailles
+python scripts/controle_trafics_679.py objets --co-regate 400300 --table mois -> objets et niveaux du site
+python scripts/controle_trafics_679.py schema-raw --table g_trppu_obj_mapping --limit 20 -> SELECT * libre
 ```
+`objets` groupe **sans** filtre de niveau : plusieurs niveaux renvoyés
+(`filtre_niveau_necessaire=true`) signifient que le filtre `co_niveau_regroupement_operationnel`
+est ce qui évite le sur-comptage. Les erreurs Databricks sont restituées telles quelles.
 
-### Debug Databricks — identification des colonnes
-```
-GET /trppu-api/trafics/test/jour_check?co_regate=400300   -> sonde maille jour (exécutée)
-GET /trppu-api/trafics/test/jour_check?execute=false      -> même chose, SQL seul
-GET /trppu-api/trafics/test/schema?limit=1&co_regate=400300   -> colonnes réelles des 3 tables
-GET /trppu-api/trafics/test/objets?co_regate=400300&table=mois -> objets et niveaux du site
-GET /trppu-api/trafics/test/schema_raw?table=g_trppu_obj_mapping&limit=20 -> SELECT * libre
-```
-`jour_check` enchaîne 3 requêtes sur `g_trppu_trafics_jour_3` : la sonde `GROUP BY niveau, objet`
-**sans** filtre de niveau (si elle passe, les colonnes sont confirmées ; si elle renvoie
-plusieurs niveaux, le filtre est indispensable), puis les 2 requêtes de production
-(zone réelle / zone prévisionnelle). Les erreurs Databricks sont renvoyées telles quelles.
+Code retour : `0` si tout est cohérent, `1` si une requête échoue ou si une maille diverge de la
+table jour, `2` si les paramètres sont invalides — utilisable tel quel dans un enchaînement de
+recette.
 
-Le dry-run rejoue **exactement** la règle pivot (constaté avant, prévu à partir du pivot), le
-filtre de niveau et l'agrégation par objet en mémoire, sur des cadences journalières codées en
-dur (sommes vérifiables à la main : cadence × nb jours). L'objet sans trafic (IP) est couvert
-— il n'apparaît pas dans le résultat, conformément à la restitution dynamique.
-
-Résultat de référence (`/test/jour_check` sur 400300, 01-03-2025 → 31-03-2026, pivot
+Résultat de référence (maille jour sur 400300, 01-03-2025 → 31-03-2026, pivot
 01-10-2025) — à comparer à la réponse de l'endpoint :
 
 | Objet | trafic_brut (réel) | trafic_previsionnel |
@@ -316,7 +309,7 @@ ORDER BY ABS(COALESCE(s.avec_jointure, 0) - COALESCE(j.sans_jointure, 0)) DESC
 | Période future → que du prévisionnel | `split_by_pivot` (reel=None) |
 | 1 ligne par objet = somme des trafics | `GROUP BY` sur le `co_type_objet` du mapping (restitution dynamique) |
 | Libellé de l'objet | jointure `g_trppu_obj_mapping` pré-regroupée ; `null` + `objets_sans_libelle` si absent |
-| Vérif base trafics & objets | `queries` tracées (DEBUG_SHOW_QUERY) + `/test/jour_check` |
+| Vérif base trafics & objets | `queries` tracées (DEBUG_SHOW_QUERY) + `scripts/controle_trafics_679.py objets` |
 
 ---
 
@@ -385,3 +378,44 @@ routes de debug suivent la trace commune (`statut`, `erreur` au lieu de `error`)
 Bilan : ~1150 lignes supprimées, commentaires réduits aux pièges métier non déductibles du code
 (pré-regroupement du mapping, filtre `co_niveau_regroupement_operationnel`, découpage au jour
 près autour du pivot, pruning porté par l'alias `t`).
+
+---
+
+## 8. Les contrôles passent de l'API au script
+
+`app/routes/trppu_trafics/debug.py` est supprimé : les 4 routes `GET /trppu-api/trafics/test/*`
+(`config`, `objets`, `pivot_test`, `schema_raw`) étaient un outil de recette exposé en
+production, dont `schema_raw` (`SELECT *` sur une table arbitraire) et `pivot_test` (jusqu'à
+12 requêtes Databricks en un appel non authentifié). L'API ne publie plus que
+`GET /trppu-api/trafics/get_trafics_pivot`.
+
+Le même contenu vit désormais dans **`scripts/controle_trafics_679.py`**, à lancer depuis
+`python/` :
+
+| Sous-commande | Équivalent retiré | Objet |
+| ------------- | ----------------- | ----- |
+| `config` | `GET /test/config` | tables, colonnes, jointure et filtre de niveau actifs |
+| `objets --co-regate --table` | `GET /test/objets` | objets, libellés et niveaux de regroupement du site |
+| `pivot-test --paire [--sql-seulement]` | `GET /test/pivot_test` | contrôle croisé de deux mailles (`--sql-seulement` = `execute=false`) |
+| `schema-raw --table --limit [--schema]` | `GET /test/schema_raw` | `SELECT *` libre sur une table |
+
+Ce qui change par rapport aux routes :
+- **synchrone** — plus de `run_in_threadpool` ni d'`async` : le script appelle directement
+  `executer_requete`, `databricks` étant lui-même synchrone ;
+- **sortie JSON sur stdout** (accents inclus : stdout est forcé en UTF-8, la console Windows
+  étant en cp1252 par défaut), redirigeable pour archiver un contrôle ;
+- **code retour exploitable** : `0` cohérent, `1` requête en échec ou maille divergente,
+  `2` paramètres invalides — les 400 levés par `validate_params_pivot` sont interceptés et
+  rendus en message d'erreur, pas en trace Python.
+
+La logique métier n'est pas dupliquée : plages effectives, débordement de maille, chevauchement
+autour du pivot et calcul des écarts sont repris tels quels, et tout le reste (validation,
+découpage pivot, construction SQL, accumulation, libellés) vient de
+`app/routes/trppu_trafics/helpers.py`. Seules ont été retouchées les deux docstrings de
+`helpers.py` qui citaient `debug.py` (`zones_pivot`, `formater_trafics`).
+
+### Également retiré — les routes `/logs`
+`app/routes/logs.py` (`GET /logs/latest`, `DELETE /logs`) est supprimé : téléchargement et
+purge des fichiers de log par HTTP, sans authentification, alors que les logs sont collectés
+côté plateforme. La journalisation elle-même est inchangée (`app/json_formatter.py`, un fichier
+par jour dans `logs/`).

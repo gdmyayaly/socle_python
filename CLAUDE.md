@@ -40,7 +40,7 @@ Swagger UI is at `/docs` and is served from local static assets (`app/static/swa
 - `schemas.py` — Pydantic v2 request/response models
 - `helpers.py` — SQL constants and business logic (e.g. `fetch_scenario_or_404`, `assert_editable`, cascade deletes)
 
-Follow this structure when adding a new domain. Flat modules in `app/routes/` (`trafics.py`, `health.py`, `databricks.py`, `mysql_debug.py`, `logs.py`, `calcl_nbr_jours.py`) are older/utility routes.
+Follow this structure when adding a new domain. Flat modules in `app/routes/` (`health.py`, `databricks.py`, `mysql_debug.py`, `calcl_nbr_jours.py`) are older/utility routes.
 
 **Cross-cutting pieces:**
 - `app/services/jours_fermes_client.py` — external "jours fermés" (closed days) API client with TTL cache; its `JoursFermesAPIError` is mapped to a 503 by a global exception handler in `main.py`. `app/services/jours_service.py` computes working-day counts (`compute_nb_jours`), used when scenario periods change.
@@ -50,4 +50,4 @@ Follow this structure when adding a new domain. Flat modules in `app/routes/` (`
 
 **Docs to consult before changing behavior:** `python/api_docs/` holds per-API specs and `python/api_docs/dsr/` holds integration/resolution notes keyed to Jira tickets (DSR-xxx); `python/jira/` holds the ticket descriptions. When a feature references a DSR number, the matching files there give the expected behavior.
 
-**Scripts:** `python/scripts/` contains generators (Postman collection, Excel import templates for sites/produits/pic) — run standalone, not part of the app.
+**Scripts:** `python/scripts/` holds exactly two standalone tools (not part of the app): `gen_postman_collection.py` (regenerates `postman/trppu_collection.json` from the app's OpenAPI schema) and `controle_trafics_679.py` (gold-data controls, ex-`/trppu-api/trafics/test/*` routes). The Excel template generators for sites/produits/pic were removed.

@@ -110,14 +110,12 @@ Optionnelles : `dt_desactivation`, `motif_desactivation`.
 
 ---
 
-## 3. Génération du template Excel
+## 3. Template Excel attendu
 
-```bash
-python scripts/generate_trppu_produit_template.py
-python scripts/generate_trppu_produit_template.py --output /tmp/produits.xlsx
-```
+> Le générateur `scripts/generate_trppu_produit_template.py` a été supprimé — le fichier se
+> construit à la main, aucune mise en forme n'est imposée par le parseur.
 
-Inclut un format texte sur `co_produit` et un format date `YYYY-MM-DD`
+Format **texte** sur `co_produit` (pas de coercition numérique) et format date `YYYY-MM-DD`
 sur `dt_desactivation`.
 
 ---
@@ -145,7 +143,7 @@ curl -X PUT http://localhost:8080/trppu-api/produits/PR \
 1. **SQL** : `ALTER TABLE trppu_produit ADD COLUMN ...`
 2. **Pydantic** : ajouter le champ dans `ProduitBase` (et `ProduitUpdate`).
 3. **SQL routes** : `SELECT_PRODUIT_SQL`, INSERT du `create_produit`, et `UPSERT_SQL`.
-4. **Excel** : `HEADERS` / `COLUMN_WIDTHS` / `EXAMPLE_ROWS` du script + `EXPECTED_HEADERS` du parser.
+4. **Excel** : ajouter l'en-tête dans `EXPECTED_HEADERS` du parser (`helpers.py`).
 
 ### 4.4 Purge physique (cas exceptionnel)
 
@@ -165,6 +163,4 @@ app/routes/trppu_produit/
 ├── routes.py
 ├── schemas.py
 └── helpers.py
-scripts/
-└── generate_trppu_produit_template.py
 ```

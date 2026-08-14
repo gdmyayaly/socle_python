@@ -25,6 +25,9 @@ from app.routes.trppu_trafics.errors import erreur_400
 
 logger = logging.getLogger(__name__)
 
+# On ne dispatche plus que sur les tables jour et mois (cf. `decompose_auto`). L'entrée
+# `semaines` reste déclarée uniquement pour `scripts/controle_trafics_679.py`, qui compare
+# encore les mailles entre elles.
 TABLES_PERIODE = {
     "jours": os.getenv("TRAFIC679_TABLE_JOUR", "g_trppu_trafics_jour_3"),
     "semaines": os.getenv("TRAFIC679_TABLE_SEMAINE", "g_trppu_trafics_semaine_3"),
@@ -212,32 +215,13 @@ def fetch_libelles_objets(force: bool = False) -> dict[str, str]:
 
 
 # --- Découpage de l'intervalle ------------------------------------------------------------
-def _decompose_semaines_jours(dt_start: datetime, dt_end: datetime):
-    """Découpe un intervalle en semaines complètes (lun-dim) et jours restants."""
-    parts: list[tuple[str, datetime, datetime]] = []
-
-    days_to_monday = (7 - dt_start.weekday()) % 7
-    first_monday = dt_start + timedelta(days=days_to_monday)
-
-    if dt_end.weekday() == 6:
-        last_sunday = dt_end
-    else:
-        last_sunday = dt_end - timedelta(days=dt_end.weekday() + 1)
-
-    if first_monday + timedelta(days=6) <= last_sunday:
-        if dt_start < first_monday:
-            parts.append(("jours", dt_start, first_monday - timedelta(days=1)))
-        parts.append(("semaines", first_monday, last_sunday))
-        if last_sunday < dt_end:
-            parts.append(("jours", last_sunday + timedelta(days=1), dt_end))
-    else:
-        parts.append(("jours", dt_start, dt_end))
-
-    return parts
-
-
 def decompose_auto(dt_debut: datetime, dt_fin: datetime):
-    """Découpe un intervalle en requêtes optimales sur mois / semaines / jours."""
+    """Découpe un intervalle en requêtes optimales sur mois / jours.
+
+    Seules les tables jour et mois sont interrogées : la maille semaine a été retirée du
+    dispatching. Les mois complets partent sur la table mois, les jours des bords (mois
+    partiels de début et de fin) sur la table jour.
+    """
     segments: list[tuple[str, datetime, datetime]] = []
 
     if dt_debut.day == 1:
@@ -255,12 +239,13 @@ def decompose_auto(dt_debut: datetime, dt_fin: datetime):
 
     if mois_start <= mois_end:
         if dt_debut < mois_start:
-            segments.extend(_decompose_semaines_jours(dt_debut, mois_start - timedelta(days=1)))
+            segments.append(("jours", dt_debut, mois_start - timedelta(days=1)))
         segments.append(("mois", mois_start, mois_end))
         if mois_end < dt_fin:
-            segments.extend(_decompose_semaines_jours(mois_end + timedelta(days=1), dt_fin))
+            segments.append(("jours", mois_end + timedelta(days=1), dt_fin))
     else:
-        segments.extend(_decompose_semaines_jours(dt_debut, dt_fin))
+        # Aucun mois complet dans la période : tout part sur la table jour.
+        segments.append(("jours", dt_debut, dt_fin))
 
     return segments
 
@@ -308,7 +293,7 @@ def split_by_pivot(dt_debut, dt_fin, dt_pivot):
     """Découpe la période en (plage réelle, plage prévisionnelle) autour du pivot.
 
     Réel = dates strictement antérieures au pivot, prév = dates >= pivot. Découper au jour près
-    évite toute maille mois/semaine à cheval sur le pivot. Chaque plage est None si vide
+    évite toute maille mois à cheval sur le pivot. Chaque plage est None si vide
     (période entièrement future -> reel=None ; entièrement passée -> prev=None).
     """
     reel = None
@@ -328,8 +313,8 @@ def split_by_pivot(dt_debut, dt_fin, dt_pivot):
 def zones_pivot(reel_range, prev_range, inclure_vides: bool = False):
     """Zones à interroger : (plage, colonne de valeur, clé d'accumulation).
 
-    `inclure_vides=True` garde les zones nulles, dont `debug.py` a besoin pour calculer les
-    plages effectives de maille.
+    `inclure_vides=True` garde les zones nulles, dont `scripts/controle_trafics_679.py` a besoin
+    pour calculer les plages effectives de maille.
     """
     zones = [
         (reel_range, TRAFIC_COL_CONSTATE, "trafic_brut"),
@@ -442,7 +427,7 @@ def build_period_queries(
     value_col: str,
     force_jours: bool = False,
 ) -> list[tuple[str, dict]]:
-    """Une requête agrégée par table (max 3). `force_jours` court-circuite le découpage."""
+    """Une requête agrégée par table (max 2 : jour et mois). `force_jours` force la table jour."""
     segments = (
         [("jours", dt_debut, dt_fin)] if force_jours else decompose_auto(dt_debut, dt_fin)
     )
@@ -461,7 +446,7 @@ def empty_accumulator() -> dict:
 def accumulate_trafics(rows, target_key, acc) -> None:
     """Cumule les lignes `{co_objet_trppu, lb_objet_trppu, somme}` dans `acc[objet][target_key]`.
 
-    Jusqu'à 3 mailles × 2 zones remontent le même objet : on retient le premier libellé non nul.
+    Jusqu'à 2 mailles × 2 zones remontent le même objet : on retient le premier libellé non nul.
     """
     for row in rows:
         objet = row.get(OBJ_ALIAS)
@@ -484,8 +469,9 @@ def accumulate_trafics(rows, target_key, acc) -> None:
 def formater_trafics(acc: dict, libelles: dict[str, str] | None = None) -> list[dict]:
     """Accumulateur -> lignes de sortie, triées par objet.
 
-    Le libellé vient de la jointure ; `libelles` n'est un repli que pour `debug.py` en mode
-    `execute=false`, où la requête n'a pas été exécutée.
+    Le libellé vient de la jointure ; `libelles` n'est un repli que pour
+    `scripts/controle_trafics_679.py` en mode `--sql-seulement`, où la requête n'a pas été
+    exécutée.
     """
     return [
         {

@@ -113,16 +113,13 @@ Lignes orphelines collectées dans `errors` sans bloquer le reste.
 
 ---
 
-## 3. Génération du template Excel
+## 3. Template Excel attendu
 
-```bash
-python scripts/generate_trppu_pic_coefficients_template.py
-python scripts/generate_trppu_pic_coefficients_template.py --output /tmp/picc.xlsx
-```
+> Le générateur `scripts/generate_trppu_pic_coefficients_template.py` a été supprimé — le
+> fichier se construit à la main, aucune mise en forme n'est imposée par le parseur.
 
-Inclut une liste déroulante Excel sur `jour_semaine`, format texte sur
-`co_produit`, format date `YYYY-MM-DD` sur les colonnes de date, et format
-décimal `0.0000` sur les coefficients.
+Valeurs de `jour_semaine` conformes à l'énumération, format **texte** sur `co_produit`, format
+date `YYYY-MM-DD` sur les colonnes de date et format décimal `0.0000` sur les coefficients.
 
 ---
 
@@ -156,14 +153,14 @@ curl -X PUT http://localhost:8080/trppu-api/pic-coefficients/123 \
 
 1. **SQL** : `ALTER TABLE trppu_pic_coefficients MODIFY jour_semaine ENUM('LUN','MAR','MER','JEU','VEN','SAM','DIM') NOT NULL;`
 2. **Pydantic** : ajouter le membre dans `JourSemaineEnum` (`schemas.py`).
-3. **Excel** : ajouter la valeur dans `JOUR_VALUES` du script template.
+3. **Excel** : la nouvelle valeur est acceptée telle quelle dans le fichier uploadé.
 
 ### 4.5 Ajouter une colonne sur `trppu_pic_coefficients`
 
 1. **SQL** : `ALTER TABLE trppu_pic_coefficients ADD COLUMN ...`
 2. **Pydantic** : `PicCoefBase` (et `PicCoefUpdate` si modifiable).
 3. **SQL routes** : `SELECT_PICC_SQL`, INSERT du `create_pic_coef`, et `UPSERT_SQL` (`helpers.py`).
-4. **Excel** : `HEADERS` / `COLUMN_WIDTHS` / `EXAMPLE_ROWS` du script + `EXPECTED_HEADERS` du parser.
+4. **Excel** : ajouter l'en-tête dans `EXPECTED_HEADERS` du parser (`helpers.py`).
 
 ### 4.6 Purge physique (cas exceptionnel)
 
@@ -184,8 +181,6 @@ app/routes/trppu_pic_coefficients/
 ├── routes.py
 ├── schemas.py
 └── helpers.py
-scripts/
-└── generate_trppu_pic_coefficients_template.py
 ```
 
 Branchement dans `app/main.py` :

@@ -203,6 +203,53 @@ except SqlScriptError as e:
   `mysqldump` ne produit pas.
 - Réserver ces méthodes à `db_write` : `db_read` porte des identifiants en lecture seule.
 
+## Scripts métier (`db/`)
+
+Traitements de la chaîne « clés de répartition des PDI », écrits en SQL pur : ils n'ont pas
+d'appelant dans le code du socle et se jouent soit au client `mysql`, soit via
+`db_write.execute_sql_file()`. Les paramètres se règlent **en tête de fichier**, dans des
+variables de session — le fichier entier tournant sur une connexion unique, elles restent
+visibles par toutes ses instructions.
+
+| Ordre | Fichier | Rôle |
+|---|---|---|
+| 1 | `db/DSR-696-698_migration.sql` | Clé unique et index absents du schéma livré. À jouer **une fois**, avant les deux autres. |
+| 2 | `db/DSR-696_site_trafic.sql` | Alimente `trppu_site_trafic` : somme des trafics des PDI actifs par site, pour un référentiel. |
+| 3 | `db/DSR-698_version_cle.sql` | Crée la version de clés d'un site dans `trppu_version_cle` et désactive la précédente. |
+
+```bash
+mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-696-698_migration.sql
+mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-696_site_trafic.sql
+```
+
+Chaque fichier se termine par des requêtes de contrôle correspondant aux critères
+d'acceptation de son ticket (écarts par site, unicité, sites sans PDI actif, unicité de la
+version active). Les deux scripts métier sont **rejouables** : les relancer laisse la base
+dans le même état.
+
+Deux points à connaître avant de les jouer :
+
+- **La migration échappe à la détection de DDL.** Ses `ALTER` sont transportés dans une
+  chaîne exécutée par `PREPARE`/`EXECUTE` — ce qui la rend rejouable, MySQL ne connaissant
+  pas `ADD INDEX IF NOT EXISTS`, mais invisible à `is_ddl`. L'avertissement « DDL en mode
+  transactionnel » ne se déclenchera donc pas alors que le commit implicite a bien lieu :
+  passer explicitement `transactional=False` pour ce fichier.
+- **Vérifier le risque de débordement décimal avant la première exécution de DSR-696.** Les
+  trafics sources sont en `decimal(25,19)` et les totaux cibles en `decimal(24,18)`, soit
+  six chiffres avant la virgule. Un site dont le total dépasse `999999.999999999999999999`
+  fera échouer l'insertion (`ERROR 1264`) :
+
+  ```sql
+  SELECT MAX(t) FROM (
+    SELECT SUM(trafic_colis) t FROM trppu_cles_repartition
+     WHERE id_referentiel = 1 AND date_fin_validite IS NULL GROUP BY co_regate_site) x;
+  ```
+
+Les tickets sources sont dans `docs/`. Attention, `docs/DSR-696.md` spécifie une colonne
+`id_site` qui **n'existe pas** — la table porte `co_regate_site` ; le ticket se contredit
+d'ailleurs, son `SELECT` la nommant correctement. `tests/test_scripts_dsr.py` verrouille ce
+point.
+
 ## Logging
 
 ### Fonctionnement
@@ -239,6 +286,11 @@ python -m pytest tests/ -k split  # un sous-ensemble
 
 Les tests ne nécessitent ni base MySQL ni réseau : `aiomysql.connect` est remplacé par des
 doublures et le code async est lancé via `asyncio.run` (pas de dépendance à pytest-asyncio).
+
+- `tests/test_sql_script.py` — découpage et exécution des scripts (socle).
+- `tests/test_scripts_dsr.py` — scripts métier de `db/` : découpage, ordre des instructions,
+  et surtout confrontation des colonnes insérées à un extrait du schéma réel, recopié dans le
+  test pour ne pas dépendre de l'arborescence du projet voisin.
 
 ## Utilisation comme bibliothèque
 

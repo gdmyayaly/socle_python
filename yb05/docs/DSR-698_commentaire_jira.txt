@@ -1,0 +1,198 @@
+========================================================================
+DSR-698 - Creation d'une version de cles pour un site
+Commentaire de resolution
+========================================================================
+
+
+1. RESUME DU LIVRABLE
+------------------------------------------------------------------------
+
+Script SQL qui cree dans TRPPU_VERSION_CLE le conteneur des cles de
+repartition d'un site pour un referentiel donne, et desactive la
+version active precedente du meme site.
+
+Livre dans le module YB05, en SQL pur, sans code applicatif :
+
+  db/DSR-696-698_migration.sql   index manquants
+                                 (a jouer UNE FOIS, en premier)
+  db/DSR-698_version_cle.sql     le traitement lui-meme
+  tests/test_scripts_dsr.py      controles automatises, sans base
+
+Le script se joue au client mysql, ou via le runner de scripts du
+socle (Database.execute_sql_file).
+
+
+2. PARAMETRES
+------------------------------------------------------------------------
+
+A renseigner en tete du fichier, dans des variables de session :
+
+  SET @id_referentiel := 2;                     -- obligatoire
+  SET @co_regate      := '123456';              -- obligatoire
+  SET @commentaire    := 'Reorganisation DEX';  -- motif metier
+  SET @libelle        := NULL;
+
+Le site est obligatoire, conformement a la regle de gestion du ticket :
+une modification de perimetre PDI ou de trafic n'entraine la creation
+d'une version QUE pour le site concerne.
+
+Note : la colonne libelle varchar(100) existe en base mais n'est pas
+mentionnee par le ticket. Elle est exposee en parametre, a NULL par
+defaut - a alimenter si le metier veut y voir autre chose que le
+commentaire.
+
+
+3. TRAITEMENT
+------------------------------------------------------------------------
+
+Etape 1 - desactivation de la version active precedente du site :
+
+  UPDATE trppu_version_cle
+     SET actif = 'N'
+   WHERE co_regate = @co_regate AND actif = 'O' AND @deja = 0;
+
+Etape 2 - creation de la nouvelle version :
+
+  INSERT INTO trppu_version_cle
+      (id_referentiel, libelle, co_regate, actif, commentaire)
+  SELECT @id_referentiel, @libelle, @co_regate, 'O', @commentaire
+    FROM DUAL WHERE @deja = 0;
+
+Points de conception :
+
+  - DESACTIVATION AUTOMATIQUE DE LA PRECEDENTE. Le ticket ne le precise
+    pas explicitement, mais la colonne actif et la regle "une nouvelle
+    version par changement de perimetre" impliquent qu'un site n'a
+    qu'une seule version active a un instant donne. Sans cela, la
+    lecture d'eligibilite de DSR-701 regle 9
+    (WHERE co_regate = ? AND actif = 'O') renverrait plusieurs lignes
+    et deviendrait ambigue.
+    -> A CONFIRMER PAR LE METIER. Si plusieurs versions actives doivent
+       pouvoir coexister, il suffit de retirer l'UPDATE.
+
+  - REJOUABILITE. La variable @deja memorise, AVANT toute ecriture, si
+    le site possede deja une version active sur ce referentiel. Si oui,
+    le script ne fait rien : ni desactivation, ni creation. Sans ce
+    garde-fou, relancer le script creerait une version de plus a chaque
+    execution, en desactivant la precedente - ce qui fausserait la
+    tracabilite.
+
+  - INSERT ... SELECT ... FROM DUAL WHERE @deja = 0, plutot qu'un
+    WHERE NOT EXISTS : MySQL refuse de lire la table cible d'un INSERT
+    dans son propre SELECT (erreur 1093). D'ou le test deporte sur une
+    variable calculee en amont.
+
+  - id_version_cle (AUTO_INCREMENT) et date_creation
+    (DEFAULT CURRENT_TIMESTAMP) ne sont pas alimentes explicitement.
+
+
+4. AJOUT DE SCHEMA (fichier de migration separe)
+------------------------------------------------------------------------
+
+KEY idx_vc_site_actif (co_regate, actif) sur trppu_version_cle.
+
+La table ne disposait que d'un index sur id_referentiel, alors que les
+deux acces reels portent sur le couple (co_regate, actif) : l'UPDATE de
+desactivation de ce script, et la lecture d'eligibilite de DSR-701
+regle 9. L'index est pose maintenant, tant que la table est vide.
+
+
+5. CONTROLES INTEGRES ET COHERENCE AVEC DSR-701
+------------------------------------------------------------------------
+
+Le script affiche en tete l'etat courant du site : version active
+existante, referentiel qu'elle porte, dernier referentiel connu du
+site, et presence des agregats DSR-696 pour le referentiel demande.
+
+Il se termine par un verdict OK / ANOMALIE : apres execution, le site
+doit avoir EXACTEMENT UNE version active, portant le referentiel
+demande.
+
+Ce controle reprend DSR-701 regle 10, qui exige que le referentiel de
+la version active soit le dernier referentiel du site.
+
+
+6. POINTS A VALIDER
+------------------------------------------------------------------------
+
+a) DESACTIVATION DE LA VERSION PRECEDENTE
+   Choix retenu (voir section 3), a confirmer par le metier.
+
+b) "REFERENTIEL ACTIF" N'EST PAS EXPRIMABLE EN BASE
+   DSR-701 regle 10 cherche le referentiel actif d'un site. Or
+   TRPPU_REFERENTIEL ne comporte que quatre colonnes : id_referentiel,
+   co_regate, date_reference, commentaire.
+
+     - AUCUNE colonne actif : "actif" se reduit a "le plus grand id du
+       site", ce qui interdit de desactiver un referentiel sans en
+       creer un autre ;
+     - co_regate est NULLABLE et sans index : d'eventuels referentiels
+       nationaux (co_regate IS NULL) ne seraient jamais retournes par
+       la requete de la regle 10 ;
+     - aucune date de fin de validite, alors que les tables filles en
+       portent une.
+
+   A arbitrer avant DSR-697 / DSR-701 : soit on aligne la table
+   (colonne actif, index sur co_regate), soit on documente que
+   "actif = dernier id du site" est la definition officielle.
+
+c) LES VERSIONS CREEES NE SERONT RATTACHEES A AUCUN SCENARIO
+   Le module YS04 ne renseigne jamais trppu_scenario.id_referentiel ni
+   id_version_cle : les scenarios sont crees avec 0, valeur qui ne
+   correspond a aucune ligne, et l'absence de cle etrangere fait que
+   rien ne le signale. La duplication de scenario perd egalement ces
+   deux colonnes.
+   C'est l'objet de DSR-700, a cadrer avec YS04.
+
+
+7. COMMENT TESTER
+------------------------------------------------------------------------
+
+  mysql -h <hote> -u <user> -p dsr_mercure_aa \
+      < db/DSR-696-698_migration.sql
+  mysql -h <hote> -u <user> -p dsr_mercure_aa \
+      < db/DSR-698_version_cle.sql
+
+Verifications :
+
+  - la nouvelle version apparait avec actif = 'O', l'ancienne est
+    passee a 'N' ;
+  - le verdict final affiche OK (une seule version active, portant le
+    referentiel demande) ;
+  - relancer le script : aucune version supplementaire ne doit etre
+    creee (rejouabilite) ;
+  - changer @id_referentiel et relancer : une nouvelle version est
+    creee, la precedente est desactivee.
+
+
+8. COUVERTURE DES CRITERES D'ACCEPTATION
+------------------------------------------------------------------------
+
+  CA1 - une version est creee pour un referentiel "site"
+        ............................ OK (@id_referentiel + @co_regate,
+                                        tous deux obligatoires)
+  CA2 - la version possede un identifiant unique
+        ............................ OK (id_version_cle,
+                                        PK AUTO_INCREMENT)
+  CA3 - la version est disponible pour le calcul des cles
+        ............................ OK (actif = 'O', unicite de la
+                                        version active garantie par la
+                                        desactivation, verdict final
+                                        integre au script)
+
+
+9. DEPENDANCES ET SUITE
+------------------------------------------------------------------------
+
+  - DSR-696 doit avoir ete joue pour le meme referentiel : les agregats
+    de TRPPU_SITE_TRAFIC sont le denominateur des cles. Le script le
+    signale dans son etat initial (colonne agregats_dsr696_presents).
+
+  - DSR-697 : le ticket est VIDE dans le depot (fichier 0 octet). C'est
+    lui qui consomme cette version pour produire
+    TRPPU_CLES_REPARTITION_CALCULE. A re-exporter depuis Jira.
+
+  - L'inventaire complet des ecarts releves sur la chaine est dans
+    docs/INCOHERENCES.md du module YB05.
+
+========================================================================

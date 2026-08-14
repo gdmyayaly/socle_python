@@ -119,16 +119,14 @@ Soft delete : positionne `dt_desactivation = NOW()` et `motif_desactivation`
 
 ---
 
-## 3. Génération du template Excel
+## 3. Template Excel attendu
 
-```bash
-python scripts/generate_trppu_pic_version_template.py
-python scripts/generate_trppu_pic_version_template.py --output /tmp/picv.xlsx
-```
+> Le générateur `scripts/generate_trppu_pic_version_template.py` a été supprimé — le fichier se
+> construit à la main, aucune mise en forme n'est imposée par le parseur.
 
-Inclut des listes déroulantes Excel sur `niveau` et `est_par_defaut`,
-un format texte sur `co_regate`, et un format `YYYY-MM-DD HH:MM:SS` sur les
-colonnes datetime.
+Valeurs de `niveau` et `est_par_defaut` conformes à l'énumération (cf. `schemas.py`), format
+**texte** sur `co_regate` (zéros de tête) et format `YYYY-MM-DD HH:MM:SS` sur les colonnes
+datetime.
 
 ---
 
@@ -138,7 +136,7 @@ colonnes datetime.
 
 1. **SQL** : `ALTER TABLE trppu_pic_version MODIFY niveau ENUM('NATIONAL','DEX','SITE','NOUVEAU') NOT NULL;`
 2. **Pydantic** : ajouter le membre dans `NiveauEnum` (`schemas.py`).
-3. **Excel** : ajouter la valeur dans `NIVEAU_VALUES` du script template.
+3. **Excel** : la nouvelle valeur est acceptée telle quelle dans le fichier uploadé.
 
 ### 4.2 Faire pointer la version par défaut sur une autre
 
@@ -168,7 +166,7 @@ curl -X PUT http://localhost:8080/trppu-api/pic-versions/42 \
 1. **SQL** : `ALTER TABLE trppu_pic_version ADD COLUMN ...`
 2. **Pydantic** : ajouter le champ dans `PicVersionBase` (et `PicVersionUpdate`).
 3. **SQL routes** : `SELECT_PICV_SQL`, `INSERT_SQL` (`helpers.py`).
-4. **Excel** : `HEADERS` / `COLUMN_WIDTHS` / `EXAMPLE_ROWS` du script + `EXPECTED_HEADERS` du parser.
+4. **Excel** : ajouter l'en-tête dans `EXPECTED_HEADERS` du parser (`helpers.py`).
 
 ### 4.5 Purge physique (cas exceptionnel)
 
@@ -189,8 +187,6 @@ app/routes/trppu_pic_version/
 ├── routes.py
 ├── schemas.py
 └── helpers.py
-scripts/
-└── generate_trppu_pic_version_template.py
 ```
 
 Branchement dans `app/main.py` :

@@ -1,0 +1,157 @@
+{
+  "execution_time_s": 0.038,
+  "database": "dsr_mercure_aa",
+  "count": 25,
+  "tables": [
+    {
+      "TABLE_NAME": "demande_dsr",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 2,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trafic_staging",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_agrebal_pdi",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 9505,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_api_log",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_cles_repartition",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 22395341,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_cles_repartition_calcule",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_neutralisations",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 11,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_pic_coefficients",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 127,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_pic_coefficients_ko",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 42,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_pic_version",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 6,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_produit",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 8,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_recalcul_log",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_referentiel",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_scenario",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 88,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_scenario_comptages_manuels",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 2,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_scenario_exclusions",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_scenario_pic_coeffs",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_scenario_variations_prev",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 20,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_site",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 77,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_site_trafic",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_suivi_batch",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_tmh",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 245,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_trafic_agrebal",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_trafic_pdi",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    },
+    {
+      "TABLE_NAME": "trppu_version_cle",
+      "TABLE_TYPE": "BASE TABLE",
+      "TABLE_ROWS": 0,
+      "TABLE_COMMENT": ""
+    }
+  ]
+}

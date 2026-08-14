@@ -391,163 +391,6 @@
       ]
     },
     {
-      "name": "Trafics (test DSR-679)",
-      "item": [
-        {
-          "name": "GET /trppu-api/trafics/test/config",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/trppu-api/trafics/test/config",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "trppu-api",
-                "trafics",
-                "test",
-                "config"
-              ]
-            },
-            "description": "Config"
-          }
-        },
-        {
-          "name": "GET /trppu-api/trafics/test/objets",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/trppu-api/trafics/test/objets?",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "trppu-api",
-                "trafics",
-                "test",
-                "objets"
-              ],
-              "query": [
-                {
-                  "key": "co_regate",
-                  "value": "{{co_regate}}",
-                  "disabled": true,
-                  "description": ""
-                },
-                {
-                  "key": "table",
-                  "value": "mois",
-                  "disabled": true,
-                  "description": ""
-                }
-              ]
-            },
-            "description": "Objets"
-          }
-        },
-        {
-          "name": "GET /trppu-api/trafics/test/pivot_test",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/trppu-api/trafics/test/pivot_test?",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "trppu-api",
-                "trafics",
-                "test",
-                "pivot_test"
-              ],
-              "query": [
-                {
-                  "key": "paire",
-                  "value": "jour_mois",
-                  "disabled": true,
-                  "description": ""
-                },
-                {
-                  "key": "co_regate",
-                  "value": "{{co_regate}}",
-                  "disabled": true,
-                  "description": ""
-                },
-                {
-                  "key": "date_debut",
-                  "value": "string",
-                  "disabled": true,
-                  "description": ""
-                },
-                {
-                  "key": "date_fin",
-                  "value": "string",
-                  "disabled": true,
-                  "description": ""
-                },
-                {
-                  "key": "date_pivot",
-                  "value": "string",
-                  "disabled": true,
-                  "description": ""
-                },
-                {
-                  "key": "execute",
-                  "value": "True",
-                  "disabled": true,
-                  "description": ""
-                }
-              ]
-            },
-            "description": "Pivot Test"
-          }
-        },
-        {
-          "name": "GET /trppu-api/trafics/test/schema_raw",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/trppu-api/trafics/test/schema_raw?table=string",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "trppu-api",
-                "trafics",
-                "test",
-                "schema_raw"
-              ],
-              "query": [
-                {
-                  "key": "table",
-                  "value": "string",
-                  "disabled": false,
-                  "description": ""
-                },
-                {
-                  "key": "limit",
-                  "value": "5",
-                  "disabled": true,
-                  "description": ""
-                },
-                {
-                  "key": "schema",
-                  "value": "string",
-                  "disabled": true,
-                  "description": ""
-                }
-              ]
-            },
-            "description": "Schema Raw"
-          }
-        }
-      ]
-    },
-    {
       "name": "Calcul nombre de jours",
       "item": [
         {
@@ -581,54 +424,6 @@
               ]
             },
             "description": "Get Nb Jours"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Logs",
-      "item": [
-        {
-          "name": "GET /logs/latest",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/logs/latest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "logs",
-                "latest"
-              ]
-            },
-            "description": "Download Latest Log"
-          }
-        },
-        {
-          "name": "DELETE /logs",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/logs?",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "logs"
-              ],
-              "query": [
-                {
-                  "key": "keep_today",
-                  "value": "False",
-                  "disabled": true,
-                  "description": "Si true, conserve le fichier du jour intact (utile sous Windows si le handler tient le fichier ouvert)."
-                }
-              ]
-            },
-            "description": "Clean Logs"
           }
         }
       ]
@@ -2540,6 +2335,93 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"id_rh\": \"{{id_rh}}\",\n  \"cle\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "OPTIPACC",
+      "item": [
+        {
+          "name": "POST /trppu-api/optipacc/site-liste-scenarios",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/optipacc/site-liste-scenarios?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "optipacc",
+                "site-liste-scenarios"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Site Liste Scenarios",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codeRegate\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /trppu-api/optipacc/scenario-trafic-brut",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/optipacc/scenario-trafic-brut?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "optipacc",
+                "scenario-trafic-brut"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Scenario Trafic Brut",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codeRegate\": \"string\",\n  \"scenarioId\": 0,\n  \"inclureExclus\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"

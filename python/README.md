@@ -88,7 +88,10 @@ Le serveur démarre sur `http://localhost:8000`.
 | GET     | `/databricks/trafics_semaines?limit=10` | Données de `gold.trafics_semaines` |
 | GET     | `/databricks/trafics_mois?limit=10` | Données de `gold.trafics_mois`    |
 | GET     | `/trppu-api/trafics/get_trafics_pivot` | Trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot |
-| GET     | `/trppu-api/trafics/test/*` | Routes de contrôle des données gold (config, objets, pivot_test, schema_raw) |
+
+> Les contrôles de données gold (config, objets, pivot_test, schema_raw), autrefois exposés en
+> `/trppu-api/trafics/test/*`, sont désormais un script de recette :
+> `python scripts/controle_trafics_679.py --help`.
 
 ### Endpoint `/trppu-api/trafics/get_trafics_pivot`
 

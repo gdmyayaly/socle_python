@@ -182,16 +182,23 @@ async def update_tmh_volume(id_scenario: int, id_tmh: int, payload: TmhVolumeUpd
             # "manuelle" (bl_manuel = 1), cf. DSR-665/648. Une ligne manuelle ne
             # reçoit pas de variation prévisionnelle : le prévisionnel recalculé
             # est réaligné sur la valeur de base (auto-référence SQL).
+            # volume_brut suit le nouveau constaté (compute_volume_brut, DSR-689 RG4) :
+            # écrit ici à partir du volume reçu et de volume_previsionnel — inchangé
+            # par cette requête — plutôt que des colonnes en cours de MAJ, pour ne pas
+            # dépendre de l'ordre d'évaluation des affectations du SET.
             await tx.execute(
                 "UPDATE trppu_tmh SET volume_realise = %s, moyenne_journaliere = %s, "
                 "moyenne_hebdo = %s, motif = %s, bl_manuel = 1, "
-                "volume_previsionnel_recalcule = volume_previsionnel, dt_calcul = NOW() "
+                "volume_previsionnel_recalcule = volume_previsionnel, "
+                "volume_brut = COALESCE(%s, 0) + COALESCE(volume_previsionnel, 0), "
+                "dt_calcul = NOW() "
                 "WHERE id_tmh = %s AND id_scenario = %s",
                 (
                     payload.volume_realise,
                     payload.moyenne_journaliere,
                     payload.moyenne_hebdo,
                     payload.motif,
+                    payload.volume_realise,
                     id_tmh,
                     id_scenario,
                 ),

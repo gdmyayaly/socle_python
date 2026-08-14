@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 _TMH_COLS = (
     "id_tmh, co_produit, volume_realise, volume_previsionnel, "
-    "volume_previsionnel_recalcule, "
+    "volume_previsionnel_recalcule, volume_brut, "
     "moyenne_journaliere, moyenne_hebdo, bl_exclu, bl_manuel, motif"
 )
 SELECT_TMH_SQL = (
@@ -25,6 +25,41 @@ SELECT_TMH_SQL = (
 SELECT_TMH_BY_ID_SQL = (
     f"SELECT {_TMH_COLS} FROM trppu_tmh WHERE id_tmh = %s AND id_scenario = %s"
 )
+
+def resolve_previsionnel_recalcule(
+    volume_previsionnel: int | None, volume_previsionnel_recalcule: int | None
+) -> int | None:
+    """Prévisionnel effectivement stocké : le recalculé s'il est fourni, sinon la base.
+
+    La colonne est nullable et reste NULL sur les lignes antérieures à son
+    introduction ; à l'écriture on la réaligne systématiquement sur
+    `volume_previsionnel` quand le front n'applique aucune variation.
+    """
+    return (
+        volume_previsionnel_recalcule
+        if volume_previsionnel_recalcule is not None
+        else volume_previsionnel
+    )
+
+
+def compute_volume_brut(
+    volume_realise: int | None,
+    volume_previsionnel: int | None,
+    volume_previsionnel_recalcule: int | None,
+) -> int:
+    """Volume brut d'une ligne TMH = constaté + prévisionnel recalculé (DSR-689 RG4).
+
+    Persisté dans `trppu_tmh.volume_brut` à chaque écriture (INSERT comme UPDATE)
+    pour que la colonne — jusqu'ici jamais alimentée — porte enfin la valeur, et
+    que les consommateurs externes (OPTIPACC, batchs) n'aient pas à rejouer la
+    formule. Même repli que `resolve_previsionnel_recalcule` et mêmes COALESCE
+    que `SELECT_VOLUMES_BRUTS_SQL` (app/routes/trppu_optipacc/helpers.py) : les
+    deux valeurs doivent rester égales ligne à ligne.
+    """
+    prev = resolve_previsionnel_recalcule(
+        volume_previsionnel, volume_previsionnel_recalcule
+    )
+    return int(volume_realise or 0) + int(prev or 0)
 
 
 async def resolve_libelles_produits() -> dict[str, str]:
@@ -71,24 +106,28 @@ async def insert_tmh_row(
     `id_rh` : token déjà crypté de l'utilisateur.
     `volume_previsionnel_recalcule` : prévisionnel après variation % (calcul
     front). Absent (None) => réaligné sur `volume_previsionnel` (valeur de base).
+    `volume_brut` : dérivé serveur (constaté + prévisionnel recalculé, DSR-689
+    RG4), jamais reçu du client — il ne peut donc pas diverger des volumes.
     """
-    vpr = (
-        volume_previsionnel_recalcule
-        if volume_previsionnel_recalcule is not None
-        else volume_previsionnel
+    vpr = resolve_previsionnel_recalcule(
+        volume_previsionnel, volume_previsionnel_recalcule
+    )
+    volume_brut = compute_volume_brut(
+        volume_realise, volume_previsionnel, volume_previsionnel_recalcule
     )
     await tx.execute(
         "INSERT INTO trppu_tmh "
         "(id_scenario, co_produit, volume_realise, volume_previsionnel, "
-        " volume_previsionnel_recalcule, "
+        " volume_previsionnel_recalcule, volume_brut, "
         " moyenne_journaliere, moyenne_hebdo, dt_calcul, bl_exclu, bl_manuel, motif, id_rh) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)",
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)",
         (
             id_scenario,
             co_produit,
             volume_realise,
             volume_previsionnel,
             vpr,
+            volume_brut,
             moyenne_journaliere,
             moyenne_hebdo,
             1 if bl_exclu else 0,
@@ -123,6 +162,8 @@ async def update_tmh_row(
     d'appartenance). Met dt_calcul = NOW().
     `volume_previsionnel_recalcule` : absent (None) => réaligné sur
     `volume_previsionnel` ; fourni (pipeline variations) => stocké tel quel.
+    `volume_brut` : recalculé serveur à chaque MAJ (cf. compute_volume_brut), pour
+    ne jamais laisser la colonne désynchronisée des volumes de la ligne.
     """
     existing = await tx.fetch_one(
         "SELECT id_tmh FROM trppu_tmh WHERE id_tmh = %s AND id_scenario = %s",
@@ -130,14 +171,15 @@ async def update_tmh_row(
     )
     if not existing:
         return False
-    vpr = (
-        volume_previsionnel_recalcule
-        if volume_previsionnel_recalcule is not None
-        else volume_previsionnel
+    vpr = resolve_previsionnel_recalcule(
+        volume_previsionnel, volume_previsionnel_recalcule
+    )
+    volume_brut = compute_volume_brut(
+        volume_realise, volume_previsionnel, volume_previsionnel_recalcule
     )
     await tx.execute(
         "UPDATE trppu_tmh SET co_produit = %s, volume_realise = %s, volume_previsionnel = %s, "
-        "volume_previsionnel_recalcule = %s, "
+        "volume_previsionnel_recalcule = %s, volume_brut = %s, "
         "moyenne_journaliere = %s, moyenne_hebdo = %s, bl_exclu = %s, "
         "bl_manuel = %s, motif = %s, id_rh = %s, dt_calcul = NOW() "
         "WHERE id_tmh = %s AND id_scenario = %s",
@@ -146,6 +188,7 @@ async def update_tmh_row(
             volume_realise,
             volume_previsionnel,
             vpr,
+            volume_brut,
             moyenne_journaliere,
             moyenne_hebdo,
             1 if bl_exclu else 0,

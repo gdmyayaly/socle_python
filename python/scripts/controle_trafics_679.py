@@ -1,24 +1,37 @@
-"""DSR-679 — Routes de debug et de contrôle des données gold TRPPU.
+"""DSR-679 — Contrôle des données gold TRPPU, en ligne de commande.
 
-- `/test/config`     : tables, colonnes et filtres réellement utilisés par la requête
-- `/test/objets`     : objets et niveaux de regroupement présents pour un site
-- `/test/pivot_test` : contrôle croisé de deux mailles sur le même jeu de données
-- `/test/schema_raw` : `SELECT *` libre sur une table (introspection)
+Reprend les anciennes routes `GET /trppu-api/trafics/test/*`, retirées de l'API : ces contrôles
+sont un outil de recette, pas une surface exposée. Le script rejoue **exactement** les helpers de
+production (`app/routes/trppu_trafics/helpers.py`), donc ce qu'il mesure est ce que l'endpoint
+renvoie.
 
-Contrairement à l'endpoint de production, ces routes exposent toujours le SQL et l'erreur
-Databricks : c'est leur raison d'être.
+Usage (depuis `python/`) :
+    python scripts/controle_trafics_679.py config
+    python scripts/controle_trafics_679.py objets --co-regate 400300 --table mois
+    python scripts/controle_trafics_679.py pivot-test --paire toutes
+    python scripts/controle_trafics_679.py pivot-test --paire jour_mois --sql-seulement
+    python scripts/controle_trafics_679.py schema-raw --table g_trppu_obj_mapping --limit 20
+
+Sortie : JSON sur stdout (redirigeable pour archiver un contrôle).
+Code retour : 0 = OK, 1 = incohérence ou requête en échec, 2 = paramètres invalides.
 """
 
-import logging
+from __future__ import annotations
+
+import argparse
+import json
+import sys
 from calendar import monthrange
 from datetime import timedelta
+from pathlib import Path
 
-from fastapi import APIRouter
-from starlette.concurrency import run_in_threadpool
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA
-from app.routes.trppu_trafics.errors import erreur_400
-from app.routes.trppu_trafics.helpers import (
+from fastapi import HTTPException  # noqa: E402
+
+from app.config import DATABRICKS_CATALOG, DATABRICKS_SCHEMA  # noqa: E402
+from app.routes.trppu_trafics.helpers import (  # noqa: E402
     DATE_COLUMN_PERIODE,
     MAPPING_COL_CLE,
     MAPPING_COL_OBJET,
@@ -39,7 +52,6 @@ from app.routes.trppu_trafics.helpers import (
     build_query,
     empty_accumulator,
     executer_requete,
-    executer_requete_async,
     fetch_libelles_objets,
     fmt_date,
     formater_trafics,
@@ -50,13 +62,9 @@ from app.routes.trppu_trafics.helpers import (
     zones_pivot,
 )
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/trppu-api/trafics/test", tags=["Trafics (test DSR-679)"])
-
 SITE_TEST = "400300"
 
-# Paires de mailles contrôlées par /test/pivot_test. Chaque plage par défaut est alignée sur la
+# Paires de mailles contrôlées par `pivot-test`. Chaque plage par défaut est alignée sur la
 # maille concernée pour que les deux tables couvrent exactement les mêmes journées.
 PAIRES_PIVOT = {
     "jour_mois": {
@@ -80,7 +88,9 @@ PAIRES_PIVOT = {
 }
 
 
-def _config_effective() -> dict:
+# --- config -------------------------------------------------------------------------------
+def config_effective() -> dict:
+    """Tables, colonnes et jointures réellement utilisées par la requête de production."""
     return {
         "catalog": DATABRICKS_CATALOG,
         "schema_gold": DATABRICKS_SCHEMA,
@@ -96,7 +106,7 @@ def _config_effective() -> dict:
             "query": build_libelles_query(),
             "note": (
                 "portés par la jointure de la requête agrégée ; cette lecture séparée "
-                "(mise en cache) sert au debug et à la création auto des produits"
+                "(mise en cache) sert au contrôle et à la création auto des produits"
             ),
         },
         "filtre_niveau": {
@@ -116,15 +126,9 @@ def _config_effective() -> dict:
     }
 
 
-@router.get("/config")
-def config():
-    """DEBUG — configuration effective de la requête DSR-679."""
-    return _config_effective()
-
-
-@router.get("/objets")
-def objets(co_regate: str = SITE_TEST, table: str = "mois"):
-    """DEBUG — objets, libellés et niveaux de regroupement présents pour un site.
+# --- objets -------------------------------------------------------------------------------
+def controle_objets(co_regate: str, table: str) -> dict:
+    """Objets, libellés et niveaux de regroupement présents pour un site.
 
     Plus d'un niveau signifie que le filtre `co_niveau_regroupement_operationnel` est ce qui
     évite un sur-comptage. Les objets sans libellé sont ceux absents du mapping.
@@ -165,6 +169,7 @@ def objets(co_regate: str = SITE_TEST, table: str = "mois"):
     return resultat
 
 
+# --- pivot-test ---------------------------------------------------------------------------
 def _plage_effective(rng, periode: str):
     """Jours réellement couverts par les mailles qui intersectent `rng`.
 
@@ -196,7 +201,7 @@ def _debordement(rng, periode: str) -> str:
 def _chevauchement(reel, prev, periode: str):
     """Signale une maille à cheval sur le pivot, donc présente dans les deux zones.
 
-    Artefact de ce test, qui force une maille grossière sur toute la période : l'endpoint de
+    Artefact de ce contrôle, qui force une maille grossière sur toute la période : l'endpoint de
     production découpe au jour près avant de choisir la maille.
     """
     if reel is None or prev is None or periode == "jours":
@@ -215,7 +220,7 @@ def _ecart(reference, valeur) -> dict:
     return {"delta": delta, "pct": round(100 * delta / reference, 2) if reference else None}
 
 
-async def _sommes_par_objet(periode, co_regate, zones, execute):
+def _sommes_par_objet(periode, co_regate, zones, execute):
     """Exécute les 2 requêtes (zone réelle / prévisionnelle) d'une maille et cumule par objet."""
     acc = empty_accumulator()
     requetes: list[dict] = []
@@ -229,7 +234,7 @@ async def _sommes_par_objet(periode, co_regate, zones, execute):
             "bornes_maille": [fmt_date(rng[0], periode), fmt_date(rng[1], periode)],
         }
         if execute:
-            trace = await executer_requete_async(sql, params)
+            trace = executer_requete(sql, params)
             if trace["statut"] == "ok":
                 accumulate_trafics(trace["lignes"], target_key, acc)
             detail.update(trace)
@@ -239,27 +244,26 @@ async def _sommes_par_objet(periode, co_regate, zones, execute):
     return acc, requetes
 
 
-@router.get("/pivot_test")
-async def pivot_test(
+def pivot_test(
     paire: str = "jour_mois",
     co_regate: str = SITE_TEST,
     date_debut: str | None = None,
     date_fin: str | None = None,
     date_pivot: str | None = None,
     execute: bool = True,
-):
-    """DEBUG — contrôle croisé de deux mailles sur le même jeu de données.
+) -> dict:
+    """Contrôle croisé de deux mailles sur le même jeu de données.
 
-    `paire` = `jour_mois` (défaut) | `jour_semaine` | `semaine_mois` | `toutes`.
+    `paire` = `jour_mois` | `jour_semaine` | `semaine_mois` | `toutes`.
 
     L'endpoint de production découpe la période entre les 3 tables ; ici chaque maille de la
     paire est forcée à couvrir toute la période, puis confrontée à la table jour sur sa plage
-    effective. `execute=false` renvoie le SQL sans toucher Databricks. `mailles_coherentes` vaut
-    `true` quand tous les écarts par objet sont nuls.
+    effective. `execute=False` rend le SQL sans toucher Databricks. `mailles_coherentes` vaut
+    `True` quand tous les écarts par objet sont nuls.
     """
     if paire == "toutes":
         resultats = {
-            nom: await pivot_test(
+            nom: pivot_test(
                 paire=nom, co_regate=co_regate, date_debut=date_debut,
                 date_fin=date_fin, date_pivot=date_pivot, execute=execute,
             )
@@ -273,11 +277,6 @@ async def pivot_test(
             ),
         }
 
-    if paire not in PAIRES_PIVOT:
-        raise erreur_400(
-            f"paire inconnue '{paire}'. Valeurs : {', '.join(PAIRES_PIVOT)}, toutes."
-        )
-
     config_paire = PAIRES_PIVOT[paire]
     defaut = config_paire["defaut"]
     pre_rempli = not (date_debut or date_fin or date_pivot)
@@ -289,12 +288,12 @@ async def pivot_test(
         date_pivot or defaut["date_pivot"],
     )
     reel_range, prev_range = split_by_pivot(dt_debut, dt_fin, dt_pivot)
-    libelles = await run_in_threadpool(fetch_libelles_objets) if execute else {}
+    libelles = fetch_libelles_objets() if execute else {}
 
     par_maille: dict[str, dict] = {}
     for periode in config_paire["mailles"]:
         zones = zones_pivot(reel_range, prev_range, inclure_vides=True)
-        acc, requetes = await _sommes_par_objet(periode, co_regate, zones, execute)
+        acc, requetes = _sommes_par_objet(periode, co_regate, zones, execute)
 
         zones_eff = [
             (_plage_effective(rng, periode), col, cle) for rng, col, cle in zones
@@ -302,7 +301,7 @@ async def pivot_test(
         if periode == "jours":
             acc_ref, requetes_ref = acc, []
         else:
-            acc_ref, requetes_ref = await _sommes_par_objet("jours", co_regate, zones_eff, execute)
+            acc_ref, requetes_ref = _sommes_par_objet("jours", co_regate, zones_eff, execute)
 
         par_maille[periode] = {
             "table": fqtn(TABLES_PERIODE[periode]),
@@ -373,12 +372,100 @@ async def pivot_test(
     }
 
 
-@router.get("/schema_raw")
-async def schema_raw(table: str, limit: int = 5, schema: str | None = None):
-    """DEBUG — `SELECT *` libre sur une table (nom court résolu dans `schema`, ou FQTN)."""
+# --- schema-raw ---------------------------------------------------------------------------
+def schema_raw(table: str, limit: int = 5, schema: str | None = None) -> dict:
+    """`SELECT *` libre sur une table (nom court résolu dans `schema`, ou FQTN)."""
     limit = max(1, min(int(limit), 100))
     table_fqtn = table if "." in table else fqtn(table, schema)
-    resultat = await executer_requete_async(f"SELECT * FROM {table_fqtn} LIMIT {limit}")
+    resultat = executer_requete(f"SELECT * FROM {table_fqtn} LIMIT {limit}")
     if resultat["statut"] == "ok":
         resultat["colonnes"] = list(resultat["lignes"][0].keys()) if resultat["lignes"] else []
     return {"table": table_fqtn, **resultat}
+
+
+# --- CLI ----------------------------------------------------------------------------------
+def _statuts(noeud) -> list[str]:
+    """Statuts de toutes les requêtes exécutées, à n'importe quelle profondeur du résultat."""
+    if isinstance(noeud, dict):
+        trouves = [noeud["statut"]] if "statut" in noeud and "sql" in noeud else []
+        return trouves + [s for v in noeud.values() for s in _statuts(v)]
+    if isinstance(noeud, list):
+        return [s for v in noeud for s in _statuts(v)]
+    return []
+
+
+def _code_retour(resultat: dict) -> int:
+    """1 si une requête a échoué ou si les mailles divergent, 0 sinon."""
+    if "echec" in _statuts(resultat):
+        return 1
+    return 1 if resultat.get("mailles_coherentes") is False else 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Contrôle des données gold TRPPU (DSR-679).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    sous = parser.add_subparsers(dest="commande", required=True)
+
+    sous.add_parser("config", help="tables, colonnes et jointures actives")
+
+    p_objets = sous.add_parser("objets", help="objets et niveaux de regroupement d'un site")
+    p_objets.add_argument("--co-regate", default=SITE_TEST)
+    p_objets.add_argument("--table", default="mois", choices=["jour", "semaine", "mois"])
+
+    p_pivot = sous.add_parser("pivot-test", help="contrôle croisé de deux mailles")
+    p_pivot.add_argument("--paire", default="jour_mois", choices=[*PAIRES_PIVOT, "toutes"])
+    p_pivot.add_argument("--co-regate", default=SITE_TEST)
+    p_pivot.add_argument("--date-debut", help="AAAAMMJJ (défaut : plage alignée sur la paire)")
+    p_pivot.add_argument("--date-fin", help="AAAAMMJJ")
+    p_pivot.add_argument("--date-pivot", help="AAAAMMJJ")
+    p_pivot.add_argument(
+        "--sql-seulement",
+        action="store_true",
+        help="rend le SQL sans interroger Databricks",
+    )
+
+    p_schema = sous.add_parser("schema-raw", help="SELECT * libre sur une table")
+    p_schema.add_argument("--table", required=True, help="nom court ou catalogue.schéma.table")
+    p_schema.add_argument("--limit", type=int, default=5)
+    p_schema.add_argument("--schema", help="schéma si le nom de table est court")
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    # Console Windows en cp1252 par défaut : sans cela, les accents du JSON cassent la sortie.
+    sys.stdout.reconfigure(encoding="utf-8")
+
+    try:
+        if args.commande == "config":
+            resultat = config_effective()
+        elif args.commande == "objets":
+            resultat = controle_objets(args.co_regate, args.table)
+        elif args.commande == "pivot-test":
+            resultat = pivot_test(
+                paire=args.paire,
+                co_regate=args.co_regate,
+                date_debut=args.date_debut,
+                date_fin=args.date_fin,
+                date_pivot=args.date_pivot,
+                execute=not args.sql_seulement,
+            )
+        else:
+            resultat = schema_raw(args.table, args.limit, args.schema)
+    except HTTPException as exc:
+        # Les helpers valident les paramètres en levant un 400 : ici c'est une erreur d'appel.
+        detail = exc.detail
+        message = detail.get("message") if isinstance(detail, dict) else str(detail)
+        print(f"Paramètres invalides : {message}", file=sys.stderr)
+        return 2
+
+    print(json.dumps(resultat, ensure_ascii=False, indent=2, default=str))
+    return _code_retour(resultat)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

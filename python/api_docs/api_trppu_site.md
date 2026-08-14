@@ -99,18 +99,15 @@ Réponse `BulkUploadResult` :
 
 ---
 
-## 3. Génération du template Excel
+## 3. Template Excel attendu
 
-```bash
-python scripts/generate_trppu_site_template.py
-python scripts/generate_trppu_site_template.py --output /tmp/sites.xlsx
-```
+> Le générateur `scripts/generate_trppu_site_template.py` a été supprimé — le fichier se
+> construit à la main, aucune mise en forme n'est imposée par le parseur.
 
-Produit un fichier avec :
+Le classeur doit porter :
 - 4 colonnes (`co_regate`, `lb_regate`, `type_site`, `co_roc`)
-- 3 lignes d'exemple
-- Format texte sur `co_regate`, `co_roc` et `type_site` (préserve les zéros / pas de coercition)
-- Une feuille « notice » avec les instructions
+- Format **texte** sur `co_regate`, `co_roc` et `type_site` : un format numérique perdrait les
+  zéros de tête des codes régate
 
 Colonnes obligatoires à l'upload : `co_regate`, `type_site`, `co_roc`. La colonne `lb_regate` est optionnelle.
 
@@ -128,7 +125,7 @@ est acceptée. Aucun changement de code n'est nécessaire.
 1. **SQL** : `ALTER TABLE trppu_site ADD COLUMN ...`
 2. **Pydantic** : ajouter le champ dans `SiteBase` (et `SiteUpdate` si modifiable).
 3. **SQL routes** : mettre à jour `SELECT_SITE_SQL`, l'`INSERT` du `create_site`, et `UPSERT_SQL` (`helpers.py`).
-4. **Excel** : ajouter la colonne dans `HEADERS` / `COLUMN_WIDTHS` / `EXAMPLE_ROWS` du script template, et dans `EXPECTED_HEADERS` du parser (`helpers.py`).
+4. **Excel** : ajouter la colonne dans `EXPECTED_HEADERS` du parser (`helpers.py`).
 
 ### 4.3 Re-upload après correction d'erreurs
 
@@ -154,8 +151,6 @@ app/routes/trppu_site/
 ├── routes.py          # endpoints FastAPI
 ├── schemas.py         # Pydantic v2 (SiteCreate, SiteUpdate, SiteOut, BulkUploadResult…)
 └── helpers.py         # parsing Excel (openpyxl) + UPSERT_SQL
-scripts/
-└── generate_trppu_site_template.py
 ```
 
 Branchement dans `app/main.py` :

@@ -1,0 +1,234 @@
+========================================================================
+DSR-696 - Calcul et alimentation des trafics agreges par site
+Commentaire de resolution
+========================================================================
+
+
+1. RESUME DU LIVRABLE
+------------------------------------------------------------------------
+
+Script SQL qui alimente TRPPU_SITE_TRAFIC a partir de
+TRPPU_CLES_REPARTITION : pour un referentiel donne (et optionnellement
+un seul site), la somme des trafics colis / oo / 3s / potentiel IP des
+PDI actifs, agregee par site.
+
+Livre dans le module YB05, en SQL pur, sans code applicatif :
+
+  db/DSR-696-698_migration.sql   contraintes et index manquants
+                                 (a jouer UNE FOIS, en premier)
+  db/DSR-696_site_trafic.sql     le traitement lui-meme
+  tests/test_scripts_dsr.py      controles automatises, sans base
+
+Le script se joue au client mysql, ou via le runner de scripts du
+socle (Database.execute_sql_file).
+
+
+2. PARAMETRES
+------------------------------------------------------------------------
+
+A renseigner en tete du fichier, dans des variables de session :
+
+  SET @id_referentiel := 1;      -- obligatoire
+  SET @co_regate      := NULL;   -- '123456' pour un seul site,
+                                 -- NULL pour tout le referentiel
+
+Le filtre par site a ete ajoute par rapport au ticket, pour coller a la
+regle de gestion de DSR-698 ("exclusivement pour le site concerne") :
+un changement de perimetre sur un seul site n'oblige pas a recalculer
+tout le referentiel.
+
+
+3. TRAITEMENT
+------------------------------------------------------------------------
+
+Etape 1 - purge du perimetre :
+
+  DELETE FROM trppu_site_trafic
+   WHERE id_referentiel = @id_referentiel
+     AND (@co_regate IS NULL OR co_regate_site = @co_regate);
+
+Etape 2 - calcul des agregats :
+
+  INSERT INTO trppu_site_trafic
+      (id_referentiel, co_regate_site, trafic_colis_total,
+       trafic_oo_total, trafic_3s_total, potentielip_total,
+       date_debut_validite, date_fin_validite)
+  SELECT id_referentiel, co_regate_site,
+         SUM(trafic_colis), SUM(trafic_oo), SUM(trafic_3s),
+         SUM(COALESCE(potentielip, 0)),
+         MIN(date_debut_validite), NULL
+    FROM trppu_cles_repartition
+   WHERE id_referentiel = @id_referentiel
+     AND date_fin_validite IS NULL
+     AND (@co_regate IS NULL OR co_regate_site = @co_regate)
+   GROUP BY id_referentiel, co_regate_site;
+
+Points de conception :
+
+  - DELETE puis INSERT, et NON "INSERT ... ON DUPLICATE KEY UPDATE".
+    C'est cette sequence qui satisfait le CA4 : un site dont tous les
+    PDI ont ete clotures depuis le dernier calcul doit DISPARAITRE de
+    la table. Un upsert y laisserait sa ligne, avec un total perime.
+
+  - Le DELETE est filtre sur le referentiel : les autres referentiels
+    ne sont jamais touches (RG4, historisation).
+
+  - COALESCE(potentielip, 0) : c'est la seule des quatre colonnes
+    sources qui soit nullable, alors que la cible potentielip_total est
+    NOT NULL.
+
+  - Le script est REJOUABLE : deux executions consecutives laissent la
+    table dans le meme etat.
+
+
+4. ECART ENTRE LE TICKET ET LA BASE - POINT IMPORTANT
+------------------------------------------------------------------------
+
+Le ticket specifie la structure cible
+    TRPPU_SITE_TRAFIC (id_site, id_referentiel, ...)
+et ecrit
+    INSERT INTO trppu_site_trafic (id_site, ...)
+
+LA COLONNE id_site N'EXISTE PAS. La table porte co_regate_site
+(varchar(10)). Le ticket se contredit d'ailleurs lui-meme : son propre
+SELECT liste bien co_regate_site.
+
+Recopie tel quel, l'INSERT du ticket echoue en
+ERROR 1054 (Unknown column 'id_site').
+
+Le script livre utilise les noms reels. Un test de non-regression
+verifie qu'aucun script ne reintroduit ce nom, et confronte l'ensemble
+de la liste d'insertion au schema reel.
+
+Autre ecart, sans consequence fonctionnelle : la source
+trppu_cles_repartition.co_regate_site est un char(6), la cible un
+varchar(10).
+
+
+5. AJOUTS DE SCHEMA (fichier de migration separe)
+------------------------------------------------------------------------
+
+a) UNIQUE KEY uq_site_trafic (id_referentiel, co_regate_site)
+
+   Le CA2 ("une seule ligne par site + id_referentiel") ne reposait sur
+   RIEN : la table n'a que sa PK auto-incrementee, aucune cle unique.
+   L'invariant n'etait garanti que par la sequence DELETE / INSERT ;
+   deux executions concurrentes le violaient silencieusement.
+   Avec la contrainte, le CA2 est vrai par construction.
+
+b) KEY idx_cr_ref_actif
+       (id_referentiel, date_fin_validite, co_regate_site)
+   sur trppu_cles_repartition
+
+   La table porte 22 395 341 lignes et ne dispose que de
+   PRIMARY KEY (id) et UNIQUE (id_pdi, id_referentiel) : AUCUN index ne
+   commence par id_referentiel, aucun ne porte date_fin_validite. La
+   requete d'agregation balayait donc l'integralite de la table a
+   chaque execution, puis triait pour le GROUP BY - a l'oppose du
+   benefice annonce par le ticket (CA6 : reduire les temps de calcul).
+
+   L'ordre des colonnes suit la requete : egalite sur id_referentiel,
+   test IS NULL sur date_fin_validite, puis co_regate_site qui porte a
+   la fois le filtre site et le GROUP BY, resolu par l'index sans tri.
+
+Ces ALTER sont dans un fichier separe car MySQL effectue un COMMIT
+IMPLICITE sur le DDL : les deux scripts de donnees restent, eux,
+entierement annulables.
+
+
+6. POINT A VALIDER AVANT LA PREMIERE EXECUTION
+------------------------------------------------------------------------
+
+RISQUE DE DEBORDEMENT DECIMAL.
+
+Les trafics sources sont en decimal(25,19), les totaux cibles en
+decimal(24,18) - soit SIX CHIFFRES avant la virgule, maximum
+999999.999999999999999999. Or on y ecrit la SOMME de valeurs qui
+peuvent elles-memes atteindre ce plafond.
+
+Un site dont le total depasse le seuil fera echouer l'insertion
+(ERROR 1264, Out of range value) en mode strict, ou sera tronque
+silencieusement sinon.
+
+Controle a jouer avant tout chargement, sur un referentiel reel :
+
+  SELECT MAX(t) FROM (
+    SELECT SUM(trafic_colis) t FROM trppu_cles_repartition
+     WHERE id_referentiel = 1 AND date_fin_validite IS NULL
+     GROUP BY co_regate_site) x;
+
+Si le maximum approche 999999, il faut elargir les trois colonnes
+trafic_*_total avant de charger. L'elargissement n'a pas ete inclus par
+defaut : il modifie le schema sans qu'on sache encore s'il est
+necessaire.
+
+Question associee pour l'equipe data : dix-neuf decimales pour un
+trafic laissent penser que ces colonnes portent deja des ratios plutot
+que des volumes. La semantique conditionne l'interpretation des totaux.
+
+
+7. COMMENT TESTER
+------------------------------------------------------------------------
+
+  mysql -h <hote> -u <user> -p dsr_mercure_aa \
+      < db/DSR-696-698_migration.sql
+  mysql -h <hote> -u <user> -p dsr_mercure_aa \
+      < db/DSR-696_site_trafic.sql
+
+Le script se termine par les requetes de controle des criteres
+d'acceptation ; il n'y a rien a ecrire de plus :
+
+  - ecarts site par site entre l'agregat et la somme calculee
+    directement sur la source : toutes les colonnes ecart_* doivent
+    valoir 0 ;
+  - doublons (site + referentiel) : doit renvoyer 0 ligne ;
+  - sites charges sans PDI actif : doit renvoyer 0 ligne ;
+  - recapitulatif par referentiel, pour verifier l'historisation.
+
+Verifier aussi l'idempotence en relancant le script : la table doit
+etre inchangee.
+
+Sur le gain de performance, comparer l'EXPLAIN de la requete
+d'agregation avant et apres la migration : le type doit passer de ALL
+(22,4 M lignes) a ref / range sur idx_cr_ref_actif.
+
+
+8. COUVERTURE DES CRITERES D'ACCEPTATION
+------------------------------------------------------------------------
+
+  CA1 - tous les sites de TRPPU_CLES_REPARTITION presents
+        ............................ OK (GROUP BY + controle d'ecart)
+  CA2 - une seule ligne par site + id_referentiel
+        ............................ OK (DELETE/INSERT + cle unique
+                                        ajoutee par la migration)
+  CA3 - sommes exactement egales a la somme des PDI du site
+        ............................ OK (controle d'ecart integre)
+  CA4 - sites sans PDI actif non charges
+        ............................ OK (DELETE prealable +
+                                        date_fin_validite IS NULL)
+  CA5 - agregats historises par referentiel
+        ............................ OK (DELETE cible sur le seul
+                                        referentiel recalcule)
+  CA6 - clefs calculables sans recalcul des sommes
+        ............................ OK (table alimentee une fois par
+                                        referentiel ; l'index ajoute
+                                        est ce qui rend le gain reel)
+
+
+9. DEPENDANCES ET SUITE
+------------------------------------------------------------------------
+
+  - DSR-697 : le ticket est VIDE dans le depot (fichier 0 octet). C'est
+    le maillon qui consomme cette table pour calculer
+    TRPPU_CLES_REPARTITION_CALCULE. A re-exporter depuis Jira.
+
+  - Nom de table : les specifications ecrivent
+    TRPPU_CLE_REPARTITION_CALCULE (singulier) ; la table reelle est
+    trppu_cles_repartition_calcule (pluriel).
+
+  - L'inventaire complet des ecarts releves sur la chaine (referentiel
+    actif non exprimable, scenarios YS04 sans id_referentiel, absence
+    de contraintes sur trppu_cles_repartition_calcule, etc.) est dans
+    docs/INCOHERENCES.md du module YB05.
+
+========================================================================

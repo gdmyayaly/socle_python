@@ -51,9 +51,13 @@ Fichiers : `app/routes/trppu_tmh/{routes,helpers}.py`.
 
 | Endpoint | DSR | Données reçues | Persisté |
 | --- | --- | --- | --- |
-| `PUT /scenarios/{id}/tmh` | 648/659 | tmh[]{co_produit, volume_realise?, volume_previsionnel?, moyenne_journaliere, moyenne_hebdo, exclusion, manuel}, id_rh | upsert `trppu_tmh`: volume_realise, volume_previsionnel, moyenne_journaliere, moyenne_hebdo, bl_exclu, bl_manuel, id_rh🔒, dt_calcul🧮(NOW) |
-| `PATCH /scenarios/{id}/tmh/{co_produit}` | 649 | volume_realise, moyenne_journaliere, moyenne_hebdo | volume_realise, moyenne_journaliere, moyenne_hebdo, **bl_manuel=1**🧮, dt_calcul🧮(NOW) — ne touche pas volume_previsionnel/bl_exclu |
-| `GET /scenarios/{id}/tmh` | 650 | id_session_ihm? | 🔎 lecture seule |
+| `PUT /scenarios/{id}/tmh` | 648/659 | tmh[]{co_produit, volume_realise?, volume_previsionnel?, volume_previsionnel_recalcule?, moyenne_journaliere, moyenne_hebdo, exclusion, manuel}, id_rh | upsert `trppu_tmh`: volume_realise, volume_previsionnel, volume_previsionnel_recalcule(repli🧮), **volume_brut🧮**, moyenne_journaliere, moyenne_hebdo, bl_exclu, bl_manuel, id_rh🔒, dt_calcul🧮(NOW) |
+| `PATCH /scenarios/{id}/tmh/{id_tmh}` | 649 | volume_realise, moyenne_journaliere, moyenne_hebdo, motif? | volume_realise, moyenne_journaliere, moyenne_hebdo, motif, **bl_manuel=1**🧮, volume_previsionnel_recalcule🧮(=volume_previsionnel), **volume_brut🧮**, dt_calcul🧮(NOW) — ne touche pas volume_previsionnel/bl_exclu |
+| `GET /scenarios/{id}/tmh` | 650 | id_session_ihm? | 🔎 lecture seule (restitue aussi volume_previsionnel_recalcule et volume_brut) |
+
+> `volume_brut` = `volume_realise` + prévisionnel recalculé (DSR-689 RG4) : **dérivé serveur**, jamais
+> reçu du client, réécrit à chaque INSERT/UPDATE (`compute_volume_brut`). Les lignes antérieures à sa
+> mise en service restent à NULL ; OPTIPACC continue donc de sommer les volumes plutôt que la colonne.
 
 ### 1.3 Comptages manuels — `trppu_scenario_comptages_manuels`
 Fichiers : `app/routes/trppu_comptages/routes.py`.

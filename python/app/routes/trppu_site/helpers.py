@@ -5,13 +5,19 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 
+from fastapi import HTTPException
 from openpyxl import load_workbook
 from pydantic import ValidationError
+
+from app.db.mysql import db_read
 
 from .schemas import BulkUploadError, SiteCreate
 
 EXPECTED_HEADERS = ["co_regate", "lb_regate", "type_site", "co_roc"]
 REQUIRED_HEADERS = ["co_regate", "type_site", "co_roc"]
+
+
+SELECT_SITE_EXISTS_SQL = "SELECT co_regate FROM trppu_site WHERE co_regate = %s"
 
 
 UPSERT_SQL = (
@@ -22,6 +28,19 @@ UPSERT_SQL = (
     "type_site = VALUES(type_site), "
     "co_roc = VALUES(co_roc)"
 )
+
+
+async def fetch_site_or_404(co_regate: str) -> dict[str, Any]:
+    """Retourne le site ou lève un 404. Miroir de `fetch_scenario_or_404`.
+
+    Ne sélectionne que la clé : les appelants qui ont besoin du libellé ou du type
+    passent par `SELECT_SITE_SQL` (module routes). Le SQL est redéfini ici plutôt
+    qu'importé de `routes.py` pour ne pas créer d'import circulaire.
+    """
+    row = await db_read.fetch_one(SELECT_SITE_EXISTS_SQL, (co_regate,))
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Site {co_regate} introuvable.")
+    return row
 
 
 def _normalize_co(value: Any) -> str:

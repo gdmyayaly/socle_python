@@ -25,6 +25,10 @@ class TmhOut(BaseModel):
     # Prévisionnel après variation % (calcul front) ; NULL ou égal à
     # volume_previsionnel = aucune variation appliquée.
     volume_previsionnel_recalcule: int | None = None
+    # Volume brut de la ligne (DSR-689 RG4) = volume_realise + prévisionnel
+    # recalculé. Calculé et stocké par le serveur à chaque écriture ; NULL
+    # uniquement sur les lignes écrites avant sa mise en service.
+    volume_brut: int | None = None
     moyenne_journaliere: Decimal
     moyenne_hebdo: Decimal
     bl_exclu: bool

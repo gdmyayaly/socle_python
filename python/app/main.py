@@ -29,7 +29,6 @@ from app.services.jours_fermes_client import JoursFermesAPIError
 from app.routes import databricks as databricks_routes
 from app.routes import health as health_routes
 from app.routes import calcl_nbr_jours as calcl_nbr_jours_routes
-from app.routes import logs as logs_routes
 from app.routes import mysql_debug as mysql_debug_routes
 from app.routes.trppu_trafics import router as trppu_trafics_router
 from app.routes.trppu_pic_coefficients import router as trppu_pic_coefficients_router
@@ -38,6 +37,7 @@ from app.routes.trppu_produit import router as trppu_produit_router
 from app.routes.trppu_comptages import router as trppu_comptages_router
 from app.routes.trppu_neutralisations import router as trppu_neutralisations_router
 from app.routes.trppu_audit import router as trppu_audit_router
+from app.routes.trppu_optipacc import router as trppu_optipacc_router
 from app.routes.trppu_scenario import router as trppu_scenario_router
 from app.routes.trppu_scenario_pic import router as trppu_scenario_pic_router
 from app.routes.trppu_site import router as trppu_site_router
@@ -180,7 +180,6 @@ app.include_router(databricks_routes.router)
 app.include_router(mysql_debug_routes.router)
 app.include_router(trppu_trafics_router)
 app.include_router(calcl_nbr_jours_routes.router)
-app.include_router(logs_routes.router)
 app.include_router(trppu_site_router)
 app.include_router(trppu_produit_router)
 app.include_router(trppu_pic_version_router)
@@ -192,6 +191,7 @@ app.include_router(trppu_variations_router)
 app.include_router(trppu_neutralisations_router)
 app.include_router(trppu_scenario_pic_router)
 app.include_router(trppu_audit_router)
+app.include_router(trppu_optipacc_router)
 
 if __name__ == "__main__":
     import uvicorn

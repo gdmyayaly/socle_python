@@ -180,6 +180,7 @@ DUPLICATE_CHILD_SPECS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
             "volume_realise",
             "volume_previsionnel",
             "volume_previsionnel_recalcule",
+            "volume_brut",
             "moyenne_journaliere",
             "moyenne_hebdo",
             "dt_calcul",
