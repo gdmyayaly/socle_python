@@ -5,7 +5,14 @@ from typing import Any
 
 from fastapi import HTTPException
 
-STATUTS = ("EN COURS", "VALIDE", "EN PRODUCTION", "ARCHIVE")
+# Ordre et valeurs alignés sur l'enum trppu_scenario.statut (db/db_new.sql).
+STATUTS = ("EN COURS", "SIMULATION", "VALIDE", "EN PRODUCTION", "ARCHIVE")
+
+# Statuts « de travail » : un scénario y est éditable et peut être validé.
+# SIMULATION se comporte exactement comme EN COURS dans la machine à états ;
+# seul le flag est_fige (indépendant, cf. FIGE_PAR_STATUT / assert_editable)
+# les distingue.
+STATUTS_EDITABLES = ("EN COURS", "SIMULATION")
 
 # DSR-669 : mapping d'un statut IHM reçu vers le flag de figement (est_fige).
 # "validé"/"simulation" -> figé (True) ; "en cours" -> défigé (False).
@@ -44,8 +51,9 @@ def resolve_fige_from_statut(statut: str) -> bool:
 # La transition VALIDE -> EN PRODUCTION est volontairement absente : elle passe
 # uniquement par POST /mise-en-prod (cf. INTERNAL_TRANSITIONS).
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    "EN COURS":      {"VALIDE", "ARCHIVE"},
-    "VALIDE":        {"EN COURS", "ARCHIVE"},
+    "EN COURS":      {"SIMULATION", "VALIDE", "ARCHIVE"},
+    "SIMULATION":    {"EN COURS", "VALIDE", "ARCHIVE"},
+    "VALIDE":        {"EN COURS", "SIMULATION", "ARCHIVE"},
     "EN PRODUCTION": {"ARCHIVE"},
     "ARCHIVE":       set(),
 }

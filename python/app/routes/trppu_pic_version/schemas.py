@@ -9,6 +9,27 @@ CO_REGATE_PATTERN = r"^[A-Za-z0-9]{6}$"
 
 
 class NiveauEnum(str, Enum):
+    """Niveaux tels qu'ils existent en base (enum trppu_pic_version.niveau).
+
+    SCENARIO est écrit par le module trppu_scenario_pic (surcharge d'un
+    coefficient PIC, DSR-661) et par la duplication de scénario : il doit être
+    accepté en LECTURE, sans quoi toute version de ce niveau fait échouer la
+    validation de PicVersionOut (-> 500 sur GET /pic-versions).
+    """
+
+    NATIONAL = "NATIONAL"
+    DEX = "DEX"
+    SITE = "SITE"
+    SCENARIO = "SCENARIO"
+
+
+class NiveauCreationEnum(str, Enum):
+    """Niveaux acceptés en écriture par le CRUD des versions PIC.
+
+    SCENARIO en est volontairement exclu : ces versions sont créées et
+    maintenues par trppu_scenario_pic, qui renseigne le vrai id_scenario.
+    """
+
     NATIONAL = "NATIONAL"
     DEX = "DEX"
     SITE = "SITE"
@@ -41,6 +62,9 @@ class PicVersionCreate(PicVersionBase):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    # Écriture fermée au niveau SCENARIO (cf. NiveauCreationEnum).
+    niveau: NiveauCreationEnum
+
 
 class PicVersionUpdate(BaseModel):
     """MAJ partielle — id_pic_version, dt_creation, dt_maj non modifiables."""
@@ -48,7 +72,7 @@ class PicVersionUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     lb_pic_version: str | None = Field(None, max_length=80)
-    niveau: NiveauEnum | None = None
+    niveau: NiveauCreationEnum | None = None
     co_regate: str | None = Field(None, min_length=6, max_length=6, pattern=CO_REGATE_PATTERN)
     dt_activation: datetime | None = None
     dt_desactivation: datetime | None = None

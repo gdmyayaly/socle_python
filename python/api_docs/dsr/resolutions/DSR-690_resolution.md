@@ -46,9 +46,10 @@ systématiquement une liste vide.
 - Sortie en `snake_case` (`id_scenario`, `lb_scenario`) conforme au ticket, alors que
   l'entrée est en `camelCase` (`codeRegate`) — incohérence du contrat source, reproduite
   telle quelle pour ne pas créer d'écart d'intégration.
-- Le `Literal` de statut du module scénario (qui ignore `SIMULATION`, présent en base)
-  n'est **pas** réutilisé : la requête filtre directement en SQL, aucun risque de 500 à la
-  sérialisation.
+- Le `Literal` de statut du module scénario n'est **pas** réutilisé : la requête filtre
+  directement en SQL sur `statut = 'VALIDE'`, aucun risque de 500 à la sérialisation.
+  (Ce `Literal` ignorait `SIMULATION`, pourtant présent en base — écart n°2 du rapport
+  `db/RAPPORT-ECARTS-db_new-2026-08-17.md`, corrigé depuis. Le service n'en dépendait pas.)
 
 ## 6. Comment tester
 ```sql
@@ -75,7 +76,8 @@ curl -X POST http://localhost:8080/trppu-api/optipacc/site-liste-scenarios \
 > Les services destinés à OPTIPACC sont regroupés sous le segment `/optipacc` pour être
 > identifiables sans ambiguïté par les applications tierces.
 >
-> **Entrée :** `{ "codeRegate": "123456" }`
+> **Entrée :** `{ "codeRegate": "123456" }` — `codeRegate` obligatoire, exactement
+> 6 caractères alphanumériques ; tout autre champ dans le body est refusé.
 > **Sortie :** `{ "codeRegate": "123456", "scenarios": [ { "id_scenario": 125, "lb_scenario": "Scénario Septembre 2026" } ] }`
 > **Codes :** `200` OK · `422` requête invalide · `500` erreur technique.
 >
@@ -100,4 +102,5 @@ curl -X POST http://localhost:8080/trppu-api/optipacc/site-liste-scenarios \
 > **Documentation :** `api_docs/api_trppu_optipacc.md` (fiche d'usage partageable au métier
 > et à l'équipe OPTIPACC).
 >
-> **Tests :** `tests/test_optipacc.py` — suite complète OK (124/124).
+> **Tests :** `tests/test_optipacc.py` — 30 tests (mutualisés DSR-689/690). Suite complète OK
+> (130/130).

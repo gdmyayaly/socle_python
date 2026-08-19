@@ -16,6 +16,7 @@ from .helpers import (
 )
 from .schemas import (
     BulkUploadResult,
+    NiveauCreationEnum,
     NiveauEnum,
     PicVersionCreate,
     PicVersionOut,
@@ -97,7 +98,12 @@ async def list_pic_versions(
 async def list_enums():
     """Valeurs autorisées pour les colonnes ENUM de trppu_pic_version."""
     logger.info("Récupération des enums versions PIC")
-    return {"niveau": [e.value for e in NiveauEnum]}
+    # "niveau" : valeurs lisibles (enum base, SCENARIO compris).
+    # "niveau_creation" : sous-ensemble accepté par POST / PUT.
+    return {
+        "niveau": [e.value for e in NiveauEnum],
+        "niveau_creation": [e.value for e in NiveauCreationEnum],
+    }
 
 
 @router.get("/{id_pic_version}", response_model=PicVersionOut)

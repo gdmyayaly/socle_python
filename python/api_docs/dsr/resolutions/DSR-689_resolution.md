@@ -107,7 +107,8 @@ SQL du §4 exécutée directement en base.
 > **Endpoint :** `POST /trppu-api/optipacc/scenario-trafic-brut`
 > (les services destinés à OPTIPACC sont regroupés sous le segment `/optipacc`).
 >
-> **Entrée :** `{ "codeRegate": "123456", "scenarioId": 789 }`
+> **Entrée :** `{ "codeRegate": "123456", "scenarioId": 789 }` — `codeRegate` exactement
+> 6 caractères alphanumériques, `scenarioId` entier ≥ 1 ; tout champ non prévu est refusé.
 > **Sortie :** `{ "codeRegate": "123456", "scenarioId": 789, "produits": [ { "codeProduit": "OS", "volumeBrut": 1250000 } ] }`
 > **Codes :** `200` OK · `404` site inconnu / scénario inexistant ou rattaché à un autre
 > site · `409` scénario non exploitable · `422` requête invalide · `500` erreur technique.
@@ -148,4 +149,5 @@ SQL du §4 exécutée directement en base.
 > **Documentation :** `api_docs/api_trppu_optipacc.md`.
 > **Tests :** `tests/test_optipacc.py` (dont l'arithmétique du volume brut vérifiée sur une
 > base en mémoire : lignes multiples par produit, repli du prévisionnel, produits exclus) et
-> `tests/test_tmh_volume_brut.py` (persistance de la colonne) — suite complète OK (124/124).
+> `tests/test_tmh_volume_brut.py` (persistance de la colonne, 17 tests) — 30 tests OPTIPACC
+> mutualisés DSR-689/690, suite complète OK (130/130).

@@ -213,19 +213,15 @@ visibles par toutes ses instructions.
 
 | Ordre | Fichier | Rôle |
 |---|---|---|
-| 1 | `db/DSR-696-698_migration.sql` | Clé unique et index absents du schéma livré. À jouer **une fois**, avant les deux autres. |
-| 2 | `db/DSR-696_site_trafic.sql` | Alimente `trppu_site_trafic` : somme des trafics des PDI actifs par site, pour un référentiel. |
+| 1 | `db/DSR-696-699_migration.sql` | Clés uniques, index d'agrégation et colonne `date_creation` absents du schéma livré. À jouer **une fois**, avant les trois autres. |
+| 2 | `db/DSR-696_site_trafic.sql` | Alimente `trppu_trafic_site` : somme des trafics des PDI actifs par site, pour un référentiel. |
 | 3 | `db/DSR-698_version_cle.sql` | Crée la version de clés d'un site dans `trppu_version_cle` et désactive la précédente. |
+| 4 | `db/DSR-699_cles_calculees.sql` | Calcule les clés — trafic du PDI / total de son site — et alimente `trppu_cles_repartition_calcule`. |
 
-```bash
-mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-696-698_migration.sql
-mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-696_site_trafic.sql
-```
-
-Chaque fichier se termine par des requêtes de contrôle correspondant aux critères
-d'acceptation de son ticket (écarts par site, unicité, sites sans PDI actif, unicité de la
-version active). Les deux scripts métier sont **rejouables** : les relancer laisse la base
-dans le même état.
+**Le mode d'emploi complet est dans [`db/README.md`](db/README.md)** : ordre d'exécution et
+dépendances, paramètres de chaque script, exemple d'initialisation d'un site, lecture des
+contrôles, rejouabilité, erreurs typiques et contrôles à jouer avant le premier chargement
+réel.
 
 Deux points à connaître avant de les jouer :
 
@@ -234,21 +230,24 @@ Deux points à connaître avant de les jouer :
   pas `ADD INDEX IF NOT EXISTS`, mais invisible à `is_ddl`. L'avertissement « DDL en mode
   transactionnel » ne se déclenchera donc pas alors que le commit implicite a bien lieu :
   passer explicitement `transactional=False` pour ce fichier.
-- **Vérifier le risque de débordement décimal avant la première exécution de DSR-696.** Les
-  trafics sources sont en `decimal(25,19)` et les totaux cibles en `decimal(24,18)`, soit
-  six chiffres avant la virgule. Un site dont le total dépasse `999999.999999999999999999`
-  fera échouer l'insertion (`ERROR 1264`) :
+- **DSR-699 échoue volontairement** sur un site dont un total de trafic est à zéro, plutôt
+  que de charger une clé fausse. Il durcit pour cela son propre `sql_mode` de session, et
+  désigne les sites concernés avant d'écrire quoi que ce soit.
 
-  ```sql
-  SELECT MAX(t) FROM (
-    SELECT SUM(trafic_colis) t FROM trppu_cles_repartition
-     WHERE id_referentiel = 1 AND date_fin_validite IS NULL GROUP BY co_regate_site) x;
-  ```
+Les tickets sources sont dans `docs/`, et **aucun des trois ne décrit exactement la base** :
+`docs/DIAGNOSTIC-DSR-696-699.md` reprend écart par écart la formulation fautive, la lecture
+retenue et la correction appliquée. Les trois pièges principaux :
 
-Les tickets sources sont dans `docs/`. Attention, `docs/DSR-696.md` spécifie une colonne
-`id_site` qui **n'existe pas** — la table porte `co_regate_site` ; le ticket se contredit
-d'ailleurs, son `SELECT` la nommant correctement. `tests/test_scripts_dsr.py` verrouille ce
-point.
+- `docs/DSR-696.md` nomme la colonne du site `id_site`, puis `id_site_trafic` après
+  amendement. Ni l'une ni l'autre : la colonne est `co_regate_site`, et `id_site_trafic` est
+  la PK auto-incrémentée. Le `SELECT` du ticket, lui, la nomme correctement.
+- `docs/DSR-698.md` attend une colonne `date_creation` que le schéma ré-extrait a supprimée.
+  Ici c'est le ticket qui a raison : la migration la rétablit, en `DEFAULT CURRENT_TIMESTAMP`.
+- `docs/DSR-699.md` est le mieux écrit des trois, mais sa clé potentiel IP divise deux
+  entiers : sans `CAST`, MySQL n'en rendrait que quatre décimales.
+
+`tests/test_scripts_dsr.py` verrouille ces points, ainsi que le renommage
+`trppu_site_trafic` → `trppu_trafic_site`.
 
 ## Logging
 

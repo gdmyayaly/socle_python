@@ -1,26 +1,35 @@
 # Incohérences relevées — chaîne « clés de répartition » (DSR-696 à DSR-703)
 
-Constats issus de l'implémentation de **DSR-696** et **DSR-698** dans `yb05`, obtenus en
+Constats issus de l'implémentation de **DSR-696**, **DSR-698** et **DSR-699** dans `yb05`, obtenus en
 confrontant les tickets au schéma réellement déployé (`python/db/db_new.sql`), aux volumes
 constatés (`python/db/count.json`) et au code des deux projets.
 
+> Ce document recense les écarts de la **chaîne** (schéma, volumes, modules voisins).
+> L'analyse détaillée des trois tickets eux-mêmes — formulation fautive, lecture retenue,
+> correction appliquée — est dans **`DIAGNOSTIC-DSR-696-699.md`**.
+
 Référence de volumétrie : `trppu_cles_repartition` porte **22 395 341 lignes**
-(`AUTO_INCREMENT` à 24 217 441) ; `trppu_site_trafic`, `trppu_version_cle`,
+(`AUTO_INCREMENT` à 24 217 441) ; `trppu_trafic_site`, `trppu_version_cle`,
 `trppu_cles_repartition_calcule` et `trppu_referentiel` sont **vides**.
+
+Attention en relisant `python/db/count.json` : ce relevé est antérieur à la ré-extraction du
+schéma du 17/08/2026 et liste encore la table sous son ancien nom, `trppu_site_trafic`. Les
+comptages restent valides, les noms non.
 
 ## Synthèse
 
 | # | Incohérence | Gravité | Statut |
 | - | ----------- | ------- | ------ |
-| 1 | `id_site` n'existe pas dans `trppu_site_trafic` | **Bloquant** | Corrigé dans le script |
+| 1 | Aucune des deux versions du ticket ne nomme correctement la colonne du site | **Bloquant** | Corrigé dans le script |
+| 1 bis | Table renommée `trppu_site_trafic` → `trppu_trafic_site`, colonne `trppu_version_cle.date_creation` supprimée | **Bloquant** | Corrigé — cf. `DIAGNOSTIC-DSR-696-699.md` |
 | 2 | CA2 (unicité site + référentiel) sans contrainte en base | **Bloquant** pour la recette | Corrigé par la migration |
 | 3 | Aucun index ne sert l'agrégation sur 22,4 M lignes — contredit le CA6 | Fort | Corrigé par la migration |
-| 4 | `trppu_version_cle` sans index sur `(co_regate, actif)` | Moyen | Corrigé par la migration |
+| 4 | `trppu_version_cle` sans index sur `(co_regate, actif)` | Moyen | **Corrigé en base** — `idx_regate_actif` |
 | 5 | Débordement décimal possible : `decimal(25,19)` sommé dans `decimal(24,18)` | **Fort** | **Ouvert** — contrôle à jouer |
 | 6 | `trppu_referentiel` ne permet pas d'exprimer « référentiel actif » | Fort | **Ouvert** — impacte DSR-701 |
-| 7 | `docs/DSR-697.md` est vide (0 octet) | Fort | **Ouvert** — spécification manquante |
-| 8 | YS04 laisse `id_referentiel` / `id_version_cle` à `0` sur les scénarios | Fort | **Ouvert** — hors périmètre 696/698 |
-| 9 | `trppu_cles_repartition_calcule` sans unicité ni index | Moyen | **Ouvert** — à traiter en DSR-697 |
+| 7 | `docs/DSR-697.md` est vide (0 octet) | Moyen | **Ouvert** — objet du ticket inconnu |
+| 8 | YS04 laisse `id_referentiel` / `id_version_cle` à `0` sur les scénarios | Fort | **Ouvert** — hors périmètre 696/698/699 |
+| 9 | `trppu_cles_repartition_calcule` sans unicité ni index | Moyen | Corrigé par la migration |
 | 10 | Nom de table : `TRPPU_CLE_REPARTITION_CALCULE` (docs) vs `trppu_cles_repartition_calcule` (base) | Faible | **Ouvert** — cosmétique |
 | 11 | Trois noms pour l'identifiant d'agrébal | Faible | **Ouvert** |
 | 12 | `db_new.sql` n'est pas déployable sur MariaDB | Moyen | **Ouvert** — selon la cible |
@@ -30,14 +39,20 @@ Référence de volumétrie : `trppu_cles_repartition` porte **22 395 341 lignes*
 
 ## Bloquants, corrigés dans le livrable
 
-### 1. `id_site` n'existe pas
+### 1. La colonne du site n'est jamais nommée correctement
 
-`DSR-696.md` déclare la structure cible `TRPPU_SITE_TRAFIC (id_site, id_referentiel, …)`
-(ligne 46) et écrit `INSERT INTO trppu_site_trafic (id_site, …)` (ligne 148). **Cette colonne
-n'existe pas** : la table porte `co_regate_site varchar(10)`.
+`DSR-696.md` a porté successivement deux versions, fausses toutes les deux :
 
-Le ticket se contredit lui-même — son propre `SELECT` (ligne 158) liste bien `co_regate_site`.
-Recopié tel quel, l'`INSERT` échoue en `ERROR 1054 (Unknown column)`.
+- la version initiale déclarait `TRPPU_SITE_TRAFIC (id_site, id_referentiel, …)` ;
+- la version amendée remplace `id_site` par `id_site_trafic`, qui est la **PK
+  `AUTO_INCREMENT`** de la table — et laisse `id_site` intact dans l'`INSERT` de la ligne 148.
+
+Dans les deux cas, la colonne réellement porteuse du site — `co_regate_site varchar(10)` — est
+absente de la structure annoncée. Recopié tel quel, l'`INSERT` échoue en
+`ERROR 1054 (Unknown column 'id_site')`.
+
+Le ticket se contredit lui-même — son propre `SELECT` (ligne 158) liste bien `co_regate_site`,
+en première position, face à `id_site` en première position de l'`INSERT`.
 
 > **Traité** : `db/DSR-696_site_trafic.sql` utilise les noms réels. Un test de non-régression
 > (`tests/test_scripts_dsr.py`) vérifie qu'aucun script ne réintroduit ce nom, et confronte
@@ -51,7 +66,7 @@ part.
 
 > CA2 — « Une seule ligne existe par site + id_referentiel. »
 
-`trppu_site_trafic` ne porte que `PRIMARY KEY (id_site_trafic)`, auto-incrémentée : **aucune
+`trppu_trafic_site` ne porte que `PRIMARY KEY (id_site_trafic)`, auto-incrémentée : **aucune
 clé unique, aucun index**. L'invariant n'est donc garanti que par la séquence `DELETE` puis
 `INSERT` du traitement. Deux exécutions concurrentes, ou un `INSERT` rejoué sans son `DELETE`,
 le violeraient silencieusement — et rien en base ne le signalerait.
@@ -85,11 +100,14 @@ impose donc un balayage complet de la table à chaque exécution, suivi d'un tri
 
 ### 4. `trppu_version_cle` n'est indexée que sur le référentiel
 
-Son unique index est `idx_ref (id_referentiel)`, alors que les deux accès réels portent sur
+Son unique index était `idx_ref (id_referentiel)`, alors que les deux accès réels portent sur
 `(co_regate, actif)` : le `UPDATE` de désactivation de DSR-698, et la lecture d'éligibilité de
 **DSR-701 règle 9** (`WHERE co_regate = :coRegate AND actif = 'O'`).
 
-> **Traité** : `KEY idx_vc_site_actif (co_regate, actif)`, posé tant que la table est vide.
+> **Corrigé en base** : le schéma ré-extrait le 17/08/2026 porte
+> `KEY idx_regate_actif (co_regate, actif)`. La migration créait le même index sous le nom
+> `idx_vc_site_actif` ; son garde-fou testant le nom et non les colonnes, il aurait posé un
+> doublon. Le bloc a donc été retiré de `db/DSR-696-699_migration.sql`.
 
 ---
 
@@ -97,7 +115,7 @@ Son unique index est `idx_ref (id_referentiel)`, alors que les deux accès réel
 
 ### 5. Risque de débordement décimal — à vérifier avant la première exécution
 
-| | Source (`trppu_cles_repartition`) | Cible (`trppu_site_trafic`) |
+| | Source (`trppu_cles_repartition`) | Cible (`trppu_trafic_site`) |
 | --- | --- | --- |
 | trafic colis / oo / 3s | `decimal(25,19)` | `decimal(24,18)` |
 | potentiel IP | `smallint` (nullable) | `bigint` (NOT NULL) |
@@ -146,10 +164,15 @@ Or `trppu_referentiel` ne comporte que quatre colonnes — `id_referentiel`, `co
 
 ### 7. `DSR-697.md` est vide
 
-Le fichier existe mais fait **0 octet**. C'est le maillon central de la chaîne — le calcul de
-`trppu_cles_repartition_calcule`, soit `trafic du PDI / total du site` — celui qui consomme
-précisément ce que produisent DSR-696 et DSR-698. Aucun autre exemplaire n'existe dans le
-dépôt ; le ticket est à ré-exporter depuis Jira.
+Le fichier existe mais fait **0 octet**, et aucun autre exemplaire n'existe dans le dépôt.
+
+Ce constat a d'abord été surévalué : on le tenait pour le maillon central de la chaîne, celui
+qui calcule `trppu_cles_repartition_calcule`. **C'est DSR-699 qui le spécifie**, ticket arrivé
+depuis et implémenté dans `db/DSR-699_cles_calculees.sql`. La chaîne est donc complète sans
+DSR-697 ; ce qui reste inconnu, c'est l'objet même de ce ticket.
+
+Gravité ramenée à moyenne : à ré-exporter depuis Jira pour savoir ce qu'il demande, sans que
+rien n'attende après lui.
 
 ### 8. Les scénarios YS04 ne référencent aucun référentiel ni aucune version
 
@@ -162,12 +185,17 @@ Conséquence directe : les versions produites par DSR-698 **ne seront rattachée
 scénario** tant que YS04 n'aura pas été modifié — c'est l'objet de DSR-700, à cadrer avec le
 module YS04.
 
-### 9. `trppu_cles_repartition_calcule` n'a aucune contrainte
+### 9. `trppu_cles_repartition_calcule` n'avait aucune contrainte — corrigé
 
-La table cible de DSR-697 ne porte que sa PK auto-incrémentée : ni unicité sur
+La table cible de DSR-699 ne portait que sa PK auto-incrémentée : ni unicité sur
 `(id_version_cle, id_pdi)`, ni index sur `id_version_cle` alors que c'est la clé de lecture du
-batch `CALCUL_TRAFIC_PDI` (DSR-702). À traiter en même temps que DSR-697, sur le modèle de ce
-qui a été fait ici pour `trppu_site_trafic`.
+batch `CALCUL_TRAFIC_PDI` (DSR-702). Rien n'empêchait donc de charger deux fois les clés d'une
+même version, en violation du CA4 de DSR-699.
+
+> **Traité** : la migration ajoute `UNIQUE KEY uq_crc_version_pdi (id_version_cle, id_pdi)`,
+> sur le modèle de ce qui a été fait pour `trppu_trafic_site`. Un index supplémentaire sur
+> `id_version_cle` serait redondant : cette colonne est le premier membre de la clé unique, qui
+> sert donc aussi d'index de lecture à DSR-702.
 
 ### 10. Nom de table incohérent entre docs et base
 

@@ -1,11 +1,18 @@
 -- =====================================================================================
--- DSR-696 / DSR-698 — contraintes et index manquants
+-- DSR-696 / DSR-698 / DSR-699 — contraintes, index et colonne manquants
 -- =====================================================================================
--- À jouer UNE FOIS, avant `DSR-696_site_trafic.sql` et `DSR-698_version_cle.sql`.
+-- À jouer UNE FOIS, avant les trois scripts de données. Mode d'emploi complet de la chaîne :
+-- `db/README.md`.
 --
--- Ces trois objets n'existent pas dans le schéma livré (`python/db/db_new.sql`) alors que
--- les critères d'acceptation et les volumes en jeu les exigent. Chacun est motivé
+-- Ces quatre objets n'existent pas dans le schéma livré (`python/db/db_new.sql`) alors que
+-- les critères d'acceptation et le contenu des tickets les exigent. Chacun est motivé
 -- ci-dessous.
+--
+-- Un cinquième objet a figuré ici jusqu'à la ré-extraction du schéma du 17/08/2026 : l'index
+-- `(co_regate, actif)` de `trppu_version_cle`, que la base porte désormais sous le nom
+-- `idx_regate_actif`. Le bloc a été retiré parce que son garde-fou testait le NOM de
+-- l'index et non ses colonnes : il ne voyait donc pas `idx_regate_actif` et aurait posé un
+-- second index redondant sur le même couple.
 --
 -- ATTENTION — `ALTER TABLE` est du DDL : MySQL effectue un COMMIT IMPLICITE, aucun ROLLBACK
 -- n'est possible. C'est la raison pour laquelle ce fichier est séparé des deux scripts de
@@ -24,24 +31,28 @@
 -- `tests/test_scripts_dsr.py`.
 --
 -- USAGE
---   mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-696-698_migration.sql
+--   mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-696-699_migration.sql
 -- =====================================================================================
 
 
 -- -------------------------------------------------------------------------------------
--- 1. trppu_site_trafic — unicité (référentiel, site)
+-- 1. trppu_trafic_site — unicité (référentiel, site)
 -- -------------------------------------------------------------------------------------
 -- DSR-696 CA2 : « une seule ligne existe par site + id_referentiel ». La table ne porte que
 -- sa PK auto-incrémentée : rien n'empêche aujourd'hui les doublons. Sans cette contrainte,
 -- l'invariant ne tient que par la séquence DELETE puis INSERT du script — deux exécutions
 -- concurrentes le violeraient silencieusement. Avec elle, la seconde échoue proprement.
+--
+-- Le nom `uq_site_trafic` est conservé alors que la table s'appelle désormais
+-- `trppu_trafic_site` : si la migration a déjà été jouée avant le renommage, l'index a suivi
+-- sa table sous ce nom, et c'est lui que le garde-fou ci-dessous doit reconnaître.
 SET @sql := IF(
     (SELECT COUNT(*) FROM information_schema.STATISTICS
       WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = 'trppu_site_trafic'
+        AND TABLE_NAME = 'trppu_trafic_site'
         AND INDEX_NAME = 'uq_site_trafic') > 0,
     'SELECT ''uq_site_trafic : déjà présent'' AS resultat',
-    'ALTER TABLE `trppu_site_trafic`
+    'ALTER TABLE `trppu_trafic_site`
        ADD UNIQUE KEY `uq_site_trafic` (`id_referentiel`, `co_regate_site`)'
 );
 PREPARE stmt FROM @sql;
@@ -76,21 +87,29 @@ DEALLOCATE PREPARE stmt;
 
 
 -- -------------------------------------------------------------------------------------
--- 3. trppu_version_cle — index (site, actif)
+-- 3. trppu_version_cle — colonne date_creation
 -- -------------------------------------------------------------------------------------
--- La table n'a qu'un index sur `id_referentiel`, alors que les deux accès réels portent sur
--- le couple (co_regate, actif) : le UPDATE de désactivation de `DSR-698_version_cle.sql`, et
--- la lecture d'éligibilité de DSR-701 règle 9
--- (`SELECT id_version_cle … WHERE co_regate = :coRegate AND actif = 'O'`).
--- La table est vide aujourd'hui : l'index est posé maintenant, tant que c'est gratuit.
+-- DSR-698 « Résultat attendu » liste `date_creation` parmi les colonnes de la ligne créée,
+-- avec l'exemple « 01/09/2026 ». La ré-extraction du schéma du 17/08/2026 l'a fait
+-- disparaître au profit du couple `date_debut_validite` / `date_fin_validite`, qui exprime
+-- la période de validité de la version — pas la date à laquelle elle a été créée. Les deux
+-- informations ne se confondent pas : une version peut être créée aujourd'hui avec une
+-- validité qui court depuis plus tôt, et sa fin de validité ne dit rien de sa création.
+--
+-- La colonne est donc rétablie, et alimentée SANS INTERVENTION du script : `DEFAULT
+-- CURRENT_TIMESTAMP` la renseigne à l'insertion. Aucune reprise n'est nécessaire, la table
+-- est vide. À vérifier avant de jouer ce bloc sur un environnement où elle ne le serait
+-- pas : les lignes existantes prendraient l'horodatage de l'ALTER, pas leur vraie date de
+-- création.
 SET @sql := IF(
-    (SELECT COUNT(*) FROM information_schema.STATISTICS
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE()
         AND TABLE_NAME = 'trppu_version_cle'
-        AND INDEX_NAME = 'idx_vc_site_actif') > 0,
-    'SELECT ''idx_vc_site_actif : déjà présent'' AS resultat',
+        AND COLUMN_NAME = 'date_creation') > 0,
+    'SELECT ''trppu_version_cle.date_creation : déjà présente'' AS resultat',
     'ALTER TABLE `trppu_version_cle`
-       ADD KEY `idx_vc_site_actif` (`co_regate`, `actif`)'
+       ADD COLUMN `date_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+       AFTER `actif`'
 );
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
@@ -98,10 +117,41 @@ DEALLOCATE PREPARE stmt;
 
 
 -- -------------------------------------------------------------------------------------
--- Contrôle final — les trois index doivent être listés
+-- 4. trppu_cles_repartition_calcule — unicité (version, PDI)
 -- -------------------------------------------------------------------------------------
+-- DSR-699 CA4 : « aucune clé d'une version existante n'est modifiée ». La table cible du
+-- calcul ne porte, elle aussi, que sa PK auto-incrémentée : rien n'empêche de charger deux
+-- fois les clés d'une même version. Le garde-fou `@deja` de `DSR-699_cles_calculees.sql` y
+-- pourvoit côté script, mais il ne protège pas d'un INSERT joué à la main ni de deux
+-- exécutions concurrentes ; la clé unique, si.
+--
+-- Elle sert en même temps d'index de lecture pour DSR-702 (`WHERE id_version_cle = ?`) :
+-- `id_version_cle` en est le premier membre, aucun index supplémentaire n'est nécessaire.
+SET @sql := IF(
+    (SELECT COUNT(*) FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'trppu_cles_repartition_calcule'
+        AND INDEX_NAME = 'uq_crc_version_pdi') > 0,
+    'SELECT ''uq_crc_version_pdi : déjà présent'' AS resultat',
+    'ALTER TABLE `trppu_cles_repartition_calcule`
+       ADD UNIQUE KEY `uq_crc_version_pdi` (`id_version_cle`, `id_pdi`)'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+
+-- -------------------------------------------------------------------------------------
+-- Contrôle final — les trois index posés ici, plus celui déjà fourni par la base
+-- -------------------------------------------------------------------------------------
+-- `idx_regate_actif` n'est pas créé par ce fichier : il est listé pour vérifier d'un coup
+-- d'œil que DSR-698 dispose bien de son index d'accès (co_regate, actif).
+--
+-- La colonne `trppu_version_cle.date_creation` ajoutée par le bloc 3 n'apparaît pas ici,
+-- puisqu'elle n'est pas un index : son bloc affiche son propre résultat.
 SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME
   FROM information_schema.STATISTICS
  WHERE TABLE_SCHEMA = DATABASE()
-   AND INDEX_NAME IN ('uq_site_trafic', 'idx_cr_ref_actif', 'idx_vc_site_actif')
+   AND INDEX_NAME IN ('uq_site_trafic', 'idx_cr_ref_actif', 'idx_regate_actif',
+                      'uq_crc_version_pdi')
  ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX;

@@ -196,3 +196,96 @@ Verifications :
     docs/INCOHERENCES.md du module YB05.
 
 ========================================================================
+
+
+========================================================================
+ADDENDUM - 18/08/2026
+Mise a jour apres re-extraction du schema
+
+========================================================================
+
+
+A. DATE_CREATION : LE TICKET AVAIT RAISON, LA COLONNE EST RETABLIE
+------------------------------------------------------------------------
+
+Le ticket liste date_creation parmi les colonnes de la ligne creee
+(exemple : 01/09/2026). Le schema re-extrait le 17/08/2026 l'a
+SUPPRIMEE, au profit du couple date_debut_validite (DEFAULT
+CURRENT_TIMESTAMP) / date_fin_validite.
+
+Les deux informations ne se confondent pas : la periode de validite dit
+depuis quand la version est utilisable, la date de creation dit quand la
+ligne a ete ecrite. Elles coincident a la creation d'une version active,
+rien ne l'impose ensuite.
+
+La colonne est donc RETABLIE par db/DSR-696-699_migration.sql :
+
+  ALTER TABLE trppu_version_cle
+    ADD COLUMN date_creation datetime NOT NULL
+        DEFAULT CURRENT_TIMESTAMP AFTER actif;
+
+Elle est alimentee automatiquement par son DEFAULT : aucun script ne
+l'ecrit. L'ALTER est idempotent (garde-fou sur information_schema) et
+sans risque tant que la table est vide, ce qui est le cas ; sur une
+table peuplee, les lignes existantes prendraient l'horodatage de
+l'ALTER, pas leur vraie date de creation.
+
+Le controle final du script restitue desormais les TROIS dates :
+date_creation, date_debut_validite, date_fin_validite.
+
+
+B. LA DESACTIVATION POSE AUSSI DATE_FIN_VALIDITE
+------------------------------------------------------------------------
+
+  UPDATE trppu_version_cle
+     SET actif = 'N',
+         date_fin_validite = NOW()
+   WHERE co_regate = @co_regate AND actif = 'O' AND @deja = 0;
+
+Le ticket ne mentionne pas cette colonne - il decrit encore le schema
+d'avant. Laisser une version desactivee avec une fin de validite vide
+ferait se contredire les deux colonnes : actif = 'N' d'un cote, validite
+sans terme de l'autre.
+
+
+C. L'INDEX (co_regate, actif) EST DESORMAIS FOURNI PAR LA BASE
+------------------------------------------------------------------------
+
+La section 4 du commentaire initial annoncait la creation de
+KEY idx_vc_site_actif (co_regate, actif). Ce bloc a ete RETIRE de la
+migration : le schema re-extrait porte deja le meme index, sous le nom
+idx_regate_actif.
+
+Le garde-fou de rejouabilite testait le NOM de l'index et non ses
+colonnes : il ne voyait donc pas idx_regate_actif et aurait pose un
+second index redondant sur le meme couple. Le controle final de la
+migration liste malgre tout idx_regate_actif, pour verifier d'un coup
+d'oeil que le script dispose de son index d'acces.
+
+
+D. TABLE RENOMMEE
+------------------------------------------------------------------------
+
+TRPPU_SITE_TRAFIC s'appelle desormais TRPPU_TRAFIC_SITE : le garde-fou
+d'etat initial du script, qui verifie la presence des agregats DSR-696
+pour le referentiel demande, a ete mis a jour.
+
+
+Le detail complet est dans docs/DIAGNOSTIC-DSR-696-699.md du module
+YB05.
+
+
+E. LE FICHIER DE MIGRATION A ETE RENOMME
+------------------------------------------------------------------------
+
+db/DSR-696-698_migration.sql s'appelle desormais
+db/DSR-696-699_migration.sql : outre la colonne date_creation retablie
+en section A, il porte maintenant la cle unique uq_crc_version_pdi
+(id_version_cle, id_pdi), exigee par le CA4 de DSR-699.
+
+DSR-699 - le calcul des cles, qui consomme les versions creees par ce
+script - est livre dans db/DSR-699_cles_calculees.sql. Le mode d'emploi
+de la chaine complete, ordre d'execution compris, est dans
+db/README.md.
+
+========================================================================

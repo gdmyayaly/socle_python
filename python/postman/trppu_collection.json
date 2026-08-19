@@ -779,7 +779,7 @@
                 },
                 {
                   "key": "niveau",
-                  "value": "SCENARIO",
+                  "value": "NATIONAL",
                   "disabled": true,
                   "description": ""
                 },
@@ -835,7 +835,7 @@
             "description": "Create Pic Version",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"lb_pic_version\": \"string\",\n  \"niveau\": \"SCENARIO\",\n  \"co_regate\": \"{{co_regate}}\",\n  \"id_scenario\": 0,\n  \"dt_activation\": \"2026-01-01T00:00:00\",\n  \"dt_desactivation\": \"2026-01-01T00:00:00\",\n  \"motif_desactivation\": \"string\",\n  \"commentaire\": \"string\",\n  \"est_par_defaut\": false\n}",
+              "raw": "{\n  \"lb_pic_version\": \"string\",\n  \"niveau\": \"NATIONAL\",\n  \"co_regate\": \"{{co_regate}}\",\n  \"id_scenario\": 0,\n  \"dt_activation\": \"2026-01-01T00:00:00\",\n  \"dt_desactivation\": \"2026-01-01T00:00:00\",\n  \"motif_desactivation\": \"string\",\n  \"commentaire\": \"string\",\n  \"est_par_defaut\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -906,7 +906,7 @@
             "description": "Update Pic Version",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"lb_pic_version\": \"string\",\n  \"niveau\": \"SCENARIO\",\n  \"co_regate\": \"{{co_regate}}\",\n  \"dt_activation\": \"2026-01-01T00:00:00\",\n  \"dt_desactivation\": \"2026-01-01T00:00:00\",\n  \"motif_desactivation\": \"string\",\n  \"commentaire\": \"string\",\n  \"est_par_defaut\": false\n}",
+              "raw": "{\n  \"lb_pic_version\": \"string\",\n  \"niveau\": \"NATIONAL\",\n  \"co_regate\": \"{{co_regate}}\",\n  \"dt_activation\": \"2026-01-01T00:00:00\",\n  \"dt_desactivation\": \"2026-01-01T00:00:00\",\n  \"motif_desactivation\": \"string\",\n  \"commentaire\": \"string\",\n  \"est_par_defaut\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"

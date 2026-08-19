@@ -8,7 +8,10 @@
 -- Règle de gestion : une modification de périmètre PDI ou de trafic n'entraîne la création
 -- d'une version QUE pour le site concerné — d'où le paramètre `@co_regate`, obligatoire.
 --
--- Prérequis : `DSR-696-698_migration.sql` (index (co_regate, actif)).
+-- Prérequis : `DSR-696-699_migration.sql`, qui rétablit la colonne `date_creation` attendue
+-- par le ticket. L'index `(co_regate, actif)` qui sert la désactivation et la lecture
+-- d'éligibilité de DSR-701, lui, est fourni par la base depuis la ré-extraction du
+-- 17/08/2026 sous le nom `idx_regate_actif` : la migration ne le crée donc plus.
 --
 -- USAGE — renseigner les paramètres ci-dessous, puis :
 --   mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-698_version_cle.sql
@@ -42,7 +45,7 @@ SELECT @co_regate                                              AS co_regate,
          ORDER BY id_version_cle DESC LIMIT 1)                 AS referentiel_de_cette_version,
        (SELECT MAX(id_referentiel) FROM trppu_referentiel
          WHERE co_regate = @co_regate)                         AS dernier_referentiel_du_site,
-       (SELECT COUNT(*) FROM trppu_site_trafic
+       (SELECT COUNT(*) FROM trppu_trafic_site
          WHERE id_referentiel = @id_referentiel
            AND co_regate_site = @co_regate)                    AS agregats_dsr696_presents;
 
@@ -64,9 +67,15 @@ SET @deja := (SELECT COUNT(*)
 -- active à un instant donné, faute de quoi la lecture d'éligibilité de DSR-701 règle 9
 -- (`WHERE co_regate = ? AND actif = 'O'`) renverrait plusieurs lignes et deviendrait
 -- ambiguë. Restreint au seul site concerné, conformément à la RG du ticket.
+--
+-- `date_fin_validite` est posée en même temps que `actif = 'N'`. Le ticket ne mentionne ni
+-- la désactivation ni cette colonne, apparue avec la ré-extraction du schéma du 17/08/2026 :
+-- laisser la fin de validité vide ferait apparaître une version désactivée comme valide
+-- indéfiniment, et les deux colonnes se contrediraient.
 
 UPDATE trppu_version_cle
-   SET actif = 'N'
+   SET actif = 'N',
+       date_fin_validite = NOW()
  WHERE co_regate = @co_regate
    AND actif = 'O'
    AND @deja = 0;
@@ -79,8 +88,15 @@ UPDATE trppu_version_cle
 -- FROM trppu_version_cle)` : MySQL refuse de lire la table cible d'un INSERT dans son propre
 -- SELECT (erreur 1093). D'où le test déporté sur la variable calculée plus haut.
 --
--- Non listées : `id_version_cle` (AUTO_INCREMENT — CA2, identifiant unique) et
--- `date_creation` (DEFAULT CURRENT_TIMESTAMP).
+-- Non listées, parce que la base les alimente seule : `id_version_cle` (AUTO_INCREMENT —
+-- CA2, identifiant unique), `date_creation` et `date_debut_validite`, toutes deux en
+-- DEFAULT CURRENT_TIMESTAMP.
+--
+-- `date_creation` est celle du ticket (« 01/09/2026 ») ; elle avait disparu du schéma
+-- ré-extrait le 17/08/2026 et est rétablie par `DSR-696-699_migration.sql`. Elle ne se
+-- confond pas avec `date_debut_validite` : la première dit quand la ligne a été écrite, la
+-- seconde depuis quand la version est valide. Les deux coïncident ici, parce que la version
+-- est créée active, mais rien ne l'impose.
 
 INSERT INTO trppu_version_cle
     (id_referentiel, libelle, co_regate, actif, commentaire)
@@ -94,7 +110,8 @@ SELECT @id_referentiel, @libelle, @co_regate, 'O', @commentaire
 -- -------------------------------------------------------------------------------------
 
 -- CA1 + CA2 : la version créée (ou celle déjà en place si le script n'a rien fait).
-SELECT id_version_cle, id_referentiel, co_regate, libelle, actif, commentaire, date_creation
+SELECT id_version_cle, id_referentiel, co_regate, libelle, actif, commentaire,
+       date_creation, date_debut_validite, date_fin_validite
   FROM trppu_version_cle
  WHERE co_regate = @co_regate
  ORDER BY id_version_cle DESC;

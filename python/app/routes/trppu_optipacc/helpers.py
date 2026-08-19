@@ -43,9 +43,8 @@ SELECT_SCENARIOS_EXPLOITABLES_SQL = (
     "ORDER BY id_scenario"
 )
 
-# DSR-689 — garde d'accès. Volontairement limité aux colonnes nécessaires :
-# on ne passe pas par SELECT_SCENARIO_SQL / ScenarioOut, dont le Literal de statut
-# ignore la valeur SIMULATION présente en base (écart n°2 de RAPPORT-ECARTS-db_new).
+# DSR-689 — garde d'accès. Volontairement limité aux colonnes nécessaires : la
+# garde n'a besoin que du statut et du flag de calcul, pas de tout ScenarioOut.
 SELECT_SCENARIO_GARDE_SQL = (
     "SELECT id_scenario, co_regate, statut, trafic_agrebal_calcule "
     "FROM trppu_scenario WHERE id_scenario = %s"

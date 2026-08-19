@@ -1,0 +1,267 @@
+========================================================================
+DSR-699 - Calcul des cles de repartition des PDI
+Commentaire de resolution
+========================================================================
+
+
+1. RESUME DU LIVRABLE
+------------------------------------------------------------------------
+
+Script SQL qui calcule les cles de repartition et alimente
+TRPPU_CLES_REPARTITION_CALCULE : pour chaque PDI actif d'un referentiel,
+le rapport entre son trafic et le total de son site, rattache a la
+version de cles active du site.
+
+Livre dans le module YB05, en SQL pur, sans code applicatif :
+
+  db/DSR-696-699_migration.sql   contraintes et index manquants
+                                 (a jouer UNE FOIS, en premier)
+  db/DSR-699_cles_calculees.sql  le traitement lui-meme
+  db/README.md                   mode d'emploi de la chaine complete
+  tests/test_scripts_dsr.py      controles automatises, sans base
+
+Le script se joue au client mysql, ou via le runner de scripts du
+socle (Database.execute_sql_file).
+
+DEPENDANCE D'ORDRE : DSR-696 et DSR-698 doivent avoir ete joues pour le
+meme referentiel. Le premier fournit le denominateur
+(trppu_trafic_site), le second le conteneur (trppu_version_cle). Un site
+auquel il manque l'un des deux est ecarte par la jointure - le script le
+compte et l'affiche avant d'ecrire quoi que ce soit.
+
+
+2. PARAMETRES
+------------------------------------------------------------------------
+
+Identiques a ceux de DSR-696, volontairement : les deux scripts se
+jouent l'un apres l'autre sur le meme perimetre.
+
+  SET @id_referentiel := 1;      -- obligatoire
+  SET @co_regate      := NULL;   -- '123456' pour un seul site,
+                                 -- NULL pour tout le referentiel
+
+
+3. TRAITEMENT
+------------------------------------------------------------------------
+
+Un seul INSERT, joignant les trois tables :
+
+  INSERT INTO trppu_cles_repartition_calcule
+      (id_version_cle, id_referentiel, id_pdi, co_regate_site,
+       cle_colis, cle_oo, cle_3s, cle_potentielip)
+  SELECT v.id_version_cle, c.id_referentiel, c.id_pdi, c.co_regate_site,
+         c.trafic_colis / s.trafic_colis_total,
+         c.trafic_oo    / s.trafic_oo_total,
+         c.trafic_3s    / s.trafic_3s_total,
+         CAST(COALESCE(c.potentielip, 0) AS DECIMAL(24,18))
+             / s.potentielip_total
+    FROM trppu_cles_repartition c
+    JOIN trppu_trafic_site  s ON s.id_referentiel = c.id_referentiel
+                             AND s.co_regate_site = c.co_regate_site
+    JOIN trppu_version_cle  v ON v.id_referentiel = c.id_referentiel
+                             AND v.co_regate      = c.co_regate_site
+                             AND v.actif = 'O'
+   WHERE c.id_referentiel = @id_referentiel
+     AND c.date_fin_validite IS NULL
+     AND (@co_regate IS NULL OR c.co_regate_site = @co_regate)
+     AND @deja = 0;
+
+Points de conception :
+
+  - La jointure sur trppu_version_cle porte le CA2 : aucune cle ne peut
+    exister sans version, c'est structurel et non declaratif.
+
+  - Les trois acces sont servis par un index (idx_cr_ref_actif,
+    uq_site_trafic, idx_regate_actif) : aucun balayage des 22,4 M
+    lignes de la source.
+
+  - id_cle_repartition (AUTO_INCREMENT) et date_creation
+    (DEFAULT CURRENT_TIMESTAMP) ne sont pas alimentes explicitement.
+
+  - REJOUABILITE ET CA4. La variable @deja memorise, AVANT toute
+    ecriture, si une version du perimetre porte deja des cles. Si oui,
+    le script ne fait RIEN - le CA4 ("aucune cle d'une version existante
+    n'est modifiee") est absolu. Il ne charge pas non plus les autres
+    sites, pour ne pas laisser un referentiel a moitie calcule sans que
+    rien ne le signale ; pour traiter les sites restants, relancer site
+    par site avec @co_regate.
+    Le test est deporte sur une variable parce que MySQL refuse de lire
+    la table cible d'un INSERT dans son propre SELECT (erreur 1093).
+
+  - Recalculer les cles d'un site n'est PAS prevu, par construction : la
+    demarche est de creer une nouvelle version (DSR-698 avec un nouveau
+    referentiel), qui desactive la precedente, puis de calculer ses
+    cles.
+
+
+4. DEUX ECARTS ENTRE LE TICKET ET LA BASE
+------------------------------------------------------------------------
+
+Ce ticket est le mieux ecrit des trois : sa liste de colonnes
+correspond EXACTEMENT a la table reelle - dix colonnes, memes noms,
+meme ordre. Deux reserves seulement.
+
+a) NOM DE TABLE
+
+   Le ticket ecrit TRPPU_SITE_TRAFIC (ligne 24). La table s'appelle
+   trppu_trafic_site depuis la re-extraction du schema du 17/08/2026 ;
+   DSR-696 a ete amende dans ce sens, pas celui-ci.
+
+b) DIVISION ENTIERE SUR LA CLE POTENTIEL IP - POINT IMPORTANT
+
+   potentielip est un smallint et potentielip_total un bigint : la
+   division est ENTIERE. Or pour MySQL, l'echelle du resultat d'une
+   division est celle du premier operande augmentee de
+   div_precision_increment, soit 4 par defaut.
+
+   Sans intervention, la cle potentiel IP serait donc calculee a 1e-4
+   pres, puis stockee dans un decimal(24,18) laissant croire a dix-huit
+   decimales significatives. Le controle du ticket n'y verrait rien :
+   une somme de cles arrondies au dix-millieme vaut toujours 1 a la
+   tolerance pres. L'erreur ne se manifesterait que plus loin, dans la
+   repartition des trafics.
+
+   D'ou le CAST(... AS DECIMAL(24,18)) sur le numerateur. Les trois
+   autres cles partent d'un decimal(25,19) et ne sont pas concernees.
+
+   Controle a jouer une fois sur donnees reelles :
+
+     SELECT COUNT(*) FROM trppu_cles_repartition_calcule
+      WHERE cle_potentielip <> ROUND(cle_potentielip, 4);
+
+   Doit renvoyer un nombre superieur a 0.
+
+
+5. DIVISION PAR ZERO - CHOIX RETENU : ECHOUER
+------------------------------------------------------------------------
+
+Un site dont un total de trafic vaut zero produit une division par zero.
+En MySQL, celle-ci vaut NULL, refuse par les quatre colonnes cibles
+NOT NULL - mais UNIQUEMENT si le serveur est en mode strict. Sur un
+serveur laxiste, la meme ligne passerait avec un avertissement et une
+cle fausse.
+
+Le cas est realiste, et d'abord sur potentielip : un site dont aucun PDI
+ne porte de potentiel IP a un total a zero, sans que rien soit anormal
+par ailleurs.
+
+Choix retenu : ECHOUER plutot que masquer. Mieux vaut une ERROR 1365
+qu'un jeu de cles silencieusement faux, sur lequel tout le calcul de
+trafic des scenarios s'appuiera ensuite. Trois consequences :
+
+  - le script durcit son propre sql_mode de session
+    (STRICT_ALL_TABLES, ERROR_FOR_DIVISION_BY_ZERO), pour que l'echec ne
+    depende pas de la configuration du serveur ;
+
+  - un garde-fou liste les sites a denominateur nul AVANT l'INSERT, de
+    sorte que l'erreur, si elle survient, soit deja expliquee ;
+
+  - aucun NULLIF ne protege les denominateurs, et le seul COALESCE porte
+    sur potentielip, numerateur nullable. Un test de non-regression
+    verrouille ce point.
+
+A ARBITRER PAR LE METIER : que vaut la part d'un site dans un trafic
+dont il n'a rien ? Le script ne tranche pas a la place du metier - il
+signale et s'arrete.
+
+
+6. AJOUT DE SCHEMA (fichier de migration separe)
+------------------------------------------------------------------------
+
+UNIQUE KEY uq_crc_version_pdi (id_version_cle, id_pdi)
+sur trppu_cles_repartition_calcule.
+
+La table ne portait que sa PK auto-incrementee : rien n'empechait de
+charger deux fois les cles d'une meme version. Le garde-fou @deja y
+pourvoit cote script, mais il ne protege ni d'un INSERT joue a la main,
+ni de deux executions concurrentes. La cle unique rend le CA4 vrai EN
+BASE.
+
+Elle sert en meme temps d'index de lecture pour DSR-702
+(WHERE id_version_cle = ?) : id_version_cle en est le premier membre,
+aucun index supplementaire n'est necessaire.
+
+
+7. LE CONTROLE DEMANDE PAR LE TICKET
+------------------------------------------------------------------------
+
+Le ticket demande, quand une somme de cles sort de [0,9999 ; 1,0001],
+"une alerte dans les logs indiquant le site et la cle et la somme
+obtenue". Un script SQL ne sait pas journaliser.
+
+Le controle integre rend, par site, les quatre sommes et un verdict
+OK / ANOMALIE, les anomalies triees en tete. C'est l'appelant - socle ou
+exploitant - qui journalise.
+
+Lecture des resultats :
+
+  - somme a 0 : denominateur nul accepte par un serveur laxiste ;
+  - somme franchement superieure a 1 : doublon de PDI, ou agregat
+    DSR-696 calcule sur un perimetre plus etroit que les cles ;
+  - somme legerement hors bornes : arrondi, a examiner au cas par cas.
+
+
+8. COMMENT TESTER
+------------------------------------------------------------------------
+
+  mysql -h <hote> -u <user> -p dsr_mercure_aa \
+      < db/DSR-696-699_migration.sql
+  mysql -h <hote> -u <user> -p dsr_mercure_aa \
+      < db/DSR-696_site_trafic.sql
+  mysql -h <hote> -u <user> -p dsr_mercure_aa \
+      < db/DSR-698_version_cle.sql
+  mysql -h <hote> -u <user> -p dsr_mercure_aa \
+      < db/DSR-699_cles_calculees.sql
+
+Le script affiche d'abord l'etat du perimetre : nb_sites_sans_agregat et
+nb_sites_sans_version doivent valoir 0, et la liste des denominateurs
+nuls doit etre vide.
+
+Il se termine par les controles des criteres d'acceptation :
+
+  - PDI actifs sans ligne de cles : 0 ligne ;
+  - cles sans version active : 0 ligne ;
+  - sommes par site : verdict OK partout ;
+  - doublons (version, PDI) : 0 ligne.
+
+Verifier aussi la rejouabilite en relancant le script : aucune ligne ne
+doit etre creee.
+
+
+9. COUVERTURE DES CRITERES D'ACCEPTATION
+------------------------------------------------------------------------
+
+  CA1 - une ligne de cles par PDI actif du referentiel
+        ............................ OK (jointures + garde-fous sur les
+                                        sites sans agregat et sans
+                                        version, controle integre)
+  CA2 - toutes les cles rattachees a une version
+        ............................ OK (jointure sur
+                                        trppu_version_cle actif = 'O')
+  CA3 - la somme des cles d'un site vaut 1
+        ............................ OK (controle integre, tolerance
+                                        0,9999 - 1,0001 du ticket)
+  CA4 - aucune cle d'une version existante n'est modifiee
+        ............................ OK (garde-fou @deja + cle unique
+                                        uq_crc_version_pdi ajoutee par
+                                        la migration)
+
+
+10. DEPENDANCES ET SUITE
+------------------------------------------------------------------------
+
+  - DSR-696 et DSR-698 doivent avoir ete joues pour le meme
+    referentiel. Ordre complet dans db/README.md.
+
+  - DSR-697 : le ticket est VIDE dans le depot (fichier 0 octet). On le
+    croyait porteur de ce calcul ; c'est ce ticket-ci qui le specifie.
+    Reste a savoir ce que DSR-697 demande - a re-exporter depuis Jira.
+
+  - DSR-702 (batch CALCUL_TRAFIC_PDI) consomme cette table par
+    id_version_cle : l'index est en place.
+
+  - L'analyse detaillee des trois tickets est dans
+    docs/DIAGNOSTIC-DSR-696-699.md, et l'inventaire des ecarts de la
+    chaine dans docs/INCOHERENCES.md.
+
+========================================================================

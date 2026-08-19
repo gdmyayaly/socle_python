@@ -9,7 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 CO_REGATE_PATTERN = r"^[A-Za-z0-9]{6}$"
 CO_PRODUIT_PATTERN = r"^[A-Za-z0-9]{1,2}$"
 
-Statut = Literal["EN COURS", "VALIDE", "EN PRODUCTION", "ARCHIVE"]
+# Reflète l'enum trppu_scenario.statut du schéma (db/db_new.sql) : SIMULATION
+# incluse, sans quoi tout scénario en simulation fait échouer la validation
+# du response_model (ResponseValidationError -> 500).
+Statut = Literal["EN COURS", "SIMULATION", "VALIDE", "EN PRODUCTION", "ARCHIVE"]
 NbJours = Literal[5, 6]
 
 

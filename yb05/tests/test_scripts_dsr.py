@@ -1,13 +1,27 @@
-"""Tests des scripts SQL métier de `db/` (DSR-696, DSR-698).
+"""Tests des scripts SQL métier de `db/` (DSR-696, DSR-698, DSR-699).
 
 Aucune base MySQL n'est nécessaire : les scripts sont analysés par le découpeur du socle, et
 leur exécution n'est vérifiée qu'en `dry_run`, mode qui n'ouvre aucune connexion. Le code
 async passe par ``asyncio.run`` pour ne pas dépendre de pytest-asyncio.
 
-L'enjeu principal est le contrôle des noms de colonnes : DSR-696 spécifie
-``INSERT INTO trppu_site_trafic (id_site, …)`` alors que cette colonne n'existe pas — la
-table porte ``co_regate_site``. Recopié tel quel, le script échouerait en base. Le schéma de
-référence est donc rappelé ici et confronté aux listes d'insertion.
+L'enjeu principal est le contrôle des noms, que les tickets décrivent mal :
+
+* DSR-696 écrit ``INSERT INTO trppu_site_trafic (id_site, …)``. La table s'appelle
+  ``trppu_trafic_site`` et ne porte pas de colonne ``id_site`` — c'est ``co_regate_site``.
+  L'amendement du ticket a remplacé ``id_site`` par ``id_site_trafic``, qui est la PK
+  AUTO_INCREMENT : le contresens a changé de forme, pas de nature.
+* DSR-698 attend une colonne ``date_creation`` sur ``trppu_version_cle``, que le schéma
+  ré-extrait a fait disparaître au profit de ``date_debut_validite`` /
+  ``date_fin_validite``. Ici c'est le ticket qui a raison : la migration rétablit la
+  colonne, les trois dates coexistent et disent trois choses différentes.
+
+* DSR-699 est le mieux écrit des trois — sa liste de colonnes correspond exactement à la
+  table. Ses pièges sont ailleurs, dans le calcul : une division par zéro que le serveur
+  peut accepter silencieusement, et une division entière qui coûterait quatorze décimales
+  sur la clé potentiel IP.
+
+Recopiés tels quels, ces scripts échoueraient en base. Le schéma de référence est donc
+rappelé ici et confronté aux listes d'insertion.
 """
 
 import asyncio
@@ -21,11 +35,13 @@ from app.db.sql_script import first_keyword, is_ddl, split_sql_script
 
 DB_DIR = Path(__file__).resolve().parent.parent / "db"
 
-MIGRATION = DB_DIR / "DSR-696-698_migration.sql"
+MIGRATION = DB_DIR / "DSR-696-699_migration.sql"
 SITE_TRAFIC = DB_DIR / "DSR-696_site_trafic.sql"
 VERSION_CLE = DB_DIR / "DSR-698_version_cle.sql"
+CLES_CALCULEES = DB_DIR / "DSR-699_cles_calculees.sql"
 
-SCRIPTS_METIER = (SITE_TRAFIC, VERSION_CLE)
+# Dans l'ordre d'exécution de la chaîne — cf. db/README.md.
+SCRIPTS_METIER = (SITE_TRAFIC, VERSION_CLE, CLES_CALCULEES)
 TOUS_LES_SCRIPTS = (MIGRATION, *SCRIPTS_METIER)
 
 
@@ -36,8 +52,13 @@ TOUS_LES_SCRIPTS = (MIGRATION, *SCRIPTS_METIER)
 # Extrait de python/db/db_new.sql, limité aux tables écrites par ces scripts. Recopié plutôt
 # que lu depuis le projet voisin : yb05 ne doit pas dépendre de l'arborescence de python/.
 # À resynchroniser si le schéma évolue.
+#
+# État APRÈS `DSR-696-699_migration.sql` : c'est lui que les trois scripts de données
+# supposent. Deux écarts avec le dump du 17/08/2026, tous deux apportés par la migration —
+# `trppu_version_cle.date_creation`, que DSR-698 spécifie, et `uq_crc_version_pdi`, qui rend
+# le CA4 de DSR-699 vrai en base.
 SCHEMA_REFERENCE = """\
-CREATE TABLE `trppu_site_trafic` (
+CREATE TABLE `trppu_trafic_site` (
   `id_site_trafic` bigint NOT NULL AUTO_INCREMENT,
   `id_referentiel` int NOT NULL,
   `co_regate_site` varchar(10) NOT NULL,
@@ -58,9 +79,27 @@ CREATE TABLE `trppu_version_cle` (
   `co_regate` char(6) NOT NULL,
   `actif` char(1) NOT NULL DEFAULT 'O',
   `date_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `date_debut_validite` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `date_fin_validite` datetime DEFAULT NULL,
   `commentaire` varchar(500) DEFAULT NULL,
   PRIMARY KEY (`id_version_cle`),
-  KEY `idx_ref` (`id_referentiel`)
+  KEY `idx_ref` (`id_referentiel`),
+  KEY `idx_regate_actif` (`co_regate`,`actif`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `trppu_cles_repartition_calcule` (
+  `id_cle_repartition` bigint NOT NULL AUTO_INCREMENT,
+  `id_version_cle` int NOT NULL,
+  `id_referentiel` int NOT NULL,
+  `id_pdi` bigint NOT NULL,
+  `co_regate_site` char(6) NOT NULL,
+  `cle_colis` decimal(24,18) NOT NULL,
+  `cle_oo` decimal(24,18) NOT NULL,
+  `cle_3s` decimal(24,18) NOT NULL,
+  `cle_potentielip` decimal(24,18) NOT NULL,
+  `date_creation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_cle_repartition`),
+  UNIQUE KEY `uq_crc_version_pdi` (`id_version_cle`,`id_pdi`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
@@ -87,6 +126,19 @@ def _colonnes_insérées(script: Path, table: str) -> list[str]:
 
 def _instructions(script: Path) -> list[str]:
     return split_sql_script(script.read_text(encoding="utf-8"))
+
+
+def _sql_sans_commentaires(script: Path) -> str:
+    """Contenu du script privé de ses lignes de commentaire.
+
+    Les commentaires citent les tickets — donc leurs erreurs, anciens noms compris : seul le
+    SQL exécutable doit être confronté au schéma.
+    """
+    return "\n".join(
+        ligne
+        for ligne in script.read_text(encoding="utf-8").splitlines()
+        if not ligne.lstrip().startswith("--")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +172,7 @@ def test_le_script_existe_et_est_decoupable(script):
 
 @pytest.mark.parametrize(
     "script, attendu",
-    [(MIGRATION, 13), (SITE_TRAFIC, 9), (VERSION_CLE, 10)],
+    [(MIGRATION, 17), (SITE_TRAFIC, 9), (VERSION_CLE, 10), (CLES_CALCULEES, 11)],
     ids=lambda v: v.name if isinstance(v, Path) else str(v),
 )
 def test_nombre_d_instructions(script, attendu):
@@ -155,8 +207,8 @@ def test_dsr698_calcule_deja_avant_toute_ecriture():
 
 def test_dsr696_n_insere_que_des_colonnes_existantes():
     """`id_site`, annoncé par le ticket, n'existe pas : la colonne est `co_regate_site`."""
-    colonnes = _colonnes_insérées(SITE_TRAFIC, "trppu_site_trafic")
-    schema = _colonnes_du_schema("trppu_site_trafic")
+    colonnes = _colonnes_insérées(SITE_TRAFIC, "trppu_trafic_site")
+    schema = _colonnes_du_schema("trppu_trafic_site")
 
     assert set(colonnes) <= schema, f"colonnes inconnues : {set(colonnes) - schema}"
     assert "co_regate_site" in colonnes
@@ -166,29 +218,58 @@ def test_dsr696_n_insere_que_des_colonnes_existantes():
 
 
 def test_dsr698_n_insere_que_des_colonnes_existantes():
+    """Les trois colonnes horodatées portent un DEFAULT : l'INSERT ne doit en citer aucune,
+    sous peine de figer une valeur là où la base sait faire."""
     colonnes = _colonnes_insérées(VERSION_CLE, "trppu_version_cle")
     schema = _colonnes_du_schema("trppu_version_cle")
 
     assert set(colonnes) <= schema, f"colonnes inconnues : {set(colonnes) - schema}"
     assert "id_version_cle" not in colonnes
     assert "date_creation" not in colonnes
+    assert "date_debut_validite" not in colonnes
 
 
 @pytest.mark.parametrize("script", TOUS_LES_SCRIPTS, ids=lambda p: p.name)
 def test_aucun_script_ne_reprend_la_colonne_fantome_du_ticket(script):
     """Garde-fou de non-régression sur l'erreur de spécification de DSR-696."""
-    contenu = script.read_text(encoding="utf-8")
-    sql_seul = "\n".join(
-        ligne for ligne in contenu.splitlines() if not ligne.lstrip().startswith("--")
+    assert not re.search(r"\bid_site\b", _sql_sans_commentaires(script))
+
+
+@pytest.mark.parametrize("script", TOUS_LES_SCRIPTS, ids=lambda p: p.name)
+def test_aucun_script_ne_vise_l_ancien_nom_de_table(script):
+    """La table a été renommée `trppu_site_trafic` → `trppu_trafic_site`. L'ancien nom ne
+    survit que dans le nom de fichier et dans celui de l'index `uq_site_trafic`, conservé
+    pour rester détectable là où la migration a déjà été jouée."""
+    sql_seul = _sql_sans_commentaires(script)
+
+    assert "trppu_site_trafic" not in sql_seul
+
+
+def test_dsr698_restitue_les_trois_dates():
+    """Le contrôle final doit montrer les trois dates de la version : création (colonne du
+    ticket, rétablie par la migration), début et fin de validité (colonnes du schéma
+    ré-extrait). En omettre une masquerait l'écart entre le ticket et la base."""
+    sql_seul = _sql_sans_commentaires(VERSION_CLE)
+
+    for colonne in ("date_creation", "date_debut_validite", "date_fin_validite"):
+        assert colonne in sql_seul, f"absente du script : {colonne}"
+
+
+def test_dsr698_clot_la_version_desactivee():
+    """La désactivation pose `date_fin_validite` en même temps que `actif = 'N'` : sans
+    elle, une version inactive garderait une fin de validité vide."""
+    update = next(
+        s for s in _instructions(VERSION_CLE) if first_keyword(s) == "UPDATE"
     )
 
-    assert not re.search(r"\bid_site\b", sql_seul)
+    assert "actif = 'N'" in update
+    assert "date_fin_validite" in update
 
 
 def test_les_listes_insert_et_select_ont_la_meme_longueur():
     """Un décalage entre les deux listes ne se voit qu'à l'exécution, en base."""
     contenu = SITE_TRAFIC.read_text(encoding="utf-8")
-    colonnes = _colonnes_insérées(SITE_TRAFIC, "trppu_site_trafic")
+    colonnes = _colonnes_insérées(SITE_TRAFIC, "trppu_trafic_site")
 
     corps_select = re.search(r"SELECT id_referentiel,(.*?)\n\s*FROM", contenu, re.S)
     assert corps_select is not None
@@ -198,6 +279,75 @@ def test_les_listes_insert_et_select_ont_la_meme_longueur():
     )
 
     assert expressions == len(colonnes)
+
+
+# ---------------------------------------------------------------------------
+# DSR-699 — le calcul des clés
+# ---------------------------------------------------------------------------
+
+
+def test_dsr699_n_insere_que_des_colonnes_existantes():
+    colonnes = _colonnes_insérées(CLES_CALCULEES, "trppu_cles_repartition_calcule")
+    schema = _colonnes_du_schema("trppu_cles_repartition_calcule")
+
+    assert set(colonnes) <= schema, f"colonnes inconnues : {set(colonnes) - schema}"
+    assert {"cle_colis", "cle_oo", "cle_3s", "cle_potentielip"} <= set(colonnes)
+    # AUTO_INCREMENT et DEFAULT : jamais alimentées explicitement.
+    assert "id_cle_repartition" not in colonnes
+    assert "date_creation" not in colonnes
+
+
+def test_dsr699_listes_insert_et_select_ont_la_meme_longueur():
+    contenu = CLES_CALCULEES.read_text(encoding="utf-8")
+    colonnes = _colonnes_insérées(CLES_CALCULEES, "trppu_cles_repartition_calcule")
+
+    corps_select = re.search(r"SELECT v\.id_version_cle,(.*?)\n\s*FROM", contenu, re.S)
+    assert corps_select is not None
+    expressions = 1 + len(
+        [e for e in re.split(r",\n", corps_select.group(1)) if e.strip()]
+    )
+
+    assert expressions == len(colonnes)
+
+
+def test_dsr699_calcule_deja_avant_toute_ecriture():
+    """Même garde-fou que DSR-698, ici au service du CA4 : une version déjà calculée n'est
+    jamais retouchée. Calculé après l'INSERT, `@deja` ne protégerait plus rien."""
+    instructions = _instructions(CLES_CALCULEES)
+    verbes = [first_keyword(s) for s in instructions]
+
+    index_deja = next(i for i, s in enumerate(instructions) if "@deja :=" in s)
+    assert index_deja < verbes.index("INSERT")
+
+
+def test_dsr699_durcit_le_mode_sql():
+    """Sans ce durcissement, un serveur non strict accepterait une division par zéro en la
+    ramenant à NULL puis à 0 : le script chargerait des clés fausses au lieu d'échouer."""
+    sql_seul = _sql_sans_commentaires(CLES_CALCULEES)
+
+    assert "ERROR_FOR_DIVISION_BY_ZERO" in sql_seul
+    assert "STRICT_ALL_TABLES" in sql_seul
+
+
+def test_dsr699_ne_masque_aucun_denominateur_nul():
+    """Décision de conception : aucun `NULLIF` ne protège les dénominateurs, et le seul
+    `COALESCE` porte sur `potentielip`, numérateur nullable. Un COALESCE de plus signerait le
+    retour du masquage — une clé à 0 indistinguable d'une clé réellement nulle."""
+    sql_seul = _sql_sans_commentaires(CLES_CALCULEES)
+
+    assert "NULLIF" not in sql_seul.upper()
+    assert sql_seul.upper().count("COALESCE") == 1
+
+
+def test_dsr699_cast_la_cle_potentiel_ip():
+    """`potentielip` (smallint) / `potentielip_total` (bigint) est une division entière :
+    MySQL rendrait quatre décimales là où la cible en attend dix-huit. Le CAST est ce qui
+    évite une clé juste à 10⁻⁴ près, stockée comme si elle valait mieux."""
+    sql_seul = _sql_sans_commentaires(CLES_CALCULEES)
+
+    assert re.search(
+        r"CAST\(\s*COALESCE\(c\.potentielip, 0\)\s*AS DECIMAL\(24,18\)\s*\)", sql_seul
+    ), "le CAST de la clé potentiel IP a disparu"
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +385,7 @@ def test_le_ddl_de_la_migration_echappe_a_la_detection():
 
 @pytest.mark.parametrize(
     "script, attendu",
-    [(MIGRATION, 13), (SITE_TRAFIC, 9), (VERSION_CLE, 10)],
+    [(MIGRATION, 17), (SITE_TRAFIC, 9), (VERSION_CLE, 10), (CLES_CALCULEES, 11)],
     ids=lambda v: v.name if isinstance(v, Path) else str(v),
 )
 def test_dry_run_liste_les_instructions_sans_connexion(monkeypatch, script, attendu):

@@ -40,6 +40,7 @@ from .schemas import (
 )
 from .statuts import (
     STATUTS,
+    STATUTS_EDITABLES,
     apply_transition_side_effects,
     assert_internal_transition_allowed,
     assert_transition_allowed,
@@ -327,12 +328,12 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
-    if scenario["statut"] != "EN COURS":
+    if scenario["statut"] not in STATUTS_EDITABLES:
         raise HTTPException(
             status_code=409,
             detail=(
                 f"Mise à jour interdite : le scénario {id_scenario} est au statut "
-                f"'{scenario['statut']}' (attendu 'EN COURS')."
+                f"'{scenario['statut']}' (attendu : {' ou '.join(STATUTS_EDITABLES)})."
             ),
         )
 
@@ -443,7 +444,9 @@ async def get_scenario_edition(
     try:
         tmh = await fetch_tmh(db_read, id_scenario)
         comptages = await db_read.fetch_all(SELECT_COMPTAGES_SQL, (id_scenario,))
-        variations = await db_read.fetch_all(SELECT_VARIATIONS_SQL, (id_scenario,))
+        # SELECT_VARIATIONS_SQL attend DEUX paramètres id_scenario (sous-requête TMH
+        # + jointure des variations) — cf. sa docstring.
+        variations = await db_read.fetch_all(SELECT_VARIATIONS_SQL, (id_scenario, id_scenario))
         # DSR-645 (motif libre) : liste à plat des neutralisations (plus de regroupement).
         neutralisations = await db_read.fetch_all(SELECT_NEUTRALISATIONS_SQL, (id_scenario,))
         id_pic_version_defaut = await resolve_default_pic_version(db_read)

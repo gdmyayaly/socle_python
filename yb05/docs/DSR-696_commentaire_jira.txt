@@ -232,3 +232,88 @@ d'agregation avant et apres la migration : le type doit passer de ALL
     docs/INCOHERENCES.md du module YB05.
 
 ========================================================================
+
+
+========================================================================
+ADDENDUM - 18/08/2026
+Mise a jour apres amendement du ticket et re-extraction du schema
+
+========================================================================
+
+
+A. LA TABLE A ETE RENOMMEE
+------------------------------------------------------------------------
+
+TRPPU_SITE_TRAFIC s'appelle desormais TRPPU_TRAFIC_SITE. Le ticket a ete
+amende dans ce sens et le dump du 17/08/2026 le confirme. Les scripts,
+les tests et le README suivent.
+
+L'index cree par la migration conserve volontairement son nom,
+uq_site_trafic : la ou la migration a deja ete jouee avant le renommage,
+l'index a suivi sa table sous ce nom, et le garde-fou de rejouabilite
+doit pouvoir le reconnaitre.
+
+
+B. LA COLONNE DU SITE N'EST TOUJOURS PAS NOMMEE CORRECTEMENT
+------------------------------------------------------------------------
+
+L'amendement remplace id_site par id_site_trafic dans la structure. Ce
+n'est pas la bonne colonne non plus : id_site_trafic est la PK
+AUTO_INCREMENT de la table. La colonne du site est co_regate_site, et
+elle reste absente de la structure annoncee par le ticket.
+
+L'INSERT de la ligne 148 n'a pas ete amende et garde id_site.
+
+Le ticket porte de quoi trancher : son SELECT place co_regate_site en
+premiere position, face a id_site en premiere position de l'INSERT. Le
+mapping positionnel est sans ambiguite. Le script utilise les noms
+reels ; deux tests de non-regression verrouillent le point.
+
+
+C. CA1 ET CA4 SE CONTREDISENT - LECTURE RETENUE
+------------------------------------------------------------------------
+
+CA1 demande que tous les sites presents dans TRPPU_CLES_REPARTITION
+soient charges ; CA4 interdit de charger les sites sans PDI actif. Un
+site dont tous les PDI sont clotures satisfait le premier et viole le
+second.
+
+Lecture retenue : CA1 s'entend des sites ayant AU MOINS UN PDI ACTIF.
+Le controle CA1 du script applique donc le meme filtre RG1 que le
+calcul.
+
+
+D. DATE_FIN_VALIDITE N'EST JAMAIS ALIMENTEE - POINT OUVERT
+------------------------------------------------------------------------
+
+Le ticket ecrit NULL en dur et historise par DELETE/INSERT sur le
+referentiel. Aucune instruction ne pose de fin de validite : toutes les
+lignes de la table, tous referentiels confondus, portent NULL.
+
+Consequence a connaitre pour DSR-697 : le jeu d'agregats courant ne peut
+PAS etre identifie par WHERE date_fin_validite IS NULL, il faut filtrer
+sur id_referentiel.
+
+La cloture des jeux anterieurs n'a pas ete ajoutee d'office : elle sort
+du perimetre du ticket.
+
+
+Le detail complet est dans docs/DIAGNOSTIC-DSR-696-699.md du module
+YB05.
+
+
+E. LE FICHIER DE MIGRATION A ETE RENOMME
+------------------------------------------------------------------------
+
+db/DSR-696-698_migration.sql s'appelle desormais
+db/DSR-696-699_migration.sql : outre les deux objets decrits en
+section 5, il porte maintenant la cle unique uq_crc_version_pdi
+(id_version_cle, id_pdi), exigee par le CA4 de DSR-699. Les deux ajouts
+decrits dans ce commentaire n'ont pas change ; seul le nom du fichier
+est different.
+
+DSR-699 - le calcul des cles proprement dit, qui consomme cette table -
+est livre dans db/DSR-699_cles_calculees.sql. Le mode d'emploi de la
+chaine complete, ordre d'execution compris, est dans db/README.md.
+
+========================================================================

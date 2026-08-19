@@ -50,7 +50,9 @@ OVERRIDES = {
     "dt_debut": "2026-11-10",
     "dt_fin": "2026-12-19",
     "id_pic_version": 1,
-    "niveau": "SCENARIO",
+    # NATIONAL et non SCENARIO : le CRUD des versions PIC refuse ce niveau en
+    # écriture (NiveauCreationEnum) — ces versions sont créées par trppu_scenario_pic.
+    "niveau": "NATIONAL",
     "statut": "VALIDE",
     "est_fige": False,
 }

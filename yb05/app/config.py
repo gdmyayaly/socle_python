@@ -32,6 +32,43 @@ LOGS_DIR = os.getenv("LOGS_DIR", "")
 # Debug
 DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"
 
+# Calcul des trafics (DSR-702) — correspondance code produit -> famille de clé de répartition.
+#
+# `trppu_cles_repartition_calcule` porte quatre clés (colis, oo, 3s, potentielip) alors que
+# `trppu_produit` contient des codes objets alimentés dynamiquement depuis Databricks (OO, OS,
+# PR, PPI, CO, IP…). Rien en base ne dit à quelle famille appartient un code : la
+# correspondance est donc une donnée de configuration, corrigeable sans livraison.
+#
+# Format : `CODE:famille,CODE:famille`. Familles reconnues : colis, oo, 3s, potentielip.
+CLES_PAR_PRODUIT_DEFAUT = "CO:colis,OO:oo,IP:potentielip,OS:3s,PR:3s,PPI:3s"
+
+
+def _parse_cles_par_produit(brut: str) -> dict[str, str]:
+    """Transforme `CO:colis,OO:oo` en `{"CO": "colis", "OO": "oo"}`.
+
+    Une entrée malformée lève : une correspondance produit/clé silencieusement ignorée
+    produirait des trafics faux, ce qui est bien pire qu'un démarrage refusé.
+    """
+    mapping: dict[str, str] = {}
+    for entree in brut.split(","):
+        entree = entree.strip()
+        if not entree:
+            continue
+        if entree.count(":") != 1:
+            raise ValueError(
+                f"CLES_PAR_PRODUIT : entrée invalide '{entree}', format attendu CODE:famille"
+            )
+        code, famille = (part.strip() for part in entree.split(":"))
+        if not code or not famille:
+            raise ValueError(f"CLES_PAR_PRODUIT : entrée incomplète '{entree}'")
+        mapping[code.upper()] = famille.lower()
+    return mapping
+
+
+CLES_PAR_PRODUIT = _parse_cles_par_produit(
+    os.getenv("CLES_PAR_PRODUIT", CLES_PAR_PRODUIT_DEFAUT)
+)
+
 # Requêtes utilitaires pour les checks
 HEALTH_CHECK_QUERY = "SELECT 1 AS ok"
 
