@@ -1,0 +1,287 @@
+========================================================================
+DSR-702 - YB05 : Calcul des trafics PDI d'un scenario
+Commentaire de resolution
+========================================================================
+
+
+1. RESUME DU LIVRABLE
+------------------------------------------------------------------------
+
+Commande qui calcule les trafics detailles par PDI d'un scenario :
+
+  trafic = TMH x coefficient de retention x cle de repartition du PDI
+
+pour chaque combinaison PDI x produit x jour x densite, et alimente
+TRPPU_TRAFIC_PDI.
+
+Livre dans le module YB05 :
+
+  app/traitements/trafic_pdi.py    le traitement
+  app/traitements/scenario.py      verrou, flags, journal, referentiel
+  app/main.py                      la commande
+  tests/test_traitements_trafic_pdi.py   22 tests, sans base
+
+Ce traitement porte aussi DSR-700 : voir section 4.
+
+
+2. COMMANDE
+------------------------------------------------------------------------
+
+  python -m app.main calcul-trafic-pdi 12345
+  python -m app.main CALCUL_TRAFIC_PDI 12345
+  python -m app.main --traitement=CALCUL_TRAFIC_PDI --scenario=12345
+
+Code de retour : 0 si SUCCES, 1 si ECHEC.
+
+
+3. DEROULEMENT ET ORDRE DES ECRITURES
+------------------------------------------------------------------------
+
+1. Controle d'eligibilite (DSR-701). NON ELIGIBLE : arret immediat,
+   aucune ecriture, aucun verrou pose (CA-01).
+
+2. Determination du motif : INITIAL si les deux flags sont a 0 et
+   qu'aucune ligne n'existe dans TRPPU_RECALCUL_LOG, sinon la raison de
+   la derniere ligne (CA-11).
+
+3. Verrou : UPDATE ... SET calcul_trafic_en_cours = 1
+   WHERE id_scenario = ? AND calcul_trafic_en_cours = 0.
+
+   POINT IMPORTANT : cet UPDATE est execute et COMMITE SEUL. Place dans
+   la transaction du calcul comme le laisse entendre l'enonce, le verrou
+   serait invisible des autres processus jusqu'au commit final,
+   c'est-a-dire trop tard pour empecher un lancement concurrent.
+   Zero ligne affectee = un autre processus detient le scenario : on
+   s'arrete sans rien toucher.
+
+4. Referentiel et version de cles memorises dans le scenario, egalement
+   commites avant le calcul (CA-03). C'est DSR-700, cf. section 4.
+
+5. Chargement des donnees AVANT toute suppression : TMH, coefficients de
+   retention, cles de repartition, mapping Agrebal / PDI. Si une donnee
+   manque, rien n'a encore ete detruit.
+
+6. Calcul en memoire, puis UNE SEULE TRANSACTION contenant :
+   DELETE des trafics Agrebal, DELETE des trafics PDI, remise a 0 des
+   deux flags, insertion par lots de 5 000 lignes, ligne de
+   TRPPU_RECALCUL_LOG, puis trafic_pdi_calcule = 1.
+   A aucun moment la base ne contient un demi-calcul.
+
+7. CALCUL_TRAFIC_EN_COURS reste a 1 : c'est le calcul des trafics
+   Agrebal qui libere le scenario (CA-05).
+
+En cas d'erreur : CALCUL_TRAFIC_EN_COURS repasse a 0,
+TRAFIC_PDI_CALCULE reste a 0, et une ligne de TRPPU_RECALCUL_LOG trace
+l'incident - ecrite HORS de la transaction annulee, sinon elle
+disparaitrait avec elle.
+
+
+4. DSR-700 EST COUVERT PAR L'ETAPE 3
+------------------------------------------------------------------------
+
+DSR-700 demande qu'un scenario memorise le referentiel et la version de
+cles utilises, et les conserve ensuite. C'est exactement l'etape 3 :
+
+  UPDATE trppu_scenario
+     SET id_referentiel = ?, id_version_cle = ?
+   WHERE id_scenario = ?
+
+Ecrite une fois, avant le premier calcul, et jamais retouchee ensuite -
+ni par ce traitement lors d'un recalcul du meme scenario, ni par DSR-703
+(son CA-07 l'interdit explicitement).
+
+  CA1 - chaque scenario possede une version de cles ... OK
+  CA2 - un scenario conserve la version utilisee ...... OK
+  CA3 - on retrouve les cles utilisees ................ OK (jointure
+        trppu_cles_repartition_calcule par id_version_cle)
+  CA4 - on retrouve les donnees source ................ OK (jointure
+        trppu_cles_repartition par id_referentiel)
+
+Rappel : les scenarios crees par YS04 portent encore id_referentiel = 0
+et id_version_cle = 0. Ce traitement est le premier a les renseigner ;
+tant qu'un scenario n'a pas ete calcule par YB05, ses deux colonnes
+restent a 0.
+
+
+5. LE POINT BLOQUANT : QUELLE CLE POUR QUEL PRODUIT
+------------------------------------------------------------------------
+
+Le ticket donne la correspondance sous forme de familles metier :
+
+  Colis -> cle_colis
+  OO    -> cle_oo
+  3S    -> cle_3s
+  IP    -> cle_potentielip
+
+Or les produits ne sont pas des familles : TRPPU_PRODUIT est alimentee
+dynamiquement depuis Databricks (co_type_objet : OO, OS, PR, PPI, CO,
+IP - cf. DSR-679), avec creation automatique des codes manquants par
+YS04. "Colis" et "3S" ne sont pas des codes produits, et RIEN EN BASE ne
+dit a quelle famille appartient un code.
+
+Sans cette correspondance, aucun trafic PDI n'est calculable.
+
+Solution retenue - une donnee de configuration, pas une devinette :
+
+  CLES_PAR_PRODUIT=CO:colis,OO:oo,IP:potentielip,OS:3s,PR:3s,PPI:3s
+
+(variable d'environnement, cf. .env.example). Le metier la corrige sans
+livraison. Un produit absent de la liste FAIT ECHOUER le calcul, avec un
+message qui le nomme :
+
+  Produit ZZ absent de CLES_PAR_PRODUIT : impossible de savoir quelle
+  cle de repartition lui appliquer
+
+CETTE CORRESPONDANCE PAR DEFAUT EST A CONFIRMER PAR LE METIER. Elle est
+deduite des noms (CO = colis, OO = OO, IP = potentiel IP, le reste en
+3S) et n'a pas d'autre fondement.
+
+
+6. AUTRES DECISIONS PRISES FAUTE DE SPECIFICATION
+------------------------------------------------------------------------
+
+a) QUEL TMH ? Le ticket dit "le TMH du scenario pour chaque produit",
+   mais TRPPU_TMH autorise PLUSIEURS lignes par produit depuis la
+   migration du 24/06/2026, avec un indicateur bl_exclu - et
+   TRPPU_SCENARIO_EXCLUSIONS liste en plus des produits exclus.
+
+   Retenu : somme de moyenne_hebdo sur les lignes bl_exclu = 0, hors
+   produits presents dans TRPPU_SCENARIO_EXCLUSIONS. Un produit dont le
+   TMH resultant est nul ne produit aucune ligne.
+
+b) ARRONDI. dense / faible1 / faible2 sont des smallint unsigned :
+   entiers, plafonnes a 65 535. Le produit TMH x coefficient x cle est
+   decimal.
+
+   Retenu : arrondi a l'entier le plus proche, et ECHEC EXPLICITE
+   au-dela de 65 535 (comme sur une valeur negative). En mode strict
+   MySQL refuserait la ligne, sinon il la tronquerait en silence : mieux
+   vaut que le batch dise quel produit et quel jour debordent.
+
+c) DENSITE. trppu_pic_coefficients.densite vaut 0, 1 ou 2 ; la cible
+   porte dense / faible1 / faible2. Aucun ticket, aucune contrainte ne
+   relie les deux.
+
+   Retenu : 0 -> dense, 1 -> faible1, 2 -> faible2.
+   A CONFIRMER PAR LE METIER : une inversion produirait des trafics
+   plausibles mais faux, sans qu'aucun controle ne le voie.
+
+d) JOURS CALCULES. Aucun ticket ne le dit.
+
+   Retenu : la semaine du scenario (nb_jours_semaine, 5 ou 6),
+   intersectee avec les jours reellement coefficientes par la version
+   PIC. Un jour qu'AUCUN produit ne coefficiente n'est pas calcule -
+   c'est un choix d'exploitation. En revanche, un produit sans
+   coefficient sur un jour que d'autres couvrent est un oubli de
+   parametrage : le calcul echoue en le nommant.
+
+e) DATES DES COEFFICIENTS. dt_effet et dt_fin ne sont pas filtres : la
+   cle unique (id_pic_version, co_produit, jour_semaine, densite)
+   garantit deja une seule ligne par combinaison, ces dates ne
+   discriminent donc rien.
+
+f) NOM DE TABLE. Le ticket ecrit TRPPU_CLE_REPARTITION_CALCULE
+   (singulier) ; la table reelle est trppu_cles_repartition_calcule.
+
+g) PERIMETRES DESYNCHRONISES. Un PDI porteur d'une cle mais rattache a
+   aucun Agrebal ne peut pas etre ecrit (id_agrebal est NOT NULL) ; un
+   PDI rattache a un Agrebal mais sans cle n'a pas de trafic. Les deux
+   cas sont comptes et affiches dans le rapport, avec un echantillon
+   d'identifiants - c'est le symptome d'un referentiel desynchronise,
+   pas une ligne a inventer.
+
+
+7. SORTIE
+------------------------------------------------------------------------
+
+Format du ticket. Cas nominal :
+
+  [OK] Controle d'eligibilite
+  [OK] Verrou pose (CALCUL_TRAFIC_EN_COURS = 1)
+  [OK] Referentiel associe (2)
+  [OK] Version de cles associee (4)
+  [OK] TMH charges (6 produit(s))
+  [OK] Coefficients de retention charges (90 combinaison(s))
+  [OK] Cles de repartition chargees (348 PDI)
+  [OK] Mapping Agrebal/PDI charge (348 PDI)
+  [OK] Jours calcules : LUNDI, MARDI, MERCREDI, JEUDI, VENDREDI
+  [OK] 15420 lignes trafic PDI calculees
+
+  TRAFIC_PDI_CALCULE = 1
+  CALCUL_TRAFIC_EN_COURS = 1
+
+  RESULTAT : SUCCES
+
+Cas en erreur : bloc [ERREUR] avec la cause, les indicateurs a 0, et
+RESULTAT : ECHEC.
+
+
+8. COUVERTURE DES CRITERES D'ACCEPTATION
+------------------------------------------------------------------------
+
+  CA-01 - scenario non eligible -> aucun calcul
+          ............................ OK (aucune ecriture, verrou non
+                                          pose)
+  CA-02 - CALCUL_TRAFIC_EN_COURS = 1 avant les calculs
+          ............................ OK (et commite seul)
+  CA-03 - ID_REFERENTIEL / ID_VERSION_CLE memorises avant le calcul
+          ............................ OK (etape 3, commitee)
+  CA-04 - trafic = TMH x coefficient x cle
+          ............................ OK (test sur valeurs calculees a
+                                          la main)
+  CA-05 - TRAFIC_PDI_CALCULE = 1, CALCUL_TRAFIC_EN_COURS reste a 1
+          ............................ OK
+  CA-06 - STATUT, EST_FIGE, TRAFIC_AGREBAL_CALCULE jamais modifies
+          ............................ OK (trafic_agrebal_calcule n'est
+                                          remis a 0 qu'avec la purge des
+                                          trafics Agrebal, exigee par
+                                          l'etape 4)
+  CA-07 - donnees suffisantes pour CALCUL_TRAFIC_AGREBAL
+          ............................ OK (id_agrebal et agrebal_uuid
+                                          portes par chaque ligne)
+  CA-08 - premier calcul -> RAISON = INITIAL
+          ............................ OK
+  CA-09 - recalcul Agrebal -> RAISON = AGREBAL
+          ............................ OK
+  CA-10 - nouvelle version de cles -> RAISON = CLE_REPARTITION
+          ............................ OK
+  CA-11 - motif issu de la derniere demande enregistree
+          ............................ OK
+
+
+9. COMMENT TESTER
+------------------------------------------------------------------------
+
+Sans base :
+
+  python -m pytest tests/test_traitements_trafic_pdi.py -q
+
+Avec une base, sur un scenario VALIDE et fige :
+
+  python -m app.main eligibilite 12345
+  python -m app.main calcul-trafic-pdi 12345
+
+Puis :
+
+  SELECT trafic_pdi_calcule, trafic_agrebal_calcule,
+         Calcul_trafic_en_cours, id_referentiel, id_version_cle
+    FROM trppu_scenario WHERE id_scenario = 12345;
+  -- attendu : 1, 0, 1, et les deux identifiants renseignes
+
+  SELECT raison, commentaire FROM trppu_recalcul_log
+   WHERE id_scenario = 12345 ORDER BY dt_recalcul DESC LIMIT 1;
+
+Relancer eligibilite ensuite doit rendre NON ELIGIBLE avec le motif
+"Les trafics PDI sont deja calcules" : c'est la preuve que les flags ont
+ete poses.
+
+
+10. SUITE
+------------------------------------------------------------------------
+
+  - DSR-703 doit etre joue pour terminer le calcul : c'est lui qui
+    liberera CALCUL_TRAFIC_EN_COURS.
+  - L'analyse detaillee des ecarts est dans
+    docs/DIAGNOSTIC-DSR-701-703.md du module YB05.
+
+========================================================================

@@ -26,6 +26,16 @@ trppu_version_cle               la VERSION à laquelle les clés se rattachent
 trppu_cles_repartition_calcule  les CLÉS, consommées ensuite par DSR-702
 ```
 
+Ces quatre scripts **initialisent** les clés. Le calcul des trafics d'un scénario, qui les
+consomme, est porté par les commandes du batch (DSR-701 à DSR-703) — cf. la section
+« Calcul des trafics d'un scénario » du [README du module](../README.md) :
+
+```bash
+python -m app.main eligibilite 12345
+python -m app.main calcul-trafic-pdi 12345
+python -m app.main calcul-trafic-agrebal 12345
+```
+
 ## Ordre d'exécution
 
 | # | Fichier | Ce qu'il exige en amont | Ce qu'il laisse |

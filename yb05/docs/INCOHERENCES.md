@@ -5,8 +5,9 @@ confrontant les tickets au schéma réellement déployé (`python/db/db_new.sql`
 constatés (`python/db/count.json`) et au code des deux projets.
 
 > Ce document recense les écarts de la **chaîne** (schéma, volumes, modules voisins).
-> L'analyse détaillée des trois tickets eux-mêmes — formulation fautive, lecture retenue,
-> correction appliquée — est dans **`DIAGNOSTIC-DSR-696-699.md`**.
+> L'analyse détaillée des tickets eux-mêmes — formulation fautive, lecture retenue, correction
+> appliquée — est dans **`DIAGNOSTIC-DSR-696-699.md`** pour l'initialisation des clés de
+> répartition, et dans **`DIAGNOSTIC-DSR-701-703.md`** pour la chaîne de calcul des trafics.
 
 Référence de volumétrie : `trppu_cles_repartition` porte **22 395 341 lignes**
 (`AUTO_INCREMENT` à 24 217 441) ; `trppu_trafic_site`, `trppu_version_cle`,

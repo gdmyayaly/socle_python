@@ -48,6 +48,13 @@ de vérité en cas de doute.
 | `LOGS_DIR` | `""` | Dossier de logs ; vide = `./logs` |
 | `DEBUG_SHOW_QUERY` | `false` | Trace les requêtes |
 
+### Calcul des trafics
+
+| Variable | Par défaut | Description |
+|---|---|---|
+| `CLES_PAR_PRODUIT` | `CO:colis,OO:oo,IP:potentielip,OS:3s,PR:3s,PPI:3s` | Correspondance code produit → famille de clé de répartition (`colis`, `oo`, `3s`, `potentielip`). Une entrée malformée fait échouer le démarrage ; un produit absent fait échouer le calcul qui le rencontre. |
+| `NB_WORKER` | `1` | Nombre de scénarios traités simultanément par le mode `all`. `1` = séquentiel. Toute valeur inexploitable est ramenée à `1` : un batch d'exploitation ne refuse pas de démarrer pour une variable mal saisie. Les pools MySQL sont dimensionnés sur cette valeur (`max(10, NB_WORKER)`). |
+
 ## Commandes console
 
 ```bash
@@ -88,6 +95,121 @@ $ python -m app.main db-info --json
 Les fonctions sous-jacentes vivent dans `app/health.py` (`check_config`,
 `describe_connection`, `fetch_server_info`, `check_resources`) : elles retournent de simples
 dictionnaires et sont réutilisables depuis un module métier, sans passer par la CLI.
+
+### Calcul des trafics d'un scénario
+
+Trois traitements, à jouer dans cet ordre pour un scénario donné (DSR-701, DSR-702, DSR-703) :
+
+```bash
+python -m app.main eligibilite 12345            # contrôle, sans aucune écriture
+python -m app.main calcul-trafic-pdi 12345      # TMH × coefficient × clé, par PDI
+python -m app.main calcul-trafic-agrebal 12345  # agrégation des trafics PDI
+```
+
+| Commande | Description |
+|---|---|
+| `eligibilite` | Les douze règles d'éligibilité du scénario. **Aucune écriture** : ni insertion, ni mise à jour, ni changement de statut. Toutes les règles sont évaluées, pour rendre d'un coup la liste complète des motifs bloquants. |
+| `calcul-trafic-pdi` | Vérifie l'éligibilité, verrouille le scénario, y mémorise le référentiel et la version de clés utilisés (**DSR-700**), purge les trafics existants puis calcule et écrit `trppu_trafic_pdi`. Laisse volontairement `CALCUL_TRAFIC_EN_COURS = 1`. |
+| `calcul-trafic-agrebal` | Agrège les trafics PDI par Agrébal dans `trppu_trafic_agrebal`, puis clôt le calcul complet : `TRAFIC_AGREBAL_CALCULE = 1` et `CALCUL_TRAFIC_EN_COURS = 0`. Aucune clé ni coefficient n'est relu à cette étape. |
+| `all` | **Mode nominal d'exploitation.** Enchaîne les trois traitements ci-dessus, pour un scénario ou pour tous les scénarios éligibles, sur `NB_WORKER` workers. Ne porte aucune règle métier : il orchestre. |
+
+Les orthographes des tickets sont acceptées telles quelles, ainsi que la forme longue :
+
+```bash
+python -m app.main ELIGIBILITE 12345
+python -m app.main --traitement=CALCUL_TRAFIC_PDI --scenario=12345
+```
+
+**Code de retour** : `0` si le scénario est éligible ou le calcul réussi, `1` sinon. `--json` et
+`-v` fonctionnent sur les trois commandes, avant ou après la sous-commande.
+
+**Deux flux distincts** : le rapport part sur la sortie standard — c'est lui qui est destiné à
+l'exploitant et au `RESULTAT` que lit l'ordonnanceur. Les logs JSON, y compris la stack trace
+d'un incident, partent sur la sortie d'erreur. `2>/dev/null` donne donc un rapport nu, et une
+supervision peut consommer les deux séparément.
+
+```bash
+$ python -m app.main eligibilite 12345
+--------------------------------------------------
+Contrôle d'éligibilité YB05
+Scénario : 12345
+--------------------------------------------------
+
+[OK] Scénario trouvé
+[OK] Statut VALIDE
+[OK] Scénario figé
+[OK] Aucun calcul en cours
+[OK] Trafic PDI non calculé
+[OK] Trafic Agrébal non calculé
+[OK] Version PIC trouvée
+[OK] Coefficients de rétention disponibles (30)
+[OK] Référentiel actif disponible (2)
+[OK] Version de clés active disponible (4)
+[OK] Agrébals trouvés (12)
+[OK] PDI trouvés (348)
+
+RESULTAT : ELIGIBLE AU CALCUL COMPLET DES TRAFICS (PDI + Agrébals)
+```
+
+Les traitements vivent dans `app/traitements/` et s'importent directement, sans la CLI :
+`controle_eligibilite`, `calcul_trafic_pdi`, `calcul_trafic_agrebal`. Chacun retourne un
+`Rapport` — il n'écrit rien sur la sortie standard et ne lève pas. Les instances de base sont
+injectables (`db_lecture=`, `db_ecriture=`), ce qui rend les traitements testables sans MySQL et
+documente au passage lequel écrit : `controle_eligibilite` ne reçoit tout simplement pas
+d'instance d'écriture.
+
+### Mode `ALL` — exploitation courante
+
+```bash
+NB_WORKER=4 python -m app.main all     # tous les scénarios éligibles, 4 en parallèle
+python -m app.main all 12345           # un seul scénario
+```
+
+Le batch cherche lui-même les scénarios `VALIDE`, figés, sans calcul en cours et dont aucun
+trafic n'est calculé, les place dans une file, et fait tourner `NB_WORKER` workers dessus.
+La réservation d'un scénario n'est pas un mécanisme à part : c'est le verrou que pose déjà
+`calcul-trafic-pdi` (`UPDATE … WHERE calcul_trafic_en_cours = 0`), atomique, donc un seul worker
+peut l'obtenir. Une erreur sur un scénario n'arrête jamais les autres.
+
+Sortie : une ligne par scénario, puis un bilan.
+
+```
+[OK] 12345
+[OK] 12346
+[KO] 12347
+     Version de clés introuvable
+[--] 12348
+     Le scénario n'est pas figé
+
+--------------------------------------------------
+BILAN
+--------------------------------------------------
+
+NB_WORKER            : 4
+Scénarios trouvés    : 4
+Scénarios éligibles  : 3
+Succès               : 2
+Échecs               : 1
+Non éligibles        : 1
+Durée totale         : 00:03:12
+Durée moyenne        : 00:00:48
+
+RESULTAT : ECHEC
+```
+
+Trois marques, et non deux : `[--]` signale un scénario **non éligible**, qui n'est pas une
+panne — il n'était pas prêt. Le code de retour vaut `1` dès qu'un scénario est en `[KO]`, jamais
+pour un `[--]`.
+
+Un scénario dont le calcul PDI a abouti mais pas l'Agrébal sort des critères de recherche : il
+ne sera jamais repris automatiquement. Le bilan le liste sous « À REPRENDRE À LA MAIN », avec la
+commande à jouer.
+
+**Correspondance produit / clé de répartition.** `trppu_cles_repartition_calcule` porte quatre
+clés (colis, oo, 3s, potentielip) alors que les produits sont des codes alimentés dynamiquement
+depuis Databricks. Rien en base ne dit à quelle famille appartient un code : la correspondance
+est portée par `CLES_PAR_PRODUIT` (cf. `.env.example`). Un produit absent de cette liste **fait
+échouer le calcul**, avec le message qui le nomme — plutôt que de produire un trafic faux.
 
 ### Docker
 
@@ -290,6 +412,22 @@ doublures et le code async est lancé via `asyncio.run` (pas de dépendance à p
 - `tests/test_scripts_dsr.py` — scripts métier de `db/` : découpage, ordre des instructions,
   et surtout confrontation des colonnes insérées à un extrait du schéma réel, recopié dans le
   test pour ne pas dépendre de l'arborescence du projet voisin.
+- `tests/test_traitements_eligibilite.py` — les douze règles de DSR-701, une par une, et la
+  preuve qu'aucune écriture n'a lieu.
+- `tests/test_traitements_trafic_pdi.py` — la formule sur un jeu calculable de tête, l'ordre des
+  écritures (verrou, traçabilité, purge, insertion) et chaque cause d'échec.
+- `tests/test_traitements_trafic_agrebal.py` — contrôles préalables, les trois agrégations, la
+  libération du verrou.
+- `tests/test_traitements_orchestrateur.py` — mode `ALL` : sélection des scénarios, parallélisme
+  (vérifié par un compteur de concurrence observée, jamais par des durées), isolation des
+  échecs, filet de sécurité sur le verrou, bilan.
+- `tests/test_traitements_rapport.py` — le format de sortie des tickets et le branchement CLI.
+
+`tests/conftest.py` porte `FausseBase`, un substitut de `Database` qui rend des réponses
+indexées par fragment de requête et journalise les écritures dans l'ordre — c'est ce qui permet
+de tester un verrou ou une purge. Deux partis pris utiles à connaître : une requête sans réponse
+déclarée **lève**, pour qu'un test n'interroge jamais une table à laquelle il n'a pas pensé, et
+`FausseBase(lecture_seule=True)` lève sur toute écriture.
 
 ## Utilisation comme bibliothèque
 

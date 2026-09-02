@@ -97,7 +97,10 @@ Briques réutilisables :
 - Préfixe REST `/trppu-api/...`, ressources imbriquées sous `/scenarios/{id}/...`.
 - Pydantic v2 : `ConfigDict(extra="forbid", str_strip_whitespace=True)`, `id_rh` jamais renvoyé en sortie.
 - Écriture transactionnelle quand plusieurs tables (`db_write.transaction()`).
-- Logs JSON via `safe_preview`, **sans flèches**, avec `id_scenario` (et id session IHM pour les lectures d'édition / PIC).
+- Logs JSON : grammaire `Début|Fin|Rejet|Erreur <action> (cle=valeur, …)`, **sans
+  flèches**, contexte produit par `ctx()` et payloads par `params_loggables()`.
+  `id_session_ihm` n'est **pas** à mettre dans le message : le middleware le pose
+  déjà comme champ racine du JSON. Convention complète : `api_docs/CONVENTION-LOGS.md`.
 - Deux points transverses signalés dans **chaque** fiche concernée : **SAISON ↔ LOCAL** et **cryptage `id_rh`** (décisions centralisées, pas locales).
 
 ---

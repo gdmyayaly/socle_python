@@ -1,6 +1,8 @@
 """Route de calcul du nombre de jours ouvrés par semaine entre deux dates."""
 
 import logging
+
+from app.log_utils import ctx
 import time
 from datetime import datetime, timedelta
 
@@ -55,11 +57,15 @@ async def get_nb_jours(
         )
 
     start = time.perf_counter()
-    logger.info("get_nb_jours appelé : date_debut=%s, date_fin=%s", date_debut, date_fin)
+    logger.info(
+        "Début calcul nb_jours %s", ctx(date_debut=date_debut, date_fin=date_fin)
+    )
     try:
         nbj = await compute_nb_jours(dt_debut.date(), dt_fin.date())
     except Exception as e:
-        logger.exception("Erreur calcul nb_jours (debut=%s, fin=%s)", date_debut, date_fin)
+        logger.exception(
+            "Erreur calcul nb_jours %s", ctx(date_debut=date_debut, date_fin=date_fin)
+        )
         raise HTTPException(status_code=500, detail="Erreur calcul nombre de jours.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 2)

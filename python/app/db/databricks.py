@@ -1,6 +1,8 @@
 """Connexion à Databricks SQL Warehouse via OAuth M2M avec retry automatique."""
 # Url help: https://learn.microsoft.com/en-us/azure/databricks/dev-tools/python-sql-connector#auth-m2m
 import logging
+
+from app.log_utils import ctx
 import os
 import time
 from typing import Any
@@ -101,15 +103,21 @@ class DatabricksDB:
                 return
             except Exception as e:
                 logger.warning(
-                    "Tentative %d/%d de connexion Databricks échouée : %s",
-                    attempt,
-                    self.max_retries,
-                    e,
+                    "Tentative de connexion Databricks échouée %s",
+                    ctx(tentative=attempt, max_tentatives=self.max_retries, erreur=str(e)),
                 )
                 if attempt == self.max_retries:
-                    logger.error("Échec définitif de la connexion à Databricks après %d tentatives.", self.max_retries)
+                    # Dernière tentative : la stacktrace est indispensable, l'appelant
+                    # ne verra qu'une exception remontée.
+                    logger.exception(
+                        "Échec définitif de la connexion Databricks %s",
+                        ctx(tentatives=self.max_retries),
+                    )
                     raise
-                logger.info("Nouvelle tentative dans %.1fs...", self.retry_delay * attempt)
+                logger.info(
+                    "Nouvelle tentative de connexion Databricks %s",
+                    ctx(dans_s=self.retry_delay * attempt),
+                )
                 time.sleep(self.retry_delay * attempt)
 
     def disconnect(self) -> None:
@@ -133,24 +141,31 @@ class DatabricksDB:
                 return operation(*args, **kwargs)
             except Exception as e:
                 logger.warning(
-                    "Tentative %d/%d Databricks échouée : %s",
-                    attempt,
-                    self.max_retries,
-                    e,
+                    "Tentative de requête Databricks échouée %s",
+                    ctx(tentative=attempt, max_tentatives=self.max_retries, erreur=str(e)),
                 )
                 if attempt == self.max_retries:
-                    logger.error("Échec définitif de la requête Databricks après %d tentatives.", self.max_retries)
+                    logger.exception(
+                        "Échec définitif de la requête Databricks %s",
+                        ctx(tentatives=self.max_retries),
+                    )
                     raise
                 time.sleep(self.retry_delay * attempt)
-                logger.info("Reconnexion à Databricks en cours...")
+                logger.info("Reconnexion Databricks en cours")
                 try:
                     self.connect()
                 except Exception:
-                    logger.warning("Reconnexion échouée, nouvelle tentative à venir...")
+                    logger.warning(
+                        "Reconnexion Databricks échouée %s",
+                        ctx(consequence="nouvelle tentative à venir"),
+                        exc_info=True,
+                    )
 
     def execute(self, query: str, params: list | None = None) -> int:
         """Exécute une requête et retourne le nombre de lignes affectées."""
-        logger.info("Databricks execute : %s", query)
+        # SQL brut en DEBUG : en INFO il expose la structure des tables sur
+        # chaque requête (cf. AUDIT_SECURITE_PERFORMANCE.md).
+        logger.debug("Databricks execute %s", ctx(query=query))
         def _run():
             conn = self._ensure_connection()
             with conn.cursor() as cursor:
@@ -161,7 +176,7 @@ class DatabricksDB:
 
     def fetch_one(self, query: str, params: list | None = None) -> dict[str, Any] | None:
         """Exécute une requête et retourne une seule ligne sous forme de dict."""
-        logger.info("Databricks fetch_one : %s", query)
+        logger.debug("Databricks fetch_one %s", ctx(query=query))
         def _run():
             conn = self._ensure_connection()
             with conn.cursor() as cursor:
@@ -176,7 +191,7 @@ class DatabricksDB:
 
     def fetch_all(self, query: str, params: list | None = None) -> list[dict[str, Any]]:
         """Exécute une requête et retourne toutes les lignes sous forme de list[dict]."""
-        logger.info("Databricks fetch_all : %s", query)
+        logger.debug("Databricks fetch_all %s", ctx(query=query))
         def _run():
             conn = self._ensure_connection()
             with conn.cursor() as cursor:
@@ -189,7 +204,9 @@ class DatabricksDB:
     def tables(self, schema: str | None = None) -> list[dict[str, Any]]:
         """Liste les tables disponibles dans un schéma."""
         schema = schema or self.schema
-        logger.info("Databricks tables : catalogue=%s, schema=%s", self.catalog, schema)
+        logger.debug(
+            "Databricks tables %s", ctx(catalogue=self.catalog, schema=schema)
+        )
         def _run():
             conn = self._ensure_connection()
             with conn.cursor() as cursor:
@@ -201,7 +218,7 @@ class DatabricksDB:
 
     def schemas(self) -> list[dict[str, Any]]:
         """Liste les schémas disponibles dans le catalogue."""
-        logger.info("Databricks schemas : catalogue=%s", self.catalog)
+        logger.debug("Databricks schemas %s", ctx(catalogue=self.catalog))
         def _run():
             conn = self._ensure_connection()
             with conn.cursor() as cursor:
@@ -213,7 +230,7 @@ class DatabricksDB:
 
     def catalogs(self) -> list[dict[str, Any]]:
         """Liste tous les catalogues accessibles."""
-        logger.info("Databricks catalogs : listage des catalogues...")
+        logger.debug("Databricks catalogs")
         def _run():
             conn = self._ensure_connection()
             with conn.cursor() as cursor:
@@ -226,7 +243,10 @@ class DatabricksDB:
     def columns(self, schema: str | None = None, table: str = "") -> list[dict[str, Any]]:
         """Liste les colonnes d'une table."""
         schema = schema or self.schema
-        logger.info("Databricks columns : %s.%s.%s", self.catalog, schema, table)
+        logger.debug(
+            "Databricks columns %s",
+            ctx(catalogue=self.catalog, schema=schema, table=table),
+        )
         def _run():
             conn = self._ensure_connection()
             with conn.cursor() as cursor:

@@ -1,0 +1,283 @@
+========================================================================
+DSR-704 - YB05 : Mode ALL, calcul automatique et parallelise
+Commentaire de resolution
+========================================================================
+
+
+1. RESUME DU LIVRABLE
+------------------------------------------------------------------------
+
+Commande qui cherche elle-meme les scenarios a calculer, les traite sur
+NB_WORKER workers, et rend un bilan. C'est le mode nominal
+d'exploitation : il remplace l'enchainement manuel des trois commandes.
+
+Livre dans le module YB05 :
+
+  app/traitements/orchestrateur.py   le mode ALL
+  app/traitements/rapport.py         le Bilan (rendu texte et JSON)
+  app/main.py                        la commande
+  tests/test_traitements_orchestrateur.py   24 tests, sans base
+
+Aucune regle metier n'a ete ajoutee : conformement au CA-09, ce module
+ne decide rien. Il choisit quoi lancer, quand, et combien de fois en
+meme temps.
+
+
+2. COMMANDE
+------------------------------------------------------------------------
+
+  python -m app.main all            # tous les scenarios eligibles
+  python -m app.main all 12345      # ce scenario seul
+  python -m app.main ALL 12345
+  python -m app.main --traitement=ALL --scenario=12345
+
+Parallelisme :
+
+  NB_WORKER=4 python -m app.main all
+
+Code de retour : 0 si tout a abouti, 1 des qu'un scenario est en echec.
+Le batch va TOUJOURS au bout de la file avant de rendre la main.
+
+
+3. PARAMETRAGE
+------------------------------------------------------------------------
+
+  NB_WORKER=1    sequentiel (valeur par defaut, comme le demande le
+                 ticket)
+  NB_WORKER=4    quatre scenarios simultanes
+
+Toute valeur inexploitable (vide, non numerique, nulle, negative) est
+ramenee a 1 : un batch d'exploitation ne doit pas refuser de demarrer
+pour une variable d'environnement mal saisie.
+
+POINT TECHNIQUE IMPORTANT : les pools MySQL sont desormais dimensionnes
+sur NB_WORKER, soit max(10, NB_WORKER). Ils etaient plafonnes a 10
+connexions en dur ; au-dela de NB_WORKER = 10, les workers
+supplementaires se seraient attendus sur l'acquisition d'une connexion
+et le parallelisme annonce n'aurait pas existe, sans que rien ne le
+signale.
+
+
+4. DEROULEMENT
+------------------------------------------------------------------------
+
+Recherche des scenarios : la requete du ticket, telle quelle.
+
+  SELECT id_scenario FROM trppu_scenario
+   WHERE statut = 'VALIDE' AND est_fige = 1
+     AND calcul_trafic_en_cours = 0
+     AND trafic_pdi_calcule = 0
+     AND trafic_agrebal_calcule = 0
+   ORDER BY id_scenario;
+
+Les scenarios trouves sont places dans une file, et NB_WORKER coroutines
+la vident jusqu'a epuisement. Le parallelisme est celui d'asyncio, pas
+des threads : les traitements sont deja asynchrones et passent leur
+temps a attendre MySQL.
+
+Pour chaque scenario, les trois etapes du ticket :
+
+  1. controle d'eligibilite (DSR-701)
+  2. calcul des trafics PDI (DSR-702)
+  3. calcul des trafics Agrebal (DSR-703)
+
+Un scenario non eligible est ABANDONNE, pas mis en echec : le ticket
+distingue les deux dans son bilan, et le rendu les distingue aussi.
+
+
+5. LA RESERVATION N'A PAS ETE REIMPLEMENTEE
+------------------------------------------------------------------------
+
+Le ticket decrit un verrou metier pose par le worker :
+
+  UPDATE trppu_scenario SET calcul_trafic_en_cours = 1
+   WHERE id_scenario = ? AND calcul_trafic_en_cours = 0;
+
+C'est EXACTEMENT ce que fait deja DSR-702 a son etape 2, de facon
+atomique, avec le meme test sur zero ligne affectee. L'orchestrateur n'a
+donc rien a ajouter : il appelle calcul_trafic_pdi, qui reserve. Un seul
+worker peut obtenir le scenario, le perdant passe au suivant (CA-06),
+et le CA-09 est respecte a la lettre.
+
+
+6. TROIS ECARTS AVEC LE TICKET
+------------------------------------------------------------------------
+
+a) LE WORKER RESERVAIT AVANT DE CONTROLER (bloquant)
+
+   Le ticket fait reserver le scenario PUIS appeler
+   controleEligibiliteScenario(), dont la regle 4 exige justement
+   CALCUL_TRAFIC_EN_COURS = 0. Applique tel quel, AUCUN scenario
+   n'aurait jamais ete eligible en mode ALL.
+
+   Ordre inverse : on controle d'abord (lecture seule, CA-05 de DSR-701
+   respecte), on reserve ensuite. L'atomicite de l'UPDATE suffit a
+   garantir l'exclusivite.
+
+b) UN SCENARIO POUVAIT RESTER VERROUILLE
+
+   DSR-703 s'arrete sur ses controles prealables sans liberer le verrou.
+   C'est correct lance seul : il ne le detient pas, et le relacher
+   couperait le calcul d'un autre processus. Mais dans la chaine,
+   DSR-702 vient de le poser : un echec precoce de l'etape Agrebal
+   laisserait CALCUL_TRAFIC_EN_COURS = 1, ce que le ticket interdit
+   explicitement ("le scenario ne doit jamais rester bloque").
+
+   Un filet de securite a donc ete ajoute dans l'orchestrateur, seul a
+   savoir qu'il detient le verrou : si l'etape PDI a reussi et que
+   l'etape Agrebal n'aboutit pas, il libere. DSR-703 n'a pas ete
+   modifie.
+
+c) LES SCENARIOS A MOITIE CALCULES SONT INVISIBLES
+
+   Les criteres exigent trafic_pdi_calcule = 0 ET
+   trafic_agrebal_calcule = 0. Un scenario dont l'etape PDI a reussi
+   mais dont l'Agrebal a echoue (1 / 0) ne repond plus aux criteres :
+   aucun YB05 ALL ulterieur ne le reprendra.
+
+   Les criteres du ticket sont appliques a la lettre, mais ces
+   scenarios sont comptes par une seconde requete et NOMMES dans le
+   bilan, avec la commande a jouer :
+
+     A REPRENDRE A LA MAIN
+       - 12351 : trafics PDI calcules, Agrebal non calcules -
+                 jouer calcul-trafic-agrebal 12351
+
+   A arbitrer : faut-il que ALL les reprenne automatiquement ? Cela
+   imposerait de contourner la regle 5 de DSR-701, donc de laisser
+   l'orchestrateur decider quand une regle d'eligibilite ne s'applique
+   pas. Non retenu a ce stade.
+
+
+7. JOURNALISATION - CA-12
+------------------------------------------------------------------------
+
+Le CA-12 demande une ligne dans TRPPU_RECALCUL_LOG par scenario traite,
+ecrite a la fin du calcul Agrebal. Or DSR-702 et DSR-703 en ecrivent
+deja chacun une (leurs CA-08 a CA-11), et le CA-09 interdit a
+l'orchestrateur de porter la moindre regle metier.
+
+Choix retenu : le mode ALL N'ECRIT RIEN dans le journal. Le CA-12 est
+satisfait sur le fond - une ligne existe bien, avec le bon motif - mais
+le journal porte deux lignes par calcul complet, une par etape. C'est
+aussi ce qui permet de jouer les commandes une par une sans perdre la
+tracabilite.
+
+Un test verrouille ce point : l'orchestrateur ne doit jamais ecrire dans
+TRPPU_RECALCUL_LOG.
+
+
+8. BILAN
+------------------------------------------------------------------------
+
+  --------------------------------------------------
+  YB05 - Mode ALL
+  --------------------------------------------------
+
+  NB_WORKER = 4
+
+  4 scenario(s) detecte(s)
+
+  [OK] 12345
+  [OK] 12346
+  [KO] 12347
+       Version de cles introuvable
+  [--] 12348
+       Le scenario n'est pas fige
+
+  --------------------------------------------------
+  BILAN
+  --------------------------------------------------
+
+  NB_WORKER            : 4
+  Scenarios trouves    : 4
+  Scenarios eligibles  : 3
+  Succes               : 2
+  Echecs               : 1
+  Non eligibles        : 1
+  Duree totale         : 00:03:12
+  Duree moyenne        : 00:00:48
+
+  RESULTAT : ECHEC
+
+Trois marques et non deux : [--] signale un scenario NON ELIGIBLE, qui
+n'est pas une panne - il n'etait pas pret. Le code de retour vaut 1 pour
+un [KO], jamais pour un [--].
+
+L'option --json rend le meme bilan en JSON, compteurs compris, pour une
+supervision.
+
+
+9. GESTION DES ERREURS
+------------------------------------------------------------------------
+
+  - une erreur sur un scenario n'arrete jamais le batch (CA-08), y
+    compris une exception imprevue : elle est capturee, tracee, et le
+    worker passe au scenario suivant ;
+  - le verrou est libere dans tous les chemins, par les traitements
+    eux-memes ou par le filet de securite ;
+  - une erreur systeme (base injoignable) arrete le batch mais rend un
+    bilan lisible, sans stacktrace sur la sortie standard.
+
+
+10. COUVERTURE DES CRITERES D'ACCEPTATION
+------------------------------------------------------------------------
+
+  CA-01 - ALL recherche tous les scenarios eligibles ......... OK
+  CA-02 - ALL <id> traite exclusivement ce scenario .......... OK
+  CA-03 - parallelisme pilote par NB_WORKER .................. OK
+  CA-04 - NB_WORKER = 1 : strictement sequentiel ............. OK
+  CA-05 - NB_WORKER > 1 : traitements simultanes ............. OK
+  CA-06 - un seul worker par scenario, via le verrou ......... OK
+          (celui de DSR-702, atomique)
+  CA-07 - eligibilite, puis PDI, puis Agrebal ................ OK
+  CA-08 - une erreur ne bloque pas les autres scenarios ...... OK
+  CA-09 - aucune regle metier propre au mode ALL ............. OK
+          (verrouille par un test : aucune ecriture, hors
+           filet de securite sur le verrou)
+  CA-10 - etat final d'un scenario traite avec succes ........ OK
+  CA-11 - parallelisme adaptable par variable d'environnement  OK
+  CA-12 - journalisation du calcul ........................... OK
+          sur le fond, cf. section 7 (deux lignes, une par
+          traitement, au lieu d'une seule)
+
+
+11. COMMENT TESTER
+------------------------------------------------------------------------
+
+Sans base :
+
+  python -m pytest tests/test_traitements_orchestrateur.py -q
+
+Avec une base, sur un jeu de scenarios VALIDE et figes :
+
+  NB_WORKER=1 python -m app.main all
+  NB_WORKER=4 python -m app.main all
+  python -m app.main all 12345
+
+Verifications :
+
+  SELECT id_scenario, trafic_pdi_calcule, trafic_agrebal_calcule,
+         Calcul_trafic_en_cours
+    FROM trppu_scenario WHERE statut = 'VALIDE' AND est_fige = 1;
+  -- aucun scenario ne doit rester a Calcul_trafic_en_cours = 1
+
+Relancer ALL immediatement : plus rien n'est trouve, les scenarios
+calcules ne repondent plus aux criteres.
+
+Forcer un echec (par exemple en vidant CLES_PAR_PRODUIT) : le code de
+retour passe a 1, et les autres scenarios sont malgre tout traites.
+
+
+12. SUITE
+------------------------------------------------------------------------
+
+  - La chaine est complete : DSR-700 a DSR-704.
+  - YB06 alimentera TRPPU_RECALCUL_LOG et remettra les flags a 0 pour
+    les scenarios impactes par un mouvement Agrebal ; le mode ALL les
+    reprendra automatiquement au lancement suivant, sans modification.
+  - L'analyse detaillee des ecarts est dans
+    docs/DIAGNOSTIC-DSR-701-703.md du module YB05, qui couvre aussi ce
+    ticket (constats 34 et 36 a 40).
+
+========================================================================

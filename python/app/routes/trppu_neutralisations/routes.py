@@ -7,12 +7,17 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.db.mysql import db_read, db_write
-from app.log_utils import safe_preview
+from app.log_utils import ctx, params_loggables
 from app.security.crypto import encrypt_id_rh
-from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
+from app.services.api_log import ACTION_NEUTRALISATION, enregistrer_appel
+from app.routes.trppu_scenario.helpers import (
+    assert_editable,
+    fetch_scenario_or_404,
+    last_insert_id,
+)
 from app.services.jours_service import compute_nb_jour_neutralise_db
 
-from .helpers import SELECT_NEUTRALISATIONS_SQL
+from .helpers import SELECT_NEUTRALISATION_SQL, SELECT_NEUTRALISATIONS_SQL
 from .schemas import NeutralisationCreate, NeutralisationItem, NeutralisationOut
 
 logger = logging.getLogger(__name__)
@@ -27,24 +32,20 @@ async def list_neutralisations(
 ):
     """DSR-652 : périodes neutralisées d'un scénario (liste à plat, 1 ligne par période)."""
     start = time.perf_counter()
-    logger.info(
-        "Début lecture neutralisations (id_scenario=%d, id_session_ihm=%s)",
-        id_scenario,
-        safe_preview(id_session_ihm),
-    )
+    logger.info("Début lecture neutralisations %s", ctx(id_scenario=id_scenario))
     await fetch_scenario_or_404(id_scenario)
     try:
         rows = await db_read.fetch_all(SELECT_NEUTRALISATIONS_SQL, (id_scenario,))
     except Exception as e:
-        logger.exception("Erreur lecture neutralisations (id_scenario=%d)", id_scenario)
+        logger.exception(
+            "Erreur lecture neutralisations %s", ctx(id_scenario=id_scenario)
+        )
         raise HTTPException(status_code=500, detail="Erreur lecture neutralisations.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Lecture neutralisations terminée (id_scenario=%d, count=%d, duration_ms=%.1f)",
-        id_scenario,
-        len(rows),
-        duration_ms,
+        "Fin lecture neutralisations %s",
+        ctx(id_scenario=id_scenario, count=len(rows), duration_ms=duration_ms),
     )
     return rows
 
@@ -62,12 +63,10 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
     409 si la même période (id_scenario, dt_debut, dt_fin) est déjà neutralisée.
     """
     start = time.perf_counter()
+    logged = params_loggables(payload)
     logger.info(
-        "Début ajout neutralisation (id_scenario=%d, motif=%s, dt_debut=%s, dt_fin=%s)",
-        id_scenario,
-        safe_preview(payload.motif),
-        payload.dt_debut,
-        payload.dt_fin,
+        "Début ajout neutralisation %s",
+        ctx(id_scenario=id_scenario, params=logged),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
@@ -81,6 +80,16 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
         )
     if nb_jour < 1:
         # chk_neutre_jour impose nb_jour > 0 : une période sans jour ouvré n'a pas de sens.
+        logger.warning(
+            "Rejet ajout neutralisation %s",
+            ctx(
+                id_scenario=id_scenario,
+                dt_debut=payload.dt_debut,
+                dt_fin=payload.dt_fin,
+                http=422,
+                motif="aucun jour ouvré sur la période",
+            ),
+        )
         raise HTTPException(
             status_code=422,
             detail="La période ne déduit aucun jour ouvré (nb_jour=0).",
@@ -96,6 +105,17 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
                 (id_scenario, payload.dt_debut, payload.dt_fin),
             )
             if exists:
+                logger.warning(
+                    "Rejet ajout neutralisation %s",
+                    ctx(
+                        id_scenario=id_scenario,
+                        id_neutralisation=exists["id_neutralisation"],
+                        dt_debut=payload.dt_debut,
+                        dt_fin=payload.dt_fin,
+                        http=409,
+                        motif="période déjà neutralisée",
+                    ),
+                )
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -103,27 +123,45 @@ async def add_neutralisation(id_scenario: int, payload: NeutralisationCreate):
                         f"neutralisée pour ce scénario."
                     ),
                 )
-            await tx.execute(
+            rows_inseres = await tx.execute(
                 "INSERT INTO trppu_neutralisations "
                 "(id_scenario, dt_debut, dt_fin, nb_jour, motif, id_rh) "
                 "VALUES (%s, %s, %s, %s, %s, %s)",
                 (id_scenario, payload.dt_debut, payload.dt_fin, nb_jour, payload.motif, id_rh_token),
             )
-            row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
-            new_id = int(row["id"])
+            new_id = await last_insert_id(tx)
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Erreur ajout neutralisation (id_scenario=%d)", id_scenario)
+        logger.exception(
+            "Erreur ajout neutralisation %s",
+            ctx(id_scenario=id_scenario, params=logged),
+        )
         raise HTTPException(status_code=500, detail="Erreur ajout neutralisation.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_NEUTRALISATION,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "operation": "ajout",
+            "id_neutralisation": new_id,
+            "nb_jour": nb_jour,
+            "params": logged,
+        },
+    )
     logger.info(
-        "Ajout neutralisation terminé (id_scenario=%d, motif=%s, nb_jour=%d, duration_ms=%.1f)",
-        id_scenario,
-        safe_preview(payload.motif),
-        nb_jour,
-        duration_ms,
+        "Fin ajout neutralisation %s",
+        ctx(
+            id_scenario=id_scenario,
+            id_neutralisation=new_id,
+            dt_debut=payload.dt_debut,
+            dt_fin=payload.dt_fin,
+            nb_jour=nb_jour,
+            rows_affected=rows_inseres,
+            duration_ms=duration_ms,
+        ),
     )
     return NeutralisationOut(
         id=new_id,
@@ -147,13 +185,24 @@ async def delete_neutralisation(
     """
     start = time.perf_counter()
     logger.info(
-        "Début suppression neutralisation (id_scenario=%d, dt_debut=%s, dt_fin=%s)",
-        id_scenario,
-        dt_debut,
-        dt_fin,
+        "Début suppression neutralisation %s",
+        ctx(id_scenario=id_scenario, dt_debut=dt_debut, dt_fin=dt_fin),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
+
+    # Suppression définitive : l'état est journalisé avant écriture.
+    avant = await db_read.fetch_one(
+        SELECT_NEUTRALISATION_SQL
+        + " WHERE id_scenario = %s AND dt_debut = %s AND dt_fin = %s",
+        (id_scenario, dt_debut, dt_fin),
+    )
+    etat_avant = params_loggables(dict(avant)) if avant else None
+    if etat_avant is not None:
+        logger.info(
+            "État avant suppression neutralisation %s",
+            ctx(id_scenario=id_scenario, etat=etat_avant),
+        )
 
     try:
         async with db_write.transaction() as tx:
@@ -163,22 +212,44 @@ async def delete_neutralisation(
                 (id_scenario, dt_debut, dt_fin),
             )
     except Exception as e:
-        logger.exception("Erreur suppression neutralisation (id_scenario=%d)", id_scenario)
+        logger.exception(
+            "Erreur suppression neutralisation %s",
+            ctx(id_scenario=id_scenario, etat=etat_avant),
+        )
         raise HTTPException(status_code=500, detail="Erreur suppression neutralisation.") from e
 
     if not rc:
+        logger.warning(
+            "Rejet suppression neutralisation %s",
+            ctx(
+                id_scenario=id_scenario,
+                dt_debut=dt_debut,
+                dt_fin=dt_fin,
+                http=404,
+                motif="aucune neutralisation sur cette période",
+            ),
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Aucune neutralisation ({dt_debut} → {dt_fin}) à supprimer pour ce scénario.",
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_NEUTRALISATION,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={"operation": "suppression_periode", "etat_avant": etat_avant},
+    )
     logger.info(
-        "Suppression neutralisation terminée (id_scenario=%d, dt_debut=%s, dt_fin=%s, duration_ms=%.1f)",
-        id_scenario,
-        dt_debut,
-        dt_fin,
-        duration_ms,
+        "Fin suppression neutralisation %s",
+        ctx(
+            id_scenario=id_scenario,
+            dt_debut=dt_debut,
+            dt_fin=dt_fin,
+            rows_affected=rc,
+            duration_ms=duration_ms,
+        ),
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -195,12 +266,23 @@ async def delete_neutralisation_by_id(id_scenario: int, id_neutralisation: int):
     """
     start = time.perf_counter()
     logger.info(
-        "Début suppression neutralisation par id (id_scenario=%d, id_neutralisation=%d)",
-        id_scenario,
-        id_neutralisation,
+        "Début suppression neutralisation par id %s",
+        ctx(id_scenario=id_scenario, id_neutralisation=id_neutralisation),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
+
+    avant = await db_read.fetch_one(
+        SELECT_NEUTRALISATION_SQL
+        + " WHERE id_neutralisation = %s AND id_scenario = %s",
+        (id_neutralisation, id_scenario),
+    )
+    etat_avant = params_loggables(dict(avant)) if avant else None
+    if etat_avant is not None:
+        logger.info(
+            "État avant suppression neutralisation %s",
+            ctx(id_scenario=id_scenario, etat=etat_avant),
+        )
 
     try:
         async with db_write.transaction() as tx:
@@ -211,15 +293,27 @@ async def delete_neutralisation_by_id(id_scenario: int, id_neutralisation: int):
             )
     except Exception as e:
         logger.exception(
-            "Erreur suppression neutralisation par id (id_scenario=%d, id_neutralisation=%d)",
-            id_scenario,
-            id_neutralisation,
+            "Erreur suppression neutralisation par id %s",
+            ctx(
+                id_scenario=id_scenario,
+                id_neutralisation=id_neutralisation,
+                etat=etat_avant,
+            ),
         )
         raise HTTPException(
             status_code=500, detail="Erreur suppression neutralisation."
         ) from e
 
     if not rc:
+        logger.warning(
+            "Rejet suppression neutralisation par id %s",
+            ctx(
+                id_scenario=id_scenario,
+                id_neutralisation=id_neutralisation,
+                http=404,
+                motif="neutralisation introuvable",
+            ),
+        )
         raise HTTPException(
             status_code=404,
             detail=(
@@ -229,10 +323,23 @@ async def delete_neutralisation_by_id(id_scenario: int, id_neutralisation: int):
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_NEUTRALISATION,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "operation": "suppression_par_id",
+            "id_neutralisation": id_neutralisation,
+            "etat_avant": etat_avant,
+        },
+    )
     logger.info(
-        "Suppression neutralisation par id terminée (id_scenario=%d, id_neutralisation=%d, duration_ms=%.1f)",
-        id_scenario,
-        id_neutralisation,
-        duration_ms,
+        "Fin suppression neutralisation par id %s",
+        ctx(
+            id_scenario=id_scenario,
+            id_neutralisation=id_neutralisation,
+            rows_affected=rc,
+            duration_ms=duration_ms,
+        ),
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

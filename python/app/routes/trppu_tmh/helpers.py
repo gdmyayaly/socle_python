@@ -8,6 +8,8 @@ ligne est donc `id_tmh`, pas `co_produit`.
 from __future__ import annotations
 
 import logging
+
+from app.log_utils import ctx
 from typing import Any
 
 from starlette.concurrency import run_in_threadpool
@@ -76,7 +78,10 @@ async def resolve_libelles_produits() -> dict[str, str]:
     try:
         return await run_in_threadpool(fetch_libelles_objets)
     except Exception as e:
-        logger.warning("Libellés produits indisponibles (%s) — repli sur le code produit.", e)
+        logger.warning(
+            "Libellés produits indisponibles %s",
+            ctx(erreur=str(e), consequence="repli sur le code produit"),
+        )
         return {}
 
 

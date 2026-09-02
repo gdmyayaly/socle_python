@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from app.config import MYSQL_DATABASE
 from app.db.mysql import db_read, db_write
+from app.log_utils import ctx
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ async def mysql_test():
     try:
         result = await db_read.fetch_one("SELECT 1 AS ok")
     except Exception as e:
-        logger.error("Erreur lors du test MySQL : %s", e)
+        logger.exception("Erreur test MySQL %s", ctx())
         raise HTTPException(
             status_code=500,
             detail="Erreur lors du test de connexion à MySQL.",
@@ -130,7 +131,7 @@ async def list_tables():
             (MYSQL_DATABASE,),
         )
     except Exception as e:
-        logger.error("Erreur listing tables : %s", e)
+        logger.exception("Erreur listing tables %s", ctx())
         raise HTTPException(status_code=500, detail="Erreur listing tables.") from e
     duration_s = round(time.perf_counter() - start, 3)
     return {
@@ -157,7 +158,7 @@ async def list_columns(
             (MYSQL_DATABASE, table),
         )
     except Exception as e:
-        logger.error("Erreur listing colonnes de %s : %s", table, e)
+        logger.exception("Erreur listing colonnes %s", ctx(table=table))
         raise HTTPException(status_code=500, detail=f"Erreur listing colonnes de {table}.") from e
     if not rows:
         raise HTTPException(status_code=404, detail=f"Table '{table}' introuvable dans {MYSQL_DATABASE}.")
@@ -182,7 +183,7 @@ async def list_indexes(
             "SHOW INDEX FROM " + f"`{MYSQL_DATABASE}`.`{table}`"
         )
     except Exception as e:
-        logger.error("Erreur listing index de %s : %s", table, e)
+        logger.exception("Erreur listing index %s", ctx(table=table))
         raise HTTPException(status_code=500, detail=f"Erreur listing index de {table}.") from e
     duration_s = round(time.perf_counter() - start, 3)
     return {
@@ -216,7 +217,7 @@ async def sample_rows(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur sample de %s : %s", table, e)
+        logger.exception("Erreur sample %s", ctx(table=table))
         raise HTTPException(status_code=500, detail=f"Erreur sample de {table}.") from e
     duration_s = round(time.perf_counter() - start, 3)
     return {
@@ -249,7 +250,7 @@ async def full_schema():
             )
             schema.append({**t, "columns": [_lc(c) for c in cols]})
     except Exception as e:
-        logger.error("Erreur schema complet : %s", e)
+        logger.exception("Erreur schéma complet %s", ctx())
         raise HTTPException(status_code=500, detail="Erreur récupération schema.") from e
     duration_s = round(time.perf_counter() - start, 3)
     return {
@@ -298,7 +299,7 @@ async def dump_create_sql(
         )
         objects = [_lc(r) for r in rows]
     except Exception as e:
-        logger.error("Erreur génération dump SQL (listing objets) : %s", e)
+        logger.exception("Erreur génération dump SQL %s", ctx(etape="listing objets"))
         raise HTTPException(status_code=500, detail="Erreur génération dump SQL.") from e
 
     # 2) DDL objet par objet : un échec isolé est annoté mais n'interrompt PAS le
@@ -318,7 +319,7 @@ async def dump_create_sql(
             if not create_sql:
                 error = "DDL vide renvoyé par SHOW CREATE"
         except Exception as e:
-            logger.error("Erreur SHOW CREATE %s `%s` : %s", kind, name, e)
+            logger.exception("Erreur SHOW CREATE %s", ctx(kind=kind, name=name))
             error = str(e)
         item = {"name": name, "type": kind, "create_sql": create_sql}
         if error:
@@ -336,7 +337,7 @@ async def dump_create_sql(
                 ]
                 item["_raw_rows"] = raw_rows  # interne : sert à générer les INSERT SQL
             except Exception as e:
-                logger.error("Erreur export données de `%s` : %s", name, e)
+                logger.exception("Erreur export données %s", ctx(name=name))
                 item["data_error"] = str(e)
         items.append(item)
 
@@ -448,7 +449,7 @@ async def export_table(
     try:
         raw_rows = await db_read.fetch_all(f"SELECT * FROM `{MYSQL_DATABASE}`.`{table}`")
     except Exception as e:
-        logger.error("Erreur export de %s : %s", table, e)
+        logger.exception("Erreur export %s", ctx(table=table))
         raise HTTPException(status_code=500, detail=f"Erreur export de {table}.") from e
 
     duration_s = round(time.perf_counter() - start, 3)
@@ -563,12 +564,15 @@ async def import_table(payload: ImportPayload = Body(...)):
                     await tx.execute("SET FOREIGN_KEY_CHECKS = 1")
                 except Exception:
                     logger.warning(
-                        "Impossible de rétablir FOREIGN_KEY_CHECKS sur la connexion "
-                        "(import de %s) — connexion probablement rompue.",
-                        table,
+                        "Rétablissement FOREIGN_KEY_CHECKS impossible %s",
+                        ctx(
+                            table=table,
+                            consequence="connexion probablement rompue",
+                        ),
+                        exc_info=True,
                     )
     except Exception as e:
-        logger.error("Erreur import de %s : %s", table, e)
+        logger.exception("Erreur import %s", ctx(table=table))
         raise HTTPException(status_code=500, detail=f"Erreur import de {table} : {e}") from e
 
     duration_s = round(time.perf_counter() - start, 3)

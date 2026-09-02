@@ -11,8 +11,13 @@ Chaîne de calcul des trafics d'un scénario (DSR-701, DSR-702, DSR-703) :
     python -m app.main calcul-trafic-pdi 12345
     python -m app.main calcul-trafic-agrebal 12345
 
+Mode nominal d'exploitation, qui enchaîne les trois sur NB_WORKER workers (DSR-704) :
+
+    python -m app.main all           # tous les scénarios éligibles
+    python -m app.main all 12345     # un seul
+
 Les orthographes des tickets sont acceptées telles quelles, en majuscules
-(`ELIGIBILITE`, `CALCUL_TRAFIC_PDI`, `CALCUL_TRAFIC_AGREBAL`), ainsi que la forme
+(`ELIGIBILITE`, `CALCUL_TRAFIC_PDI`, `CALCUL_TRAFIC_AGREBAL`, `ALL`), ainsi que la forme
 `--traitement=ELIGIBILITE --scenario=12345`.
 
 Le code de retour vaut 0 si la vérification ou le traitement est concluant, 1 sinon
@@ -25,7 +30,7 @@ import json
 import logging
 import sys
 
-from app.config import APP, APP_ENV, APP_VERSION, MODULE
+from app.config import APP, APP_ENV, APP_VERSION, MODULE, NB_WORKER
 from app.db.mysql import db_read, db_write
 from app.health import (
     check_config,
@@ -38,8 +43,9 @@ from app.traitements import (
     calcul_trafic_agrebal,
     calcul_trafic_pdi,
     controle_eligibilite,
+    executer_tout,
 )
-from app.traitements.rapport import ECHEC, Rapport
+from app.traitements.rapport import ECHEC, Bilan, Rapport
 
 log = logging.getLogger("yb05")
 
@@ -154,6 +160,28 @@ async def cmd_calcul_trafic_agrebal(args: argparse.Namespace) -> int:
     return await _executer_traitement(calcul_trafic_agrebal, args)
 
 
+async def cmd_all(args: argparse.Namespace) -> int:
+    """DSR-704 — mode nominal : tous les scénarios éligibles, sur NB_WORKER workers.
+
+    Rend `1` dès qu'un scénario a échoué : le batch va au bout de la file, mais l'ordonnanceur
+    doit voir passer l'incident. Un scénario non éligible n'est pas un échec — le ticket
+    distingue les deux dans son bilan.
+    """
+    try:
+        bilan = await executer_tout(args.id_scenario)
+    except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
+        log.exception("Mode ALL interrompu")
+        bilan = Bilan(nb_workers=NB_WORKER)
+        bilan.erreur = str(erreur)
+
+    if args.json:
+        _print_json(bilan.to_dict())
+    else:
+        print(bilan.texte())
+
+    return EXIT_OK if bilan.reussi else EXIT_KO
+
+
 # Nom de commande officiel -> orthographe des tickets, acceptée comme alias.
 TRAITEMENTS = (
     ("eligibilite", "ELIGIBILITE", cmd_eligibilite, "Contrôle d'éligibilité d'un scénario"),
@@ -253,6 +281,23 @@ def build_parser() -> argparse.ArgumentParser:
             "id_scenario", type=int, help="Identifiant du scénario à traiter."
         )
         sous_parser.set_defaults(handler=handler)
+
+    # Mode ALL : seule commande dont l'identifiant est facultatif — sans lui, le batch cherche
+    # lui-même les scénarios éligibles.
+    mode_all = sous_commandes.add_parser(
+        "all",
+        aliases=["ALL"],
+        parents=[commun],
+        help="Calcul complet des trafics de tous les scénarios éligibles (ou d'un seul).",
+    )
+    mode_all.add_argument(
+        "id_scenario",
+        type=int,
+        nargs="?",
+        default=None,
+        help="Identifiant d'un scénario précis ; omis, tous les scénarios éligibles.",
+    )
+    mode_all.set_defaults(handler=cmd_all)
 
     return parser
 

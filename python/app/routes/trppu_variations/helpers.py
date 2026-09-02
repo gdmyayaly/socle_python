@@ -22,9 +22,15 @@ SELECT_VARIATIONS_SQL = (
 
 
 async def fetch_variation(tx_or_db, id_scenario: int, co_produit: str):
-    """Récupère la variation (id_scenario, co_produit) ou None."""
+    """Récupère la ligne de variation (id_scenario, co_produit) ou None.
+
+    Retourne toutes les colonnes utiles : les appelants s'en servent comme test
+    d'existence et pour journaliser l'état avant une MAJ ou une suppression
+    (cf. api_docs/CONVENTION-LOGS.md). `id_rh` est volontairement exclu du SELECT.
+    """
     return await tx_or_db.fetch_one(
-        "SELECT id_variation FROM trppu_scenario_variations_prev "
+        "SELECT id_variation, id_scenario, co_produit, variation_pct "
+        "FROM trppu_scenario_variations_prev "
         "WHERE id_scenario = %s AND co_produit = %s",
         (id_scenario, co_produit),
     )

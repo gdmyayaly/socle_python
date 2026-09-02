@@ -7,9 +7,10 @@ from decimal import Decimal
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.db.mysql import db_read, db_write
-from app.log_utils import safe_preview
+from app.log_utils import ctx, params_loggables
 from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 from app.security.crypto import encrypt_id_rh
+from app.services.api_log import ACTION_ECRITURE_VARIATION, enregistrer_appel
 
 from .helpers import SELECT_VARIATIONS_SQL, fetch_variation
 from .schemas import VariationOut, VariationUpsert, VariationUpsertResult
@@ -32,24 +33,18 @@ async def list_variations(
     tous les produits sont exclus — renvoie une liste vide.
     """
     start = time.perf_counter()
-    logger.info(
-        "Début lecture variations (id_scenario=%d, id_session_ihm=%s)",
-        id_scenario,
-        safe_preview(id_session_ihm),
-    )
+    logger.info("Début lecture variations %s", ctx(id_scenario=id_scenario))
     await fetch_scenario_or_404(id_scenario)
     try:
         rows = await db_read.fetch_all(SELECT_VARIATIONS_SQL, (id_scenario, id_scenario))
     except Exception as e:
-        logger.exception("Erreur lecture variations (id_scenario=%d)", id_scenario)
+        logger.exception("Erreur lecture variations %s", ctx(id_scenario=id_scenario))
         raise HTTPException(status_code=500, detail="Erreur lecture variations.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Lecture variations terminée (id_scenario=%d, count=%d, duration_ms=%.1f)",
-        id_scenario,
-        len(rows),
-        duration_ms,
+        "Fin lecture variations %s",
+        ctx(id_scenario=id_scenario, count=len(rows), duration_ms=duration_ms),
     )
     return rows
 
@@ -58,11 +53,10 @@ async def list_variations(
 async def upsert_variation(id_scenario: int, co_produit: str, payload: VariationUpsert):
     """DSR-646 : ajoute/modifie une variation ; la supprime si variation_pct == 0."""
     start = time.perf_counter()
+    logged = params_loggables(payload)
     logger.info(
-        "Début upsert variation (id_scenario=%d, co_produit=%s, variation_pct=%s)",
-        id_scenario,
-        co_produit,
-        payload.variation_pct,
+        "Début upsert variation %s",
+        ctx(id_scenario=id_scenario, co_produit=co_produit, params=logged),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
@@ -70,12 +64,14 @@ async def upsert_variation(id_scenario: int, co_produit: str, payload: Variation
     is_zero = payload.variation_pct == Decimal("0")
     id_rh_token = encrypt_id_rh(payload.id_rh)  # traçabilité (migration 004)
 
+    rows_affected = 0
     try:
         async with db_write.transaction() as tx:
             existing = await fetch_variation(tx, id_scenario, co_produit)
+            etat_avant = params_loggables(dict(existing)) if existing else None
             if is_zero:
                 if existing:
-                    await tx.execute(
+                    rows_affected = await tx.execute(
                         "DELETE FROM trppu_scenario_variations_prev "
                         "WHERE id_scenario = %s AND co_produit = %s",
                         (id_scenario, co_produit),
@@ -86,7 +82,7 @@ async def upsert_variation(id_scenario: int, co_produit: str, payload: Variation
             elif existing:
                 # dt_creation n'est PAS réécrit : on conserve la date de création d'origine
                 # (la table n'a pas de colonne dt_maj dans le schéma).
-                await tx.execute(
+                rows_affected = await tx.execute(
                     "UPDATE trppu_scenario_variations_prev "
                     "SET variation_pct = %s, id_rh = %s "
                     "WHERE id_scenario = %s AND co_produit = %s",
@@ -94,7 +90,7 @@ async def upsert_variation(id_scenario: int, co_produit: str, payload: Variation
                 )
                 action = "updated"
             else:
-                await tx.execute(
+                rows_affected = await tx.execute(
                     "INSERT INTO trppu_scenario_variations_prev "
                     "(id_scenario, co_produit, variation_pct, id_rh) "
                     "VALUES (%s, %s, %s, %s)",
@@ -105,17 +101,35 @@ async def upsert_variation(id_scenario: int, co_produit: str, payload: Variation
         raise
     except Exception as e:
         logger.exception(
-            "Erreur upsert variation (id_scenario=%d, co_produit=%s)", id_scenario, co_produit
+            "Erreur upsert variation %s",
+            ctx(id_scenario=id_scenario, co_produit=co_produit, params=logged),
         )
         raise HTTPException(status_code=500, detail="Erreur mise à jour variation.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    if action != "noop":
+        await enregistrer_appel(
+            api_name=ACTION_ECRITURE_VARIATION,
+            id_scenario=id_scenario,
+            regate=scenario.get("co_regate"),
+            params={
+                "operation": action,
+                "co_produit": co_produit,
+                "etat_avant": etat_avant,
+                "params": logged,
+            },
+        )
     logger.info(
-        "Upsert variation terminé (id_scenario=%d, co_produit=%s, action=%s, duration_ms=%.1f)",
-        id_scenario,
-        co_produit,
-        action,
-        duration_ms,
+        "Fin upsert variation %s",
+        ctx(
+            id_scenario=id_scenario,
+            co_produit=co_produit,
+            action=action,
+            etat_avant=etat_avant,
+            variation_pct=payload.variation_pct,
+            rows_affected=rows_affected,
+            duration_ms=duration_ms,
+        ),
     )
     return VariationUpsertResult(
         co_produit=co_produit,
@@ -129,13 +143,22 @@ async def delete_variation(id_scenario: int, co_produit: str):
     """DSR-646 : suppression explicite d'une variation."""
     start = time.perf_counter()
     logger.info(
-        "Début suppression variation (id_scenario=%d, co_produit=%s)", id_scenario, co_produit
+        "Début suppression variation %s",
+        ctx(id_scenario=id_scenario, co_produit=co_produit),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
 
     try:
         async with db_write.transaction() as tx:
+            # Suppression définitive : état journalisé avant écriture.
+            avant = await fetch_variation(tx, id_scenario, co_produit)
+            etat_avant = params_loggables(dict(avant)) if avant else None
+            if etat_avant is not None:
+                logger.info(
+                    "État avant suppression variation %s",
+                    ctx(id_scenario=id_scenario, co_produit=co_produit, etat=etat_avant),
+                )
             rc = await tx.execute(
                 "DELETE FROM trppu_scenario_variations_prev "
                 "WHERE id_scenario = %s AND co_produit = %s",
@@ -143,23 +166,44 @@ async def delete_variation(id_scenario: int, co_produit: str):
             )
     except Exception as e:
         logger.exception(
-            "Erreur suppression variation (id_scenario=%d, co_produit=%s)",
-            id_scenario,
-            co_produit,
+            "Erreur suppression variation %s",
+            ctx(id_scenario=id_scenario, co_produit=co_produit),
         )
         raise HTTPException(status_code=500, detail="Erreur suppression variation.") from e
 
     if not rc:
+        logger.warning(
+            "Rejet suppression variation %s",
+            ctx(
+                id_scenario=id_scenario,
+                co_produit=co_produit,
+                http=404,
+                motif="variation introuvable",
+            ),
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Variation introuvable (scénario {id_scenario}, produit {co_produit}).",
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_VARIATION,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "operation": "suppression",
+            "co_produit": co_produit,
+            "etat_avant": etat_avant,
+        },
+    )
     logger.info(
-        "Suppression variation terminée (id_scenario=%d, co_produit=%s, duration_ms=%.1f)",
-        id_scenario,
-        co_produit,
-        duration_ms,
+        "Fin suppression variation %s",
+        ctx(
+            id_scenario=id_scenario,
+            co_produit=co_produit,
+            rows_affected=rc,
+            duration_ms=duration_ms,
+        ),
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

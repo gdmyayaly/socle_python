@@ -1,9 +1,19 @@
-"""Machine à états des scénarios + effets de bord automatiques."""
+"""Machine à états des scénarios + effets de bord automatiques.
 
+Chaque refus de transition est journalisé en WARNING avant de lever le HTTP :
+sans cela, un 409/422 renvoyé à l'IHM ne laisse aucune trace côté serveur et
+l'incident n'est pas rejouable (cf. api_docs/CONVENTION-LOGS.md).
+"""
+
+import logging
 import unicodedata
 from typing import Any
 
 from fastapi import HTTPException
+
+from app.log_utils import ctx
+
+logger = logging.getLogger(__name__)
 
 # Ordre et valeurs alignés sur l'enum trppu_scenario.statut (db/db_new.sql).
 STATUTS = ("EN COURS", "SIMULATION", "VALIDE", "EN PRODUCTION", "ARCHIVE")
@@ -41,11 +51,22 @@ def resolve_fige_from_statut(statut: str) -> bool:
     cle = _normalize_statut(statut)
     if cle not in FIGE_PAR_STATUT:
         attendus = ", ".join(sorted(FIGE_PAR_STATUT))
+        logger.warning(
+            "Rejet figement par statut %s",
+            ctx(
+                statut=statut,
+                attendus=sorted(FIGE_PAR_STATUT),
+                http=422,
+                motif="statut inconnu",
+            ),
+        )
         raise HTTPException(
             status_code=422,
             detail=f"Statut '{statut}' inconnu. Valeurs acceptées : {attendus}.",
         )
-    return FIGE_PAR_STATUT[cle]
+    fige = FIGE_PAR_STATUT[cle]
+    logger.debug("Figement résolu depuis le statut %s", ctx(statut=statut, est_fige=fige))
+    return fige
 
 # Transitions accessibles via PATCH /statut.
 # La transition VALIDE -> EN PRODUCTION est volontairement absente : elle passe
@@ -78,11 +99,19 @@ def assert_transition_allowed(current: str, target: str) -> None:
     message indiquant la route dédiée à utiliser.
     """
     if target not in STATUTS:
+        logger.warning(
+            "Rejet transition statut %s",
+            ctx(depuis=current, vers=target, http=422, motif="statut cible inconnu"),
+        )
         raise HTTPException(
             status_code=422,
             detail=f"Statut '{target}' inconnu. Valeurs : {', '.join(STATUTS)}.",
         )
     if current == target:
+        logger.warning(
+            "Rejet transition statut %s",
+            ctx(depuis=current, vers=target, http=422, motif="statut déjà courant"),
+        )
         raise HTTPException(
             status_code=422,
             detail=f"Le scénario est déjà au statut '{current}'.",
@@ -90,6 +119,16 @@ def assert_transition_allowed(current: str, target: str) -> None:
 
     if target in INTERNAL_TRANSITIONS.get(current, set()):
         route = _internal_route_for(current, target)
+        logger.warning(
+            "Rejet transition statut %s",
+            ctx(
+                depuis=current,
+                vers=target,
+                route_dediee=route,
+                http=409,
+                motif="transition réservée à une route dédiée",
+            ),
+        )
         raise HTTPException(
             status_code=409,
             detail=(
@@ -101,6 +140,16 @@ def assert_transition_allowed(current: str, target: str) -> None:
     allowed = ALLOWED_TRANSITIONS.get(current, set())
     if target not in allowed:
         allowed_str = ", ".join(sorted(allowed)) if allowed else "(aucune)"
+        logger.warning(
+            "Rejet transition statut %s",
+            ctx(
+                depuis=current,
+                vers=target,
+                autorisees=sorted(allowed),
+                http=422,
+                motif="transition interdite",
+            ),
+        )
         raise HTTPException(
             status_code=422,
             detail=(
@@ -115,11 +164,19 @@ def assert_internal_transition_allowed(current: str, target: str) -> None:
     listées dans INTERNAL_TRANSITIONS en plus des transitions publiques.
     """
     if target not in STATUTS:
+        logger.warning(
+            "Rejet transition statut interne %s",
+            ctx(depuis=current, vers=target, http=422, motif="statut cible inconnu"),
+        )
         raise HTTPException(
             status_code=422,
             detail=f"Statut '{target}' inconnu. Valeurs : {', '.join(STATUTS)}.",
         )
     if current == target:
+        logger.warning(
+            "Rejet transition statut interne %s",
+            ctx(depuis=current, vers=target, http=422, motif="statut déjà courant"),
+        )
         raise HTTPException(
             status_code=422,
             detail=f"Le scénario est déjà au statut '{current}'.",
@@ -128,6 +185,16 @@ def assert_internal_transition_allowed(current: str, target: str) -> None:
     internal = INTERNAL_TRANSITIONS.get(current, set())
     if target not in (public | internal):
         allowed_str = ", ".join(sorted(public | internal)) if (public | internal) else "(aucune)"
+        logger.warning(
+            "Rejet transition statut interne %s",
+            ctx(
+                depuis=current,
+                vers=target,
+                autorisees=sorted(public | internal),
+                http=422,
+                motif="transition interdite",
+            ),
+        )
         raise HTTPException(
             status_code=422,
             detail=(
@@ -148,14 +215,16 @@ async def apply_transition_side_effects(tx, scenario: dict[str, Any], target: st
     id_scenario = scenario["id_scenario"]
 
     if target == "VALIDE":
-        await tx.execute(
+        effets = ["dt_validation si NULL"]
+        rows = await tx.execute(
             "UPDATE trppu_scenario SET statut = %s, "
             "dt_validation = COALESCE(dt_validation, NOW()) "
             "WHERE id_scenario = %s",
             (target, id_scenario),
         )
     elif target == "EN PRODUCTION":
-        await tx.execute(
+        effets = ["dt_validation si NULL", "dt_mise_en_prod", "est_fige=1"]
+        rows = await tx.execute(
             "UPDATE trppu_scenario SET statut = %s, "
             "dt_validation = COALESCE(dt_validation, NOW()), "
             "dt_mise_en_prod = NOW(), est_fige = 1 "
@@ -163,7 +232,21 @@ async def apply_transition_side_effects(tx, scenario: dict[str, Any], target: st
             (target, id_scenario),
         )
     else:
-        await tx.execute(
+        effets = []
+        rows = await tx.execute(
             "UPDATE trppu_scenario SET statut = %s WHERE id_scenario = %s",
             (target, id_scenario),
         )
+
+    # Les effets de bord sont implicites côté appelant : sans cette ligne, une
+    # colonne posée automatiquement (est_fige, dt_mise_en_prod) est intraçable.
+    logger.info(
+        "Effets de bord de transition appliqués %s",
+        ctx(
+            id_scenario=id_scenario,
+            depuis=scenario.get("statut"),
+            vers=target,
+            effets=effets,
+            rows_affected=rows,
+        ),
+    )

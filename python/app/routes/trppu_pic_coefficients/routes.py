@@ -7,7 +7,13 @@ from datetime import date, datetime
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from app.db.mysql import db_read, db_write
-from app.log_utils import safe_preview
+from app.log_utils import ctx, diff_champs, params_loggables, safe_preview
+from app.services.api_log import (
+    ACTION_ECRITURE_PIC_COEFFICIENT,
+    ACTION_IMPORT_EXCEL,
+    ACTION_SUPPRESSION_PIC_COEFFICIENT,
+    enregistrer_appel,
+)
 
 from .helpers import (
     UPSERT_SQL,
@@ -54,7 +60,7 @@ async def list_pic_coefs(
         "limit": limit,
         "offset": offset,
     }
-    logger.info("Début listing des coefficients PIC (filtres=%s)", safe_preview(filters))
+    logger.info("Début listing coefficients PIC %s", ctx(filtres=filters))
 
     where: list[str] = []
     params: list = []
@@ -79,18 +85,15 @@ async def list_pic_coefs(
     try:
         rows = await db_read.fetch_all(sql, tuple(params))
     except Exception as e:
-        logger.exception(
-            "Erreur listing des coefficients PIC (filtres=%s)", safe_preview(filters)
-        )
+        logger.exception("Erreur listing coefficients PIC %s", ctx(filtres=filters))
         raise HTTPException(
             status_code=500, detail="Erreur listing pic_coefficients."
         ) from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Listing des coefficients PIC terminé (count=%d, duration_ms=%.1f)",
-        len(rows),
-        duration_ms,
+        "Fin listing coefficients PIC %s",
+        ctx(count=len(rows), duration_ms=duration_ms),
     )
     return rows
 
@@ -98,35 +101,41 @@ async def list_pic_coefs(
 @router.get("/enums")
 async def list_enums():
     """Valeurs autorisées pour les colonnes ENUM de trppu_pic_coefficients."""
-    logger.info("Récupération des enums coefficients PIC")
+    logger.debug(
+        "Lecture enums coefficients PIC %s", ctx(count=len(JourSemaineEnum))
+    )
     return {"jour_semaine": [e.value for e in JourSemaineEnum]}
 
 
 @router.get("/{id_pic_coef}", response_model=PicCoefOut)
 async def get_pic_coef(id_pic_coef: int):
     start = time.perf_counter()
-    logger.info("Début récupération coefficient PIC (id_pic_coef=%d)", id_pic_coef)
+    logger.info("Début lecture coefficient PIC %s", ctx(id_pic_coef=id_pic_coef))
 
     try:
         row = await db_read.fetch_one(
             SELECT_PICC_SQL + " WHERE id_pic_coef = %s", (id_pic_coef,)
         )
     except Exception as e:
-        logger.exception("Erreur récupération coefficient PIC (id_pic_coef=%d)", id_pic_coef)
+        logger.exception(
+            "Erreur lecture coefficient PIC %s", ctx(id_pic_coef=id_pic_coef)
+        )
         raise HTTPException(
             status_code=500, detail="Erreur récupération coefficient."
         ) from e
     if not row:
-        logger.info("Coefficient PIC introuvable (id_pic_coef=%d)", id_pic_coef)
+        logger.warning(
+            "Rejet lecture coefficient PIC %s",
+            ctx(id_pic_coef=id_pic_coef, http=404, motif="coefficient introuvable"),
+        )
         raise HTTPException(
             status_code=404, detail=f"Coefficient {id_pic_coef} introuvable."
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Récupération coefficient PIC terminée (id_pic_coef=%d, duration_ms=%.1f)",
-        id_pic_coef,
-        duration_ms,
+        "Fin lecture coefficient PIC %s",
+        ctx(id_pic_coef=id_pic_coef, duration_ms=duration_ms),
     )
     return row
 
@@ -134,12 +143,16 @@ async def get_pic_coef(id_pic_coef: int):
 @router.post("", response_model=PicCoefOut, status_code=status.HTTP_201_CREATED)
 async def create_pic_coef(payload: PicCoefCreate):
     start = time.perf_counter()
+    logged = params_loggables(payload)
     logger.info(
-        "Début création coefficient PIC (id_pic_version=%d, co_produit=%s, jour_semaine=%s, densite=%s)",
-        payload.id_pic_version,
-        payload.co_produit,
-        payload.jour_semaine.value,
-        payload.densite,
+        "Début création coefficient PIC %s",
+        ctx(
+            id_pic_version=payload.id_pic_version,
+            co_produit=payload.co_produit,
+            jour_semaine=payload.jour_semaine.value,
+            densite=payload.densite,
+            params=logged,
+        ),
     )
 
     duplicate = await db_read.fetch_one(
@@ -154,9 +167,15 @@ async def create_pic_coef(payload: PicCoefCreate):
         ),
     )
     if duplicate:
-        logger.info(
-            "Coefficient PIC déjà existant pour la clé naturelle (id_pic_coef existant=%d)",
-            duplicate["id_pic_coef"],
+        logger.warning(
+            "Rejet création coefficient PIC %s",
+            ctx(
+                id_pic_coef_existant=duplicate["id_pic_coef"],
+                id_pic_version=payload.id_pic_version,
+                co_produit=payload.co_produit,
+                http=409,
+                motif="clé naturelle déjà utilisée",
+            ),
         )
         raise HTTPException(
             status_code=409,
@@ -166,11 +185,14 @@ async def create_pic_coef(payload: PicCoefCreate):
                 f"densite={payload.densite}) — id_pic_coef={duplicate['id_pic_coef']}."
             ),
         )
-    logger.info("Vérification clé naturelle OK")
+    logger.debug(
+        "Vérification clé naturelle OK %s",
+        ctx(id_pic_version=payload.id_pic_version, co_produit=payload.co_produit),
+    )
 
     try:
         async with db_write.transaction() as tx:
-            await tx.execute(
+            rows_inseres = await tx.execute(
                 "INSERT INTO trppu_pic_coefficients "
                 "(id_pic_version, co_produit, jour_semaine, densite, dt_effet, dt_fin, coef) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s)",
@@ -180,17 +202,27 @@ async def create_pic_coef(payload: PicCoefCreate):
                 SELECT_PICC_SQL + " WHERE id_pic_coef = LAST_INSERT_ID()"
             )
     except Exception as e:
-        logger.exception(
-            "Erreur création coefficient PIC (payload=%s)",
-            safe_preview(payload.model_dump(mode="json")),
-        )
+        logger.exception("Erreur création coefficient PIC %s", ctx(params=logged))
         raise HTTPException(status_code=500, detail="Erreur création coefficient.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_PIC_COEFFICIENT,
+        params={
+            "operation": "creation",
+            "id_pic_coef": new_row["id_pic_coef"],
+            "params": logged,
+        },
+    )
     logger.info(
-        "Création coefficient PIC terminée (id_pic_coef=%d, duration_ms=%.1f)",
-        new_row["id_pic_coef"],
-        duration_ms,
+        "Fin création coefficient PIC %s",
+        ctx(
+            id_pic_coef=new_row["id_pic_coef"],
+            id_pic_version=payload.id_pic_version,
+            co_produit=payload.co_produit,
+            rows_affected=rows_inseres,
+            duration_ms=duration_ms,
+        ),
     )
     return new_row
 
@@ -199,13 +231,17 @@ async def create_pic_coef(payload: PicCoefCreate):
 async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
     start = time.perf_counter()
     fields = payload.model_dump(exclude_unset=True)
+    logged = params_loggables(fields)
     logger.info(
-        "Début mise à jour coefficient PIC (id_pic_coef=%d, champs=%s)",
-        id_pic_coef,
-        safe_preview(fields),
+        "Début MAJ coefficient PIC %s",
+        ctx(id_pic_coef=id_pic_coef, params=logged),
     )
 
     if not fields:
+        logger.warning(
+            "Rejet MAJ coefficient PIC %s",
+            ctx(id_pic_coef=id_pic_coef, http=400, motif="aucun champ fourni"),
+        )
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour.")
 
     existing = await db_read.fetch_one(
@@ -214,8 +250,9 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
         (id_pic_coef,),
     )
     if not existing:
-        logger.info(
-            "Coefficient PIC introuvable pour mise à jour (id_pic_coef=%d)", id_pic_coef
+        logger.warning(
+            "Rejet MAJ coefficient PIC %s",
+            ctx(id_pic_coef=id_pic_coef, http=404, motif="coefficient introuvable"),
         )
         raise HTTPException(
             status_code=404, detail=f"Coefficient {id_pic_coef} introuvable."
@@ -228,6 +265,16 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
     )
     if "dt_fin" in fields and fields["dt_fin"] is not None:
         if fields["dt_fin"] <= new_dt_effet_date:
+            logger.warning(
+                "Rejet MAJ coefficient PIC %s",
+                ctx(
+                    id_pic_coef=id_pic_coef,
+                    dt_effet=new_dt_effet_date,
+                    dt_fin=fields["dt_fin"],
+                    http=422,
+                    motif="dt_fin <= dt_effet",
+                ),
+            )
             raise HTTPException(
                 status_code=422,
                 detail="dt_fin doit être strictement supérieure à dt_effet.",
@@ -255,16 +302,22 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
             (nk["id_pic_version"], nk["co_produit"], nk["jour_semaine"], nk["densite"], id_pic_coef),
         )
         if collision:
-            logger.info(
-                "Collision clé naturelle (id_pic_coef=%d collisionne avec id_pic_coef=%d)",
-                id_pic_coef,
-                collision["id_pic_coef"],
+            logger.warning(
+                "Rejet MAJ coefficient PIC %s",
+                ctx(
+                    id_pic_coef=id_pic_coef,
+                    id_pic_coef_collision=collision["id_pic_coef"],
+                    http=409,
+                    motif="collision de clé naturelle",
+                ),
             )
             raise HTTPException(
                 status_code=409,
                 detail=f"La nouvelle clé naturelle entre en collision avec id_pic_coef={collision['id_pic_coef']}.",
             )
-        logger.info("Vérification collision clé naturelle OK")
+        logger.debug(
+            "Vérification collision clé naturelle OK %s", ctx(id_pic_coef=id_pic_coef)
+        )
 
     set_parts: list[str] = []
     params: list = []
@@ -277,15 +330,14 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
     params.append(id_pic_coef)
 
     try:
-        await db_write.execute(
+        rows_maj = await db_write.execute(
             f"UPDATE trppu_pic_coefficients SET {', '.join(set_parts)} WHERE id_pic_coef = %s",
             tuple(params),
         )
     except Exception as e:
         logger.exception(
-            "Erreur mise à jour coefficient PIC (id_pic_coef=%d, champs=%s)",
-            id_pic_coef,
-            safe_preview(fields),
+            "Erreur MAJ coefficient PIC %s",
+            ctx(id_pic_coef=id_pic_coef, params=logged),
         )
         raise HTTPException(
             status_code=500, detail="Erreur mise à jour coefficient."
@@ -295,11 +347,25 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
         SELECT_PICC_SQL + " WHERE id_pic_coef = %s", (id_pic_coef,)
     )
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    delta = diff_champs(existing, updated or {})
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_PIC_COEFFICIENT,
+        params={
+            "operation": "maj",
+            "id_pic_coef": id_pic_coef,
+            "params": logged,
+            "delta": delta,
+        },
+    )
     logger.info(
-        "Mise à jour coefficient PIC terminée (id_pic_coef=%d, nb_champs=%d, duration_ms=%.1f)",
-        id_pic_coef,
-        len(fields),
-        duration_ms,
+        "Fin MAJ coefficient PIC %s",
+        ctx(
+            id_pic_coef=id_pic_coef,
+            nb_champs=len(fields),
+            rows_affected=rows_maj,
+            delta=delta,
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -308,14 +374,17 @@ async def update_pic_coef(id_pic_coef: int, payload: PicCoefUpdate):
 async def soft_delete_pic_coef(id_pic_coef: int):
     """Soft delete : positionne dt_fin = aujourd'hui (clôt la période)."""
     start = time.perf_counter()
-    logger.info("Début clôture coefficient PIC (id_pic_coef=%d)", id_pic_coef)
+    logger.info("Début clôture coefficient PIC %s", ctx(id_pic_coef=id_pic_coef))
 
     existing = await db_read.fetch_one(
         "SELECT id_pic_coef, dt_effet FROM trppu_pic_coefficients WHERE id_pic_coef = %s",
         (id_pic_coef,),
     )
     if not existing:
-        logger.info("Coefficient PIC introuvable pour clôture (id_pic_coef=%d)", id_pic_coef)
+        logger.warning(
+            "Rejet clôture coefficient PIC %s",
+            ctx(id_pic_coef=id_pic_coef, http=404, motif="coefficient introuvable"),
+        )
         raise HTTPException(
             status_code=404, detail=f"Coefficient {id_pic_coef} introuvable."
         )
@@ -324,10 +393,14 @@ async def soft_delete_pic_coef(id_pic_coef: int):
     dt_effet_val = existing["dt_effet"]
     dt_effet_date = dt_effet_val.date() if isinstance(dt_effet_val, datetime) else dt_effet_val
     if today <= dt_effet_date:
-        logger.info(
-            "Clôture refusée : dt_effet >= aujourd'hui (id_pic_coef=%d, dt_effet=%s)",
-            id_pic_coef,
-            dt_effet_val,
+        logger.warning(
+            "Rejet clôture coefficient PIC %s",
+            ctx(
+                id_pic_coef=id_pic_coef,
+                dt_effet=dt_effet_val,
+                http=422,
+                motif="dt_effet aujourd'hui ou dans le futur",
+            ),
         )
         raise HTTPException(
             status_code=422,
@@ -341,17 +414,31 @@ async def soft_delete_pic_coef(id_pic_coef: int):
             (today, id_pic_coef),
         )
     except Exception as e:
-        logger.exception("Erreur clôture coefficient PIC (id_pic_coef=%d)", id_pic_coef)
+        logger.exception(
+            "Erreur clôture coefficient PIC %s", ctx(id_pic_coef=id_pic_coef)
+        )
         raise HTTPException(
             status_code=500, detail="Erreur clôture coefficient."
         ) from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_SUPPRESSION_PIC_COEFFICIENT,
+        params={
+            "operation": "cloture",
+            "id_pic_coef": id_pic_coef,
+            "dt_effet": str(dt_effet_val),
+            "dt_fin": str(today),
+        },
+    )
     logger.info(
-        "Clôture coefficient PIC terminée (id_pic_coef=%d, dt_fin=%s, duration_ms=%.1f)",
-        id_pic_coef,
-        today,
-        duration_ms,
+        "Fin clôture coefficient PIC %s",
+        ctx(
+            id_pic_coef=id_pic_coef,
+            dt_fin=today,
+            rows_affected=rows_affected,
+            duration_ms=duration_ms,
+        ),
     )
     return SoftDeleteResult(
         id_pic_coef=id_pic_coef, dt_fin=today, rows_affected=rows_affected
@@ -362,9 +449,15 @@ async def soft_delete_pic_coef(id_pic_coef: int):
 async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")):
     """Upload massif via Excel : upsert sur la natural key uq_picc."""
     start = time.perf_counter()
-    logger.info("Début upload Excel coefficients PIC (fichier=%s)", file.filename)
+    logger.info(
+        "Début upload Excel coefficients PIC %s", ctx(fichier=file.filename)
+    )
 
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        logger.warning(
+            "Rejet upload Excel coefficients PIC %s",
+            ctx(fichier=file.filename, http=400, motif="extension non supportée"),
+        )
         raise HTTPException(
             status_code=400,
             detail="Format de fichier non supporté : attendu .xlsx ou .xlsm.",
@@ -372,34 +465,37 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
 
     content = await file.read()
     if not content:
+        logger.warning(
+            "Rejet upload Excel coefficients PIC %s",
+            ctx(fichier=file.filename, http=400, motif="fichier vide"),
+        )
         raise HTTPException(status_code=400, detail="Fichier vide.")
-    logger.info(
-        "Fichier Excel coefficients PIC lu (fichier=%s, taille=%d octets)",
-        file.filename,
-        len(content),
+    logger.debug(
+        "Fichier Excel coefficients PIC lu %s",
+        ctx(fichier=file.filename, taille_octets=len(content)),
     )
 
     try:
         coefs, errors = parse_excel_pic_coefs(content)
     except ValueError as e:
-        logger.info(
-            "Excel coefficients PIC invalide (fichier=%s, raison=%s)",
-            file.filename,
-            safe_preview(str(e), max_len=200),
+        logger.warning(
+            "Rejet upload Excel coefficients PIC %s",
+            ctx(
+                fichier=file.filename,
+                http=400,
+                motif=safe_preview(str(e), max_len=200),
+            ),
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception(
-            "Erreur parsing Excel coefficients PIC (fichier=%s, taille=%d)",
-            file.filename,
-            len(content),
+            "Erreur parsing Excel coefficients PIC %s",
+            ctx(fichier=file.filename, taille_octets=len(content)),
         )
         raise HTTPException(status_code=500, detail="Erreur lecture Excel.") from e
     logger.info(
-        "Excel coefficients PIC parsé (fichier=%s, valides=%d, erreurs=%d)",
-        file.filename,
-        len(coefs),
-        len(errors),
+        "Excel coefficients PIC parsé %s",
+        ctx(fichier=file.filename, valides=len(coefs), erreurs=len(errors)),
     )
 
     nb_inserted = 0
@@ -407,10 +503,9 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
     nb_unchanged = 0
 
     if coefs:
-        logger.info(
-            "Ouverture transaction upsert coefficients PIC (fichier=%s, taille_lot=%d)",
-            file.filename,
-            len(coefs),
+        logger.debug(
+            "Ouverture transaction upsert coefficients PIC %s",
+            ctx(fichier=file.filename, taille_lot=len(coefs)),
         )
         try:
             async with db_write.transaction() as tx:
@@ -419,10 +514,12 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         rc = await tx.execute(UPSERT_SQL, pic_coef_to_upsert_params(c))
                     except Exception:
                         logger.exception(
-                            "Échec UPSERT trppu_pic_coefficients (fichier=%s, ligne_excel=%d, payload=%s)",
-                            file.filename,
-                            excel_row,
-                            safe_preview(c.model_dump(mode="json")),
+                            "Échec UPSERT trppu_pic_coefficients %s",
+                            ctx(
+                                fichier=file.filename,
+                                ligne_excel=excel_row,
+                                params=params_loggables(c),
+                            ),
                         )
                         raise
                     if rc == 1:
@@ -433,24 +530,39 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         nb_unchanged += 1
         except Exception as e:
             logger.exception(
-                "Erreur upsert lot trppu_pic_coefficients (fichier=%s, taille_lot=%d)",
-                file.filename,
-                len(coefs),
+                "Erreur upsert lot trppu_pic_coefficients %s",
+                ctx(fichier=file.filename, taille_lot=len(coefs)),
             )
             raise HTTPException(
                 status_code=500,
                 detail=f"Échec de l'écriture du lot en base : {e}",
             ) from e
 
+    # `duration_s` alimente `execution_time_s` de la réponse (contrat d'API,
+    # inchangé) ; le log utilise `duration_ms` comme partout ailleurs.
     duration_s = round(time.perf_counter() - start, 3)
+    duration_ms = round(duration_s * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_IMPORT_EXCEL,
+        params={
+            "cible": "trppu_pic_coefficients",
+            "fichier": file.filename,
+            "inseres": nb_inserted,
+            "modifies": nb_updated,
+            "inchanges": nb_unchanged,
+            "erreurs": len(errors),
+        },
+    )
     logger.info(
-        "Upload Excel coefficients PIC terminé (fichier=%s, insérés=%d, modifiés=%d, inchangés=%d, erreurs=%d, duration_s=%.3f)",
-        file.filename,
-        nb_inserted,
-        nb_updated,
-        nb_unchanged,
-        len(errors),
-        duration_s,
+        "Fin upload Excel coefficients PIC %s",
+        ctx(
+            fichier=file.filename,
+            inseres=nb_inserted,
+            modifies=nb_updated,
+            inchanges=nb_unchanged,
+            erreurs=len(errors),
+            duration_ms=duration_ms,
+        ),
     )
     return BulkUploadResult(
         nb_rows_read=len(coefs) + len([e for e in errors if e.row > 0]),

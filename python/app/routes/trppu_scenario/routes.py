@@ -7,8 +7,17 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.db.mysql import db_read, db_write
-from app.log_utils import safe_preview
+from app.log_utils import ctx, diff_champs, params_loggables
 from app.security.crypto import encrypt_id_rh
+from app.services.api_log import (
+    ACTION_ARCHIVAGE_SCENARIO,
+    ACTION_CREATION_SCENARIO,
+    ACTION_DUPLICATION_SCENARIO,
+    ACTION_MAJ_SCENARIO,
+    ACTION_SUPPRESSION_SCENARIO,
+    ACTION_TRANSITION_STATUT,
+    enregistrer_appel,
+)
 from app.services.jours_service import compute_nb_jours
 
 from .helpers import (
@@ -22,6 +31,7 @@ from .helpers import (
     ensure_site_exists,
     fetch_scenario_or_404,
     increment_version,
+    last_insert_id,
     recompute_realise_prev,
     resolve_default_pic_version,
 )
@@ -82,7 +92,7 @@ async def list_scenarios(
         "limit": limit,
         "offset": offset,
     }
-    logger.info("Début listing des scénarios (filtres=%s)", safe_preview(filters))
+    logger.info("Début listing scénarios %s", ctx(filtres=filters))
 
     where: list[str] = []
     params: list = []
@@ -108,14 +118,12 @@ async def list_scenarios(
     try:
         rows = await db_read.fetch_all(sql, tuple(params))
     except Exception as e:
-        logger.exception(
-            "Erreur listing des scénarios (filtres=%s)", safe_preview(filters)
-        )
+        logger.exception("Erreur listing scénarios %s", ctx(filtres=filters))
         raise HTTPException(status_code=500, detail="Erreur listing scenarios.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Listing des scénarios terminé (count=%d, duration_ms=%.1f)", len(rows), duration_ms
+        "Fin listing scénarios %s", ctx(count=len(rows), duration_ms=duration_ms)
     )
     return rows
 
@@ -123,20 +131,19 @@ async def list_scenarios(
 @router.get("/enums")
 async def list_enums():
     """Valeurs autorisées pour les colonnes ENUM de trppu_scenario."""
-    logger.info("Récupération des enums scénarios")
+    logger.debug("Lecture enums scénarios %s", ctx(count=len(STATUTS)))
     return {"statut": list(STATUTS)}
 
 
 @router.get("/{id_scenario}", response_model=ScenarioOut)
 async def get_scenario(id_scenario: int):
     start = time.perf_counter()
-    logger.info("Début récupération scénario (id_scenario=%d)", id_scenario)
+    logger.info("Début lecture scénario %s", ctx(id_scenario=id_scenario))
     row = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Récupération scénario terminée (id_scenario=%d, duration_ms=%.1f)",
-        id_scenario,
-        duration_ms,
+        "Fin lecture scénario %s",
+        ctx(id_scenario=id_scenario, statut=row.get("statut"), duration_ms=duration_ms),
     )
     return row
 
@@ -148,17 +155,12 @@ async def get_scenario_periodes(
 ):
     """DSR-655 : périodes + nombres de jours d'un scénario (actualisation du slider IHM)."""
     start = time.perf_counter()
-    logger.info(
-        "Début lecture périodes scénario (id_scenario=%d, id_session_ihm=%s)",
-        id_scenario,
-        safe_preview(id_session_ihm),
-    )
+    logger.info("Début lecture périodes scénario %s", ctx(id_scenario=id_scenario))
     row = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Lecture périodes scénario terminée (id_scenario=%d, duration_ms=%.1f)",
-        id_scenario,
-        duration_ms,
+        "Fin lecture périodes scénario %s",
+        ctx(id_scenario=id_scenario, duration_ms=duration_ms),
     )
     return row
 
@@ -166,20 +168,20 @@ async def get_scenario_periodes(
 @router.post("", response_model=ScenarioOut, status_code=status.HTTP_201_CREATED)
 async def create_scenario(payload: ScenarioCreate):
     start = time.perf_counter()
-    # NB : on n'inclut jamais id_rh (en clair) dans les logs.
-    logged_payload = payload.model_dump(mode="json", exclude={"id_rh"})
+    # `params_loggables` retire id_rh (et tout champ sensible) : la règle ne
+    # dépend plus du soin apporté à chaque appel.
+    logged_payload = params_loggables(payload)
     logger.info(
-        "Début création scénario (co_regate=%s, payload=%s)",
-        payload.co_regate,
-        safe_preview(logged_payload),
+        "Début création scénario %s",
+        ctx(co_regate=payload.co_regate, params=logged_payload),
     )
 
     if payload.id_pic_version is not None:
         pic_version = payload.id_pic_version
     else:
         pic_version = await resolve_default_pic_version()
-        logger.info(
-            "Version PIC par défaut résolue (id_pic_version=%d)", pic_version
+        logger.debug(
+            "Version PIC par défaut résolue %s", ctx(id_pic_version=pic_version)
         )
 
     debut, fin = payload.periode_debut, payload.periode_fin
@@ -187,17 +189,17 @@ async def create_scenario(payload: ScenarioCreate):
         d, f = default_periode()
         debut = debut or d
         fin = fin or f
-        logger.info(
-            "Période par défaut appliquée (debut=%s, fin=%s)", debut, fin
-        )
+        logger.debug("Période par défaut appliquée %s", ctx(debut=debut, fin=fin))
 
     realise_debut, realise_fin, prev_debut, prev_fin = recompute_realise_prev(debut, fin)
-    logger.info(
-        "Bornes réalisé/prévision calculées (réalisé=[%s, %s], prévision=[%s, %s])",
-        realise_debut,
-        realise_fin,
-        prev_debut,
-        prev_fin,
+    logger.debug(
+        "Bornes réalisé/prévision calculées %s",
+        ctx(
+            realise_debut=realise_debut,
+            realise_fin=realise_fin,
+            prev_debut=prev_debut,
+            prev_fin=prev_fin,
+        ),
     )
 
     # Nombres de jours sur la période (fériés déduits) — DSR-613 / DSR-634.
@@ -205,11 +207,13 @@ async def create_scenario(payload: ScenarioCreate):
     nb_jours_scenario = (
         nbj.nb_jours_ouvres if payload.nb_jours_semaine == 5 else nbj.nb_jours_ouvrables
     )
-    logger.info(
-        "Nombres de jours calculés (ouvres=%d, ouvrables=%d, scenario=%d)",
-        nbj.nb_jours_ouvres,
-        nbj.nb_jours_ouvrables,
-        nb_jours_scenario,
+    logger.debug(
+        "Nombres de jours calculés %s",
+        ctx(
+            nb_jours_ouvres=nbj.nb_jours_ouvres,
+            nb_jours_ouvrables=nbj.nb_jours_ouvrables,
+            nb_jours_scenario=nb_jours_scenario,
+        ),
     )
 
     dt_mise_en_oeuvre = payload.dt_mise_en_oeuvre or date.today()
@@ -230,17 +234,16 @@ async def create_scenario(payload: ScenarioCreate):
             )
             if site_created:
                 logger.info(
-                    "Site créé automatiquement (co_regate=%s, type_site=%s)",
-                    payload.co_regate,
-                    payload.type_site,
+                    "Site créé automatiquement %s",
+                    ctx(co_regate=payload.co_regate, type_site=payload.type_site),
                 )
             else:
-                logger.info(
-                    "Site déjà présent dans trppu_site (co_regate=%s)",
-                    payload.co_regate,
+                logger.debug(
+                    "Site déjà présent dans trppu_site %s",
+                    ctx(co_regate=payload.co_regate),
                 )
 
-            await tx.execute(
+            rows_inseres = await tx.execute(
                 "INSERT INTO trppu_scenario "
                 "(co_regate, lb_scenario, co_roc, statut, dt_creation, "
                 " dt_mise_en_oeuvre, dt_pivot, "
@@ -271,8 +274,15 @@ async def create_scenario(payload: ScenarioCreate):
                     id_rh_token,
                 ),
             )
-            row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
-            id_scenario = int(row["id"])
+            id_scenario = await last_insert_id(tx)
+            logger.info(
+                "Scénario inséré %s",
+                ctx(
+                    id_scenario=id_scenario,
+                    co_regate=payload.co_regate,
+                    rows_affected=rows_inseres,
+                ),
+            )
 
             # Trafics TMH (1 ligne par produit) — DSR-634 (réutilise le service TMH).
             if payload.tmh:
@@ -283,32 +293,43 @@ async def create_scenario(payload: ScenarioCreate):
                     tx, [item.co_produit for item in payload.tmh], libelles_produits
                 )
                 if crees:
-                    logger.info("Produits créés automatiquement : %s", ", ".join(crees))
+                    logger.info(
+                        "Produits créés automatiquement %s",
+                        ctx(id_scenario=id_scenario, nb=len(crees), codes=crees),
+                    )
 
                 nb_ins, _ = await upsert_tmh_rows(
                     tx, id_scenario, payload.tmh, id_rh=id_rh_token
                 )
                 logger.info(
-                    "Lignes TMH insérées à la création (id_scenario=%d, nb=%d)",
-                    id_scenario,
-                    nb_ins,
+                    "Lignes TMH insérées à la création %s",
+                    ctx(id_scenario=id_scenario, inseres=nb_ins),
                 )
     except HTTPException:
         raise
     except Exception as e:
         logger.exception(
-            "Erreur création scénario (payload=%s)",
-            safe_preview(logged_payload),
+            "Erreur création scénario %s",
+            ctx(co_regate=payload.co_regate, params=logged_payload),
         )
         raise HTTPException(status_code=500, detail="Erreur création scenario.") from e
 
     created = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_CREATION_SCENARIO,
+        id_scenario=id_scenario,
+        regate=payload.co_regate,
+        params=logged_payload,
+    )
     logger.info(
-        "Création scénario terminée (id_scenario=%d, co_regate=%s, duration_ms=%.1f)",
-        id_scenario,
-        payload.co_regate,
-        duration_ms,
+        "Fin création scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            co_regate=payload.co_regate,
+            rows_affected=rows_inseres,
+            duration_ms=duration_ms,
+        ),
     )
     return created
 
@@ -322,13 +343,23 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
     et met à jour le TMH (DSR-659).
     """
     start = time.perf_counter()
-    logged = payload.model_dump(mode="json", exclude={"id_rh"})
+    logged = params_loggables(payload)
     logger.info(
-        "Début MAJ scénario (id_scenario=%d, payload=%s)", id_scenario, safe_preview(logged)
+        "Début MAJ scénario %s", ctx(id_scenario=id_scenario, params=logged)
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
     if scenario["statut"] not in STATUTS_EDITABLES:
+        # Rejet métier : tracé en WARNING, sinon un 409 ne laisse aucune trace.
+        logger.warning(
+            "Rejet MAJ scénario %s",
+            ctx(
+                id_scenario=id_scenario,
+                statut=scenario["statut"],
+                http=409,
+                motif="statut non éditable",
+            ),
+        )
         raise HTTPException(
             status_code=409,
             detail=(
@@ -373,7 +404,7 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
 
     try:
         async with db_write.transaction() as tx:
-            await tx.execute(
+            rows_maj = await tx.execute(
                 f"UPDATE trppu_scenario SET {', '.join(set_parts)} WHERE id_scenario = %s",
                 tuple(params),
             )
@@ -386,27 +417,46 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
                     tx, [item.co_produit for item in payload.tmh], libelles_produits
                 )
                 if crees:
-                    logger.info("Produits créés automatiquement : %s", ", ".join(crees))
+                    logger.info(
+                        "Produits créés automatiquement %s",
+                        ctx(id_scenario=id_scenario, nb=len(crees), codes=crees),
+                    )
 
                 nb_ins, nb_upd = await upsert_tmh_rows(
                     tx, id_scenario, payload.tmh, id_rh=id_rh_token
                 )
                 logger.info(
-                    "TMH mis à jour à la MAJ scénario (id_scenario=%d, insérés=%d, modifiés=%d)",
-                    id_scenario,
-                    nb_ins,
-                    nb_upd,
+                    "TMH mis à jour à la MAJ scénario %s",
+                    ctx(id_scenario=id_scenario, inseres=nb_ins, modifies=nb_upd),
                 )
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Erreur MAJ scénario (id_scenario=%d)", id_scenario)
+        logger.exception(
+            "Erreur MAJ scénario %s", ctx(id_scenario=id_scenario, params=logged)
+        )
         raise HTTPException(status_code=500, detail="Erreur mise à jour scenario.") from e
 
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    # `scenario` a été relu avant l'écriture : le delta rend la MAJ rejouable
+    # depuis les seuls logs, sans requête supplémentaire.
+    delta = diff_champs(scenario, updated)
+    await enregistrer_appel(
+        api_name=ACTION_MAJ_SCENARIO,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={"params": logged, "delta": delta},
+    )
     logger.info(
-        "MAJ scénario terminée (id_scenario=%d, duration_ms=%.1f)", id_scenario, duration_ms
+        "Fin MAJ scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            co_regate=scenario.get("co_regate"),
+            rows_affected=rows_maj,
+            delta=delta,
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -422,11 +472,7 @@ async def get_scenario_edition(
     coefficients PIC (fusion défaut/scénario). Propage l'id de session IHM aux logs.
     """
     start = time.perf_counter()
-    logger.info(
-        "Début édition scénario (id_scenario=%d, id_session_ihm=%s)",
-        id_scenario,
-        safe_preview(id_session_ihm),
-    )
+    logger.info("Début édition scénario %s", ctx(id_scenario=id_scenario))
     scenario = await fetch_scenario_or_404(id_scenario)
 
     # Imports locaux : évite tout cycle d'import entre modules de routes.
@@ -464,7 +510,7 @@ async def get_scenario_edition(
             "coefficients": merge_coeffs(defaults, overrides),
         }
     except Exception as e:
-        logger.exception("Erreur édition scénario (id_scenario=%d)", id_scenario)
+        logger.exception("Erreur édition scénario %s", ctx(id_scenario=id_scenario))
         raise HTTPException(status_code=500, detail="Erreur édition scenario.") from e
 
     periode_keys = (
@@ -474,12 +520,15 @@ async def get_scenario_edition(
     )
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Édition scénario terminée (id_scenario=%d, tmh=%d, comptages=%d, variations=%d, duration_ms=%.1f)",
-        id_scenario,
-        len(tmh),
-        len(comptages),
-        len(variations),
-        duration_ms,
+        "Fin édition scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            tmh=len(tmh),
+            comptages=len(comptages),
+            variations=len(variations),
+            neutralisations=len(neutralisations),
+            duration_ms=duration_ms,
+        ),
     )
     return {
         "scenario": scenario,
@@ -501,24 +550,51 @@ async def delete_scenario(id_scenario: int):
     POST /{id_scenario}/archive.
     """
     start = time.perf_counter()
-    logger.info("Début suppression scénario (id_scenario=%d)", id_scenario)
+    logger.info("Début suppression scénario %s", ctx(id_scenario=id_scenario))
 
-    await fetch_scenario_or_404(id_scenario)
+    # Le hard-delete est irréversible : l'état complet est journalisé AVANT
+    # l'écriture, c'est la seule base de reconstitution possible ensuite.
+    avant = await fetch_scenario_or_404(id_scenario)
+    etat_avant = params_loggables(dict(avant))
+    logger.info(
+        "État avant suppression scénario %s",
+        ctx(id_scenario=id_scenario, etat=etat_avant),
+    )
 
     try:
         async with db_write.transaction() as tx:
-            await delete_scenario_cascade(tx, id_scenario)
+            supprimes = await delete_scenario_cascade(tx, id_scenario)
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Erreur suppression scénario (id_scenario=%d)", id_scenario)
+        logger.exception(
+            "Erreur suppression scénario %s",
+            ctx(id_scenario=id_scenario, etat=etat_avant),
+        )
         raise HTTPException(status_code=500, detail="Erreur suppression scenario.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    # id_scenario laissé à None : le scénario n'existe plus, la FK de
+    # trppu_api_log le refuserait. L'id reste porté par `params`.
+    await enregistrer_appel(
+        api_name=ACTION_SUPPRESSION_SCENARIO,
+        id_scenario=None,
+        regate=avant.get("co_regate"),
+        params={
+            "id_scenario": id_scenario,
+            "etat_avant": etat_avant,
+            "lignes_supprimees": supprimes,
+        },
+    )
     logger.info(
-        "Suppression scénario terminée (id_scenario=%d, duration_ms=%.1f)",
-        id_scenario,
-        duration_ms,
+        "Fin suppression scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            co_regate=avant.get("co_regate"),
+            rows_affected=sum(supprimes.values()),
+            par_table={t: c for t, c in supprimes.items() if c},
+            duration_ms=duration_ms,
+        ),
     )
     return None
 
@@ -531,12 +607,12 @@ async def archive_scenario(id_scenario: int):
     Pour une suppression définitive, utiliser DELETE /{id_scenario}.
     """
     start = time.perf_counter()
-    logger.info("Début archivage scénario (id_scenario=%d)", id_scenario)
+    logger.info("Début archivage scénario %s", ctx(id_scenario=id_scenario))
 
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_transition_allowed(scenario["statut"], "ARCHIVE")
-    logger.info(
-        "Transition autorisée (depuis=%s vers ARCHIVE)", scenario["statut"]
+    logger.debug(
+        "Transition autorisée %s", ctx(depuis=scenario["statut"], vers="ARCHIVE")
     )
 
     try:
@@ -547,18 +623,27 @@ async def archive_scenario(id_scenario: int):
         raise
     except Exception as e:
         logger.exception(
-            "Erreur archivage scénario (id_scenario=%d, statut_courant=%s)",
-            id_scenario,
-            scenario.get("statut"),
+            "Erreur archivage scénario %s",
+            ctx(id_scenario=id_scenario, statut_courant=scenario.get("statut")),
         )
         raise HTTPException(status_code=500, detail="Erreur archivage scenario.") from e
 
     archived = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ARCHIVAGE_SCENARIO,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={"statut_avant": scenario.get("statut"), "statut_apres": "ARCHIVE"},
+    )
     logger.info(
-        "Archivage scénario terminé (id_scenario=%d, statut=ARCHIVE, duration_ms=%.1f)",
-        id_scenario,
-        duration_ms,
+        "Fin archivage scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            statut_avant=scenario.get("statut"),
+            statut="ARCHIVE",
+            duration_ms=duration_ms,
+        ),
     )
     return archived
 
@@ -568,10 +653,10 @@ async def update_periodes(id_scenario: int, payload: PeriodeUpdate):
     """MAJ des bornes principales. Les bornes realise/prev sont recalculées serveur."""
     start = time.perf_counter()
     fields = payload.model_dump(exclude_unset=True)
+    logged = params_loggables(fields)
     logger.info(
-        "Début mise à jour périodes (id_scenario=%d, champs=%s)",
-        id_scenario,
-        safe_preview(fields),
+        "Début MAJ périodes scénario %s",
+        ctx(id_scenario=id_scenario, params=logged),
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
@@ -580,22 +665,34 @@ async def update_periodes(id_scenario: int, payload: PeriodeUpdate):
     new_debut = fields.get("periode_debut", scenario["periode_debut"])
     new_fin = fields.get("periode_fin", scenario["periode_fin"])
     if new_fin < new_debut:
+        logger.warning(
+            "Rejet MAJ périodes scénario %s",
+            ctx(
+                id_scenario=id_scenario,
+                periode_debut=new_debut,
+                periode_fin=new_fin,
+                http=400,
+                motif="periode_fin < periode_debut",
+            ),
+        )
         raise HTTPException(
             status_code=400, detail="periode_fin doit être >= periode_debut."
         )
 
     realise_debut, realise_fin, prev_debut, prev_fin = recompute_realise_prev(new_debut, new_fin)
-    logger.info(
-        "Bornes réalisé/prévision recalculées (réalisé=[%s, %s], prévision=[%s, %s])",
-        realise_debut,
-        realise_fin,
-        prev_debut,
-        prev_fin,
+    logger.debug(
+        "Bornes réalisé/prévision recalculées %s",
+        ctx(
+            realise_debut=realise_debut,
+            realise_fin=realise_fin,
+            prev_debut=prev_debut,
+            prev_fin=prev_fin,
+        ),
     )
 
     try:
         async with db_write.transaction() as tx:
-            await tx.execute(
+            rows_maj = await tx.execute(
                 "UPDATE trppu_scenario SET "
                 "periode_debut = %s, periode_fin = %s, "
                 "periode_realise_debut = %s, periode_realise_fin = %s, "
@@ -616,18 +713,28 @@ async def update_periodes(id_scenario: int, payload: PeriodeUpdate):
         raise
     except Exception as e:
         logger.exception(
-            "Erreur mise à jour périodes (id_scenario=%d, champs=%s)",
-            id_scenario,
-            safe_preview(fields),
+            "Erreur MAJ périodes scénario %s",
+            ctx(id_scenario=id_scenario, params=logged),
         )
         raise HTTPException(status_code=500, detail="Erreur mise à jour périodes.") from e
 
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    delta = diff_champs(scenario, updated)
+    await enregistrer_appel(
+        api_name=ACTION_MAJ_SCENARIO,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={"cible": "periodes", "params": logged, "delta": delta},
+    )
     logger.info(
-        "Mise à jour périodes terminée (id_scenario=%d, duration_ms=%.1f)",
-        id_scenario,
-        duration_ms,
+        "Fin MAJ périodes scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            rows_affected=rows_maj,
+            delta=delta,
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -636,9 +743,8 @@ async def update_periodes(id_scenario: int, payload: PeriodeUpdate):
 async def update_nb_jours_semaine(id_scenario: int, payload: NbJoursUpdate):
     start = time.perf_counter()
     logger.info(
-        "Début mise à jour nb_jours_semaine (id_scenario=%d, nb_jours_semaine=%s)",
-        id_scenario,
-        payload.nb_jours_semaine,
+        "Début MAJ nb_jours_semaine %s",
+        ctx(id_scenario=id_scenario, nb_jours_semaine=payload.nb_jours_semaine),
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
@@ -646,16 +752,15 @@ async def update_nb_jours_semaine(id_scenario: int, payload: NbJoursUpdate):
 
     try:
         async with db_write.transaction() as tx:
-            await tx.execute(
+            rows_maj = await tx.execute(
                 "UPDATE trppu_scenario SET nb_jours_semaine = %s WHERE id_scenario = %s",
                 (payload.nb_jours_semaine, id_scenario),
             )
             await increment_version(tx, id_scenario)
     except Exception as e:
         logger.exception(
-            "Erreur update nb_jours_semaine (id_scenario=%d, nb_jours_semaine=%s)",
-            id_scenario,
-            payload.nb_jours_semaine,
+            "Erreur MAJ nb_jours_semaine %s",
+            ctx(id_scenario=id_scenario, nb_jours_semaine=payload.nb_jours_semaine),
         )
         raise HTTPException(
             status_code=500, detail="Erreur mise à jour nb_jours_semaine."
@@ -663,10 +768,22 @@ async def update_nb_jours_semaine(id_scenario: int, payload: NbJoursUpdate):
 
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    delta = diff_champs(scenario, updated)
+    await enregistrer_appel(
+        api_name=ACTION_MAJ_SCENARIO,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={"cible": "nb_jours_semaine", "delta": delta},
+    )
     logger.info(
-        "Mise à jour nb_jours_semaine terminée (id_scenario=%d, duration_ms=%.1f)",
-        id_scenario,
-        duration_ms,
+        "Fin MAJ nb_jours_semaine %s",
+        ctx(
+            id_scenario=id_scenario,
+            nb_jours_semaine=payload.nb_jours_semaine,
+            rows_affected=rows_maj,
+            delta=delta,
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -680,17 +797,15 @@ async def update_statut(id_scenario: int, payload: StatutUpdate):
     """
     start = time.perf_counter()
     logger.info(
-        "Début changement de statut (id_scenario=%d, statut_cible=%s)",
-        id_scenario,
-        payload.statut,
+        "Début transition statut scénario %s",
+        ctx(id_scenario=id_scenario, statut_cible=payload.statut),
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_transition_allowed(scenario["statut"], payload.statut)
-    logger.info(
-        "Transition autorisée (depuis=%s vers %s)",
-        scenario["statut"],
-        payload.statut,
+    logger.debug(
+        "Transition autorisée %s",
+        ctx(depuis=scenario["statut"], vers=payload.statut),
     )
 
     try:
@@ -701,20 +816,35 @@ async def update_statut(id_scenario: int, payload: StatutUpdate):
         raise
     except Exception as e:
         logger.exception(
-            "Erreur transition de statut (id_scenario=%d, depuis=%s, vers=%s)",
-            id_scenario,
-            scenario.get("statut"),
-            payload.statut,
+            "Erreur transition statut scénario %s",
+            ctx(
+                id_scenario=id_scenario,
+                depuis=scenario.get("statut"),
+                vers=payload.statut,
+            ),
         )
         raise HTTPException(status_code=500, detail="Erreur transition de statut.") from e
 
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_TRANSITION_STATUT,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "statut_avant": scenario.get("statut"),
+            "statut_apres": payload.statut,
+            "delta": diff_champs(scenario, updated),
+        },
+    )
     logger.info(
-        "Changement de statut terminé (id_scenario=%d, statut=%s, duration_ms=%.1f)",
-        id_scenario,
-        payload.statut,
-        duration_ms,
+        "Fin transition statut scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            statut_avant=scenario.get("statut"),
+            statut=payload.statut,
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -727,12 +857,13 @@ async def mise_en_prod(id_scenario: int):
     depuis VALIDE.
     """
     start = time.perf_counter()
-    logger.info("Début mise en production (id_scenario=%d)", id_scenario)
+    logger.info("Début mise en production scénario %s", ctx(id_scenario=id_scenario))
 
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_internal_transition_allowed(scenario["statut"], "EN PRODUCTION")
-    logger.info(
-        "Transition autorisée (depuis=%s vers EN PRODUCTION)", scenario["statut"]
+    logger.debug(
+        "Transition autorisée %s",
+        ctx(depuis=scenario["statut"], vers="EN PRODUCTION"),
     )
 
     try:
@@ -743,18 +874,31 @@ async def mise_en_prod(id_scenario: int):
         raise
     except Exception as e:
         logger.exception(
-            "Erreur mise en production (id_scenario=%d, statut_courant=%s)",
-            id_scenario,
-            scenario.get("statut"),
+            "Erreur mise en production scénario %s",
+            ctx(id_scenario=id_scenario, statut_courant=scenario.get("statut")),
         )
         raise HTTPException(status_code=500, detail="Erreur mise en production.") from e
 
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_TRANSITION_STATUT,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "statut_avant": scenario.get("statut"),
+            "statut_apres": "EN PRODUCTION",
+            "delta": diff_champs(scenario, updated),
+        },
+    )
     logger.info(
-        "Mise en production terminée (id_scenario=%d, statut=EN PRODUCTION, duration_ms=%.1f)",
-        id_scenario,
-        duration_ms,
+        "Fin mise en production scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            statut_avant=scenario.get("statut"),
+            statut="EN PRODUCTION",
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -764,9 +908,8 @@ async def update_est_fige(id_scenario: int, payload: FigeUpdate):
     """Force le flag est_fige (seul moyen de défiger un scénario après mise en prod)."""
     start = time.perf_counter()
     logger.info(
-        "Début mise à jour est_fige (id_scenario=%d, est_fige=%s)",
-        id_scenario,
-        payload.est_fige,
+        "Début MAJ est_fige scénario %s",
+        ctx(id_scenario=id_scenario, est_fige=payload.est_fige),
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
@@ -774,26 +917,39 @@ async def update_est_fige(id_scenario: int, payload: FigeUpdate):
 
     try:
         async with db_write.transaction() as tx:
-            await tx.execute(
+            rows_maj = await tx.execute(
                 "UPDATE trppu_scenario SET est_fige = %s WHERE id_scenario = %s",
                 (1 if payload.est_fige else 0, id_scenario),
             )
             await increment_version(tx, id_scenario)
     except Exception as e:
         logger.exception(
-            "Erreur update est_fige (id_scenario=%d, est_fige=%s)",
-            id_scenario,
-            payload.est_fige,
+            "Erreur MAJ est_fige scénario %s",
+            ctx(id_scenario=id_scenario, est_fige=payload.est_fige),
         )
         raise HTTPException(status_code=500, detail="Erreur mise à jour est_fige.") from e
 
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_MAJ_SCENARIO,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "cible": "est_fige",
+            "est_fige_avant": scenario.get("est_fige"),
+            "est_fige_apres": payload.est_fige,
+        },
+    )
     logger.info(
-        "Mise à jour est_fige terminée (id_scenario=%d, est_fige=%s, duration_ms=%.1f)",
-        id_scenario,
-        payload.est_fige,
-        duration_ms,
+        "Fin MAJ est_fige scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            est_fige_avant=scenario.get("est_fige"),
+            est_fige=payload.est_fige,
+            rows_affected=rows_maj,
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -808,9 +964,8 @@ async def update_figement_par_statut(id_scenario: int, payload: FigementParStatu
     """
     start = time.perf_counter()
     logger.info(
-        "Début figement par statut (id_scenario=%d, statut=%s)",
-        id_scenario,
-        safe_preview(payload.statut),
+        "Début figement par statut scénario %s",
+        ctx(id_scenario=id_scenario, statut=payload.statut),
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
@@ -819,27 +974,41 @@ async def update_figement_par_statut(id_scenario: int, payload: FigementParStatu
 
     try:
         async with db_write.transaction() as tx:
-            await tx.execute(
+            rows_maj = await tx.execute(
                 "UPDATE trppu_scenario SET est_fige = %s WHERE id_scenario = %s",
                 (1 if est_fige else 0, id_scenario),
             )
             await increment_version(tx, id_scenario)
     except Exception as e:
         logger.exception(
-            "Erreur figement par statut (id_scenario=%d, statut=%s)",
-            id_scenario,
-            safe_preview(payload.statut),
+            "Erreur figement par statut scénario %s",
+            ctx(id_scenario=id_scenario, statut=payload.statut),
         )
         raise HTTPException(status_code=500, detail="Erreur figement par statut.") from e
 
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_MAJ_SCENARIO,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "cible": "est_fige",
+            "statut_recu": payload.statut,
+            "est_fige_avant": scenario.get("est_fige"),
+            "est_fige_apres": est_fige,
+        },
+    )
     logger.info(
-        "Figement par statut terminé (id_scenario=%d, statut=%s, est_fige=%s, duration_ms=%.1f)",
-        id_scenario,
-        safe_preview(payload.statut),
-        est_fige,
-        duration_ms,
+        "Fin figement par statut scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            statut=payload.statut,
+            est_fige_avant=scenario.get("est_fige"),
+            est_fige=est_fige,
+            rows_affected=rows_maj,
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -848,9 +1017,8 @@ async def update_figement_par_statut(id_scenario: int, payload: FigementParStatu
 async def update_lb_scenario(id_scenario: int, payload: LbScenarioUpdate):
     start = time.perf_counter()
     logger.info(
-        "Début mise à jour libellé scénario (id_scenario=%d, lb_scenario=%s)",
-        id_scenario,
-        safe_preview(payload.lb_scenario),
+        "Début MAJ libellé scénario %s",
+        ctx(id_scenario=id_scenario, lb_scenario=payload.lb_scenario),
     )
 
     scenario = await fetch_scenario_or_404(id_scenario)
@@ -858,25 +1026,39 @@ async def update_lb_scenario(id_scenario: int, payload: LbScenarioUpdate):
 
     try:
         async with db_write.transaction() as tx:
-            await tx.execute(
+            rows_maj = await tx.execute(
                 "UPDATE trppu_scenario SET lb_scenario = %s WHERE id_scenario = %s",
                 (payload.lb_scenario, id_scenario),
             )
             await increment_version(tx, id_scenario)
     except Exception as e:
         logger.exception(
-            "Erreur mise à jour libellé scénario (id_scenario=%d, lb_scenario=%s)",
-            id_scenario,
-            safe_preview(payload.lb_scenario),
+            "Erreur MAJ libellé scénario %s",
+            ctx(id_scenario=id_scenario, lb_scenario=payload.lb_scenario),
         )
         raise HTTPException(status_code=500, detail="Erreur mise à jour libellé.") from e
 
     updated = await fetch_scenario_or_404(id_scenario)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_MAJ_SCENARIO,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "cible": "lb_scenario",
+            "lb_avant": scenario.get("lb_scenario"),
+            "lb_apres": payload.lb_scenario,
+        },
+    )
     logger.info(
-        "Mise à jour libellé scénario terminée (id_scenario=%d, duration_ms=%.1f)",
-        id_scenario,
-        duration_ms,
+        "Fin MAJ libellé scénario %s",
+        ctx(
+            id_scenario=id_scenario,
+            lb_avant=scenario.get("lb_scenario"),
+            lb_scenario=payload.lb_scenario,
+            rows_affected=rows_maj,
+            duration_ms=duration_ms,
+        ),
     )
     return updated
 
@@ -901,7 +1083,7 @@ async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest):
     il devient l'auteur du clone et des lignes filles copiées.
     """
     start = time.perf_counter()
-    logger.info("Début duplication scénario (source_id=%d)", id_scenario)
+    logger.info("Début duplication scénario %s", ctx(source_id=id_scenario))
 
     source = await fetch_scenario_or_404(id_scenario)
 
@@ -912,7 +1094,7 @@ async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest):
     )
     if len(new_lb) > 20:  # lb_scenario : varchar(20) en base
         new_lb = new_lb[:20]
-    logger.info("Nouveau libellé résolu (lb_scenario=%s)", safe_preview(new_lb))
+    logger.debug("Nouveau libellé résolu %s", ctx(lb_scenario=new_lb))
 
     id_rh_token = encrypt_id_rh(payload.id_rh)
 
@@ -944,8 +1126,7 @@ async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest):
                 "FROM trppu_scenario WHERE id_scenario = %s",
                 (new_lb, id_rh_token, id_rh_token, id_scenario),
             )
-            row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
-            new_id = int(row["id"])
+            new_id = await last_insert_id(tx)
 
             new_pic_id = await duplicate_scenario_pic_version(
                 tx, id_scenario, new_id, source["co_regate"], id_rh_token
@@ -957,21 +1138,33 @@ async def duplicate_scenario(id_scenario: int, payload: DuplicateRequest):
         raise
     except Exception as e:
         logger.exception(
-            "Erreur duplication scénario (source_id=%d, new_lb=%s)",
-            id_scenario,
-            safe_preview(new_lb),
+            "Erreur duplication scénario %s",
+            ctx(source_id=id_scenario, lb_scenario=new_lb),
         )
         raise HTTPException(status_code=500, detail="Erreur duplication scenario.") from e
 
     duplicated = await fetch_scenario_or_404(new_id)
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_DUPLICATION_SCENARIO,
+        id_scenario=new_id,
+        regate=source.get("co_regate"),
+        params={
+            "source_id": id_scenario,
+            "lb_scenario": new_lb,
+            "id_pic_version": new_pic_id,
+            "lignes_copiees": counts,
+        },
+    )
     logger.info(
-        "Duplication scénario terminée (source_id=%d, new_id=%d, new_pic_id=%s, "
-        "lignes_copiees=%s, duration_ms=%.1f)",
-        id_scenario,
-        new_id,
-        new_pic_id,
-        counts,
-        duration_ms,
+        "Fin duplication scénario %s",
+        ctx(
+            source_id=id_scenario,
+            id_scenario=new_id,
+            lb_scenario=new_lb,
+            id_pic_version=new_pic_id,
+            lignes_copiees=counts,
+            duration_ms=duration_ms,
+        ),
     )
     return duplicated

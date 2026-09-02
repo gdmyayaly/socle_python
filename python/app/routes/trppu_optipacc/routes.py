@@ -12,7 +12,7 @@ import time
 from fastapi import APIRouter, HTTPException, Query
 
 from app.db.mysql import db_read
-from app.log_utils import safe_preview
+from app.log_utils import ctx
 from app.routes.trppu_site.helpers import fetch_site_or_404
 
 from .helpers import (
@@ -60,28 +60,31 @@ async def site_liste_scenarios(
     """
     start = time.perf_counter()
     co_regate = payload.code_regate
-    logger.info(
-        "Début liste scénarios OPTIPACC (co_regate=%s, id_session_ihm=%s)",
-        co_regate,
-        safe_preview(id_session_ihm),
-    )
+    logger.info("Début liste scénarios OPTIPACC %s", ctx(co_regate=co_regate))
     try:
         rows = await db_read.fetch_all(SELECT_SCENARIOS_EXPLOITABLES_SQL, (co_regate,))
     except Exception as e:
-        logger.exception("Erreur liste scénarios OPTIPACC (co_regate=%s)", co_regate)
+        logger.exception(
+            "Erreur liste scénarios OPTIPACC %s", ctx(co_regate=co_regate)
+        )
         raise HTTPException(
             status_code=500,
             detail="Une erreur est survenue lors de la récupération des scénarios.",
         ) from e
 
     message = None if rows else f"Aucun scénario trouvé pour le site {co_regate}."
+    if message:
+        # Pas une erreur (200 + liste vide), mais l'appelant OPTIPACC repart sans
+        # scénario : la trace évite d'avoir à rejouer la requête pour comprendre.
+        logger.info(
+            "Aucun scénario exploitable OPTIPACC %s",
+            ctx(co_regate=co_regate, motif="aucun scénario VALIDE avec Agrébal calculé"),
+        )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Liste scénarios OPTIPACC terminée (co_regate=%s, count=%d, duration_ms=%.1f)",
-        co_regate,
-        len(rows),
-        duration_ms,
+        "Fin liste scénarios OPTIPACC %s",
+        ctx(co_regate=co_regate, count=len(rows), duration_ms=duration_ms),
     )
     return SiteScenariosResponse(
         code_regate=co_regate,
@@ -109,17 +112,26 @@ async def scenario_trafic_brut(
     co_regate = payload.code_regate
     id_scenario = payload.scenario_id
     logger.info(
-        "Début trafic brut OPTIPACC (co_regate=%s, id_scenario=%d, inclure_exclus=%s, "
-        "id_session_ihm=%s)",
-        co_regate,
-        id_scenario,
-        payload.inclure_exclus,
-        safe_preview(id_session_ihm),
+        "Début trafic brut OPTIPACC %s",
+        ctx(
+            co_regate=co_regate,
+            id_scenario=id_scenario,
+            inclure_exclus=payload.inclure_exclus,
+        ),
     )
 
     await fetch_site_or_404(co_regate)
     scenario = await db_read.fetch_one(SELECT_SCENARIO_GARDE_SQL, (id_scenario,))
     if not scenario:
+        logger.warning(
+            "Rejet trafic brut OPTIPACC %s",
+            ctx(
+                co_regate=co_regate,
+                id_scenario=id_scenario,
+                http=404,
+                motif="scénario introuvable",
+            ),
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Scénario {id_scenario} introuvable pour le site {co_regate}.",
@@ -134,7 +146,10 @@ async def scenario_trafic_brut(
     try:
         rows = await db_read.fetch_all(sql, (id_scenario,))
     except Exception as e:
-        logger.exception("Erreur trafic brut OPTIPACC (id_scenario=%d)", id_scenario)
+        logger.exception(
+            "Erreur trafic brut OPTIPACC %s",
+            ctx(co_regate=co_regate, id_scenario=id_scenario),
+        )
         raise HTTPException(
             status_code=500,
             detail="Une erreur est survenue lors de la récupération des trafics.",
@@ -151,12 +166,14 @@ async def scenario_trafic_brut(
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Trafic brut OPTIPACC terminé (co_regate=%s, id_scenario=%d, count=%d, "
-        "duration_ms=%.1f)",
-        co_regate,
-        id_scenario,
-        len(produits),
-        duration_ms,
+        "Fin trafic brut OPTIPACC %s",
+        ctx(
+            co_regate=co_regate,
+            id_scenario=id_scenario,
+            count=len(produits),
+            inclure_exclus=payload.inclure_exclus,
+            duration_ms=duration_ms,
+        ),
     )
     return TraficBrutResponse(
         code_regate=co_regate,

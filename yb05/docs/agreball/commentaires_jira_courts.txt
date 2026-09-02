@@ -1,0 +1,435 @@
+========================================================================
+YB05 — COMMENTAIRES JIRA À COLLER (version courte)
+DSR-700, DSR-701, DSR-702, DSR-703, DSR-704
+========================================================================
+
+Version simplifiée, destinée à être collée telle quelle dans chaque
+ticket : ce qu'il y a à exécuter, ce que ça fait, ce qu'il faut vérifier.
+
+Copier le bloc situé entre les deux lignes « DÉBUT / FIN » du ticket
+concerné, sans les lignes de séparation elles-mêmes.
+
+Les versions détaillées (conception, couverture des critères
+d'acceptation point par point) sont dans les fichiers voisins
+`DSR-70x_commentaire_jira.txt`. L'analyse écart par écart des tickets est
+dans `../DIAGNOSTIC-DSR-701-703.md`.
+
+
+
+========================================================================
+DSR-700 — Associer une version de clés à un scénario
+========================================================================
+------------------------------ DÉBUT -----------------------------------
+
+Livré : couvert par l'étape 3 de DSR-702 (module YB05)
+
+CE QUI EST FAIT
+Ce ticket n'a pas de traitement propre : il exige qu'un scénario mémorise
+le référentiel et la version de clés utilisés pour son calcul, et les
+conserve ensuite. C'est exactement ce que fait le calcul des trafics PDI,
+avant son premier calcul :
+
+  UPDATE trppu_scenario
+     SET id_referentiel = ?, id_version_cle = ?
+   WHERE id_scenario = ?
+
+  - id_version_cle : la version ACTIVE du site (actif = 'O')
+  - id_referentiel : le référentiel actif du site (son plus grand id)
+
+L'écriture est commitée avant le calcul, et n'est jamais retouchée
+ensuite : DSR-698 peut créer autant de nouvelles versions que nécessaire,
+les scénarios déjà calculés gardent la leur. Seul un recalcul du scénario
+lui-même réécrit ces colonnes — ce qui est le comportement attendu.
+
+RETROUVER LES DONNÉES (CA3 et CA4)
+  -- les clés utilisées par le scénario
+  SELECT k.* FROM trppu_scenario s
+    JOIN trppu_cles_repartition_calcule k ON k.id_version_cle = s.id_version_cle
+   WHERE s.id_scenario = 12345;
+
+  -- les données source de ces clés
+  SELECT c.* FROM trppu_scenario s
+    JOIN trppu_cles_repartition c ON c.id_referentiel = s.id_referentiel
+                                 AND c.co_regate_site = s.co_regate
+   WHERE s.id_scenario = 12345;
+
+POINT DE VIGILANCE
+Les scénarios créés par YS04 portent encore id_referentiel = 0 et
+id_version_cle = 0, valeurs qui ne correspondent à aucune ligne, sans
+qu'aucune clé étrangère ne le signale. La duplication de scénario perd
+aussi ces deux colonnes. YB05 est le premier traitement à les renseigner :
+le CA1 n'est donc vérifiable que sur les scénarios calculés. Aligner YS04
+reste à cadrer.
+
+------------------------------- FIN ------------------------------------
+
+
+
+========================================================================
+DSR-701 — Contrôle de l'éligibilité d'un scénario au calcul des trafics
+========================================================================
+------------------------------ DÉBUT -----------------------------------
+
+Livré : commande ELIGIBILITE du batch YB05
+
+À EXÉCUTER
+  python -m app.main eligibilite 12345
+
+Les orthographes du ticket fonctionnent aussi :
+  python -m app.main ELIGIBILITE 12345
+  python -m app.main --traitement=ELIGIBILITE --scenario=12345
+
+Code de retour : 0 si ELIGIBLE, 1 si NON ELIGIBLE.
+
+CE QUE FAIT LA COMMANDE
+Les douze règles d'éligibilité du scénario, et un verdict au format du
+ticket : un bandeau, une ligne [OK] ou [KO] par règle, la ligne RESULTAT,
+puis la liste des motifs bloquants.
+
+Les douze règles sont TOUTES évaluées même quand l'une échoue : le but
+d'un mode contrôle est de rendre d'un coup tout ce qui bloque. Seule
+l'absence de scénario arrête le reste, puisque plus rien n'est évaluable.
+
+AUCUNE ÉCRITURE (CA-05)
+Le traitement ne reçoit pas d'instance d'écriture : seule la base de
+lecture lui est passée. La violation du CA-05 est impossible par
+construction, pas seulement interdite. Un test le verrouille.
+
+DEUX ÉCARTS AVEC LE TICKET
+1. La règle 11 cherche les Agrébals dans trppu_trafic_agrebal. Cette
+   table contient les trafics CALCULÉS, que la règle 6 exige justement
+   vides et que DSR-702 purge avant chaque recalcul. Appliquée telle
+   quelle, la règle ne pourrait JAMAIS passer pour un premier calcul.
+   Les Agrébals sont donc lus dans trppu_agrebal_pdi (code régate du
+   site, non supprimés) ; la règle 12 compte les PDI de agrebal_pdiList.
+
+2. La règle 10 exige que ses deux requêtes renvoient le même
+   id_referentiel, sans dire quoi faire si elles diffèrent. Choix retenu :
+   c'est bloquant, avec un motif qui nomme les deux valeurs. Un écart
+   signifie que la version de clés active repose sur un référentiel
+   dépassé — calculer produirait des trafics à partir de clés périmées.
+   À confirmer si ce cas doit au contraire être toléré.
+
+Rappel déjà signalé sur DSR-698 : trppu_referentiel n'a pas de colonne
+actif. La convention appliquée est celle du ticket, « le plus grand
+id_referentiel du site » — un référentiel national (co_regate NULL) ne
+sera donc jamais retourné.
+
+COMMENT TESTER
+  python -m pytest tests/test_traitements_eligibilite.py -q   (18 tests)
+
+Puis, sur la base : un id inexistant rend NON ELIGIBLE / « Scénario
+inexistant » ; un scénario VALIDE, figé et complet rend ELIGIBLE ; poser
+calcul_trafic_en_cours = 1 ou trafic_pdi_calcule = 1 rend NON ELIGIBLE
+avec le motif correspondant. Vérifier qu'aucune donnée n'a changé.
+
+------------------------------- FIN ------------------------------------
+
+
+
+========================================================================
+DSR-702 — Calcul des trafics PDI d'un scénario
+========================================================================
+------------------------------ DÉBUT -----------------------------------
+
+Livré : commande CALCUL_TRAFIC_PDI du batch YB05
+
+À EXÉCUTER
+  python -m app.main calcul-trafic-pdi 12345
+  python -m app.main --traitement=CALCUL_TRAFIC_PDI --scenario=12345
+
+Code de retour : 0 si SUCCES, 1 si ECHEC.
+
+PRÉREQUIS DE CONFIGURATION — À FAIRE AVANT LE PREMIER LANCEMENT
+Renseigner dans le .env la correspondance produit / clé de répartition :
+
+  CLES_PAR_PRODUIT=CO:colis,OO:oo,IP:potentielip,OS:3s,PR:3s,PPI:3s
+
+Pourquoi : le ticket donne la correspondance en familles métier (Colis,
+OO, 3S, IP) alors que les produits sont des codes alimentés
+dynamiquement depuis Databricks (OO, OS, PR, PPI, CO, IP), créés au
+besoin par YS04. RIEN EN BASE ne dit à quelle famille appartient un code,
+et « Colis » ou « 3S » ne sont pas des codes produits.
+
+La correspondance est donc une donnée de configuration, corrigeable sans
+livraison. Un produit absent de la liste FAIT ÉCHOUER le calcul, avec un
+message qui le nomme — plutôt que de produire un trafic faux qui se
+propagerait à tous les scénarios sans plus jamais se voir.
+
+LA VALEUR PAR DÉFAUT CI-DESSUS EST À CONFIRMER PAR LE MÉTIER : elle est
+déduite des noms et n'a pas d'autre fondement.
+
+CE QUE FAIT LE TRAITEMENT
+  trafic = TMH x coefficient de rétention x clé de répartition du PDI
+pour chaque PDI x produit x jour x densité, dans trppu_trafic_pdi.
+
+Enchaînement :
+  1. contrôle d'éligibilité (DSR-701). Non éligible : arrêt immédiat,
+     aucune écriture, aucun verrou posé ;
+  2. motif du calcul : INITIAL, ou la raison de la dernière demande ;
+  3. verrou calcul_trafic_en_cours = 1, COMMITÉ SEUL ;
+  4. référentiel et version de clés mémorisés dans le scénario (DSR-700) ;
+  5. chargement des données AVANT toute suppression ;
+  6. purge des trafics Agrébal puis PDI, insertion par lots, journal et
+     trafic_pdi_calcule = 1 — dans UNE SEULE transaction ;
+  7. calcul_trafic_en_cours reste à 1 : c'est le calcul Agrébal qui
+     libère le scénario.
+
+En cas d'erreur : verrou relâché, trafic_pdi_calcule inchangé à 0, et une
+ligne de trppu_recalcul_log trace l'incident — écrite hors de la
+transaction annulée, sinon elle disparaîtrait avec elle.
+
+POINT DE CONCEPTION : LE VERROU EST COMMITÉ SEUL
+Placé dans la transaction du calcul comme le laisse entendre l'étape 2,
+le verrou serait invisible des autres processus jusqu'au commit final,
+c'est-à-dire trop tard pour empêcher un lancement concurrent. Zéro ligne
+affectée = un autre processus détient le scénario, on s'arrête.
+
+DÉCISIONS PRISES FAUTE DE SPÉCIFICATION
+- TMH retenu : somme de moyenne_hebdo sur les lignes bl_exclu = 0, hors
+  produits de trppu_scenario_exclusions. La table autorise plusieurs
+  lignes par produit depuis la migration du 24/06/2026.
+- Arrondi : dense/faible1/faible2 sont des smallint unsigned. Arrondi à
+  l'entier, et ÉCHEC EXPLICITE au-delà de 65 535 — MySQL tronquerait
+  sinon en silence.
+- Densité : 0 -> dense, 1 -> faible1, 2 -> faible2. RIEN ne relie les
+  deux dans le schéma : À CONFIRMER PAR LE MÉTIER. Une inversion
+  produirait des trafics plausibles mais faux, invisibles aux contrôles.
+- Jours calculés : la semaine du scénario (5 ou 6 jours) intersectée avec
+  les jours réellement coefficientés. Un jour qu'aucun produit ne
+  coefficiente n'est pas calculé ; un produit sans coefficient sur un
+  jour que d'autres couvrent fait échouer le calcul.
+- dt_effet / dt_fin des coefficients ne sont pas filtrés : la clé unique
+  garantit déjà une seule ligne par combinaison.
+- Nom de table : le ticket écrit TRPPU_CLE_REPARTITION_CALCULE, la table
+  réelle est trppu_cles_repartition_calcule.
+
+CONTRADICTION INTERNE AU TICKET
+Le CA-06 interdit de modifier TRAFIC_AGREBAL_CALCULE, que l'étape 4
+remet explicitement à 0. L'étape 4 l'emporte : elle est cohérente avec
+« TRAFIC_PDI et TRAFIC_AGREBAL sont indissociables », et laisser le flag
+à 1 après avoir vidé la table serait un mensonge. Le CA-06 garde son sens
+sur STATUT et EST_FIGE, jamais touchés.
+
+COMMENT TESTER
+  python -m pytest tests/test_traitements_trafic_pdi.py -q   (22 tests)
+
+Sur la base, après éligibilité :
+  SELECT trafic_pdi_calcule, trafic_agrebal_calcule,
+         Calcul_trafic_en_cours, id_referentiel, id_version_cle
+    FROM trppu_scenario WHERE id_scenario = 12345;
+  -- attendu : 1, 0, 1, et les deux identifiants renseignés
+
+Relancer eligibilite doit alors rendre NON ELIGIBLE avec le motif « Les
+trafics PDI sont déjà calculés » : preuve que les flags ont été posés.
+
+------------------------------- FIN ------------------------------------
+
+
+
+========================================================================
+DSR-703 — Calcul des trafics Agrébal d'un scénario
+========================================================================
+------------------------------ DÉBUT -----------------------------------
+
+Livré : commande CALCUL_TRAFIC_AGREBAL du batch YB05
+
+À EXÉCUTER
+  python -m app.main calcul-trafic-agrebal 12345
+  python -m app.main --traitement=CALCUL_TRAFIC_AGREBAL --scenario=12345
+
+Code de retour : 0 si SUCCES, 1 si ECHEC.
+
+CONTRÔLES PRÉALABLES
+Le scénario existe, trafic_pdi_calcule = 1, ET au moins une ligne dans
+trppu_trafic_pdi — le flag seul ne suffit pas. En cas de refus, aucun
+calcul, et le message rappelle la commande à jouer :
+
+  Calcul des trafics Agrébal impossible.
+  Les trafics PDI du scénario 12345 n'ont pas été calculés.
+  Exécuter préalablement : YB05 CALCUL_TRAFIC_PDI 12345
+
+CE QUE FAIT LE TRAITEMENT
+Il somme, et rien d'autre : aucun coefficient, aucune clé de répartition
+(CA-06, verrouillé par un test qui vérifie que ces deux tables ne sont
+même pas interrogées).
+
+L'agrégation est faite EN SQL — trois INSERT ... SELECT ... GROUP BY, un
+par couleur PIC (DENSE, FAIBLE1, FAIBLE2), groupés par scénario, régate,
+Agrébal, uuid, produit et jour. Les volumes ne transitent jamais par
+l'application : c'est plus rapide d'un ordre de grandeur, et volume étant
+un decimal(12,4), aucun arrondi n'est introduit.
+
+Le tout dans une seule transaction : purge, les trois agrégations, la
+ligne de journal, puis trafic_agrebal_calcule = 1 et
+calcul_trafic_en_cours = 0.
+
+LE VERROU N'EST PAS REPRIS
+Ce traitement tourne sous celui posé par DSR-702, et c'est sa mise à jour
+finale qui le relâche. Le poser échouerait puisqu'il vaut déjà 1.
+
+CONTRÔLE INTÉGRÉ
+Après agrégation, la somme des volumes Agrébal est comparée à la somme
+(dense + faible1 + faible2) des trafics PDI. Un écart signale un PDI
+compté deux fois ou un GROUP BY incomplet — ce qu'aucun décompte de
+lignes ne montrerait. Le verdict passe à ECHEC dans ce cas, même si les
+données ont été écrites : l'exploitant ne doit pas lire SUCCES sur un
+calcul douteux.
+
+ÉCART DE SCHÉMA CONTRÔLÉ
+trppu_trafic_pdi.id_agrebal est un bigint, trppu_trafic_agrebal.id_agrebal
+un int. Le traitement refuse d'agréger si un id dépasse la capacité de la
+cible, plutôt que de laisser MySQL tronquer ou échouer en cours
+d'insertion.
+
+JOURNALISATION — POINT À CONNAÎTRE
+Une ligne dans trppu_recalcul_log, avec le motif de la dernière demande
+enregistrée, ou INITIAL. Ce traitement relit donc la ligne écrite par
+DSR-702 juste avant : le motif d'un même calcul se propage d'une étape à
+l'autre, et le journal contient deux lignes par calcul complet.
+À réconcilier avec DSR-704, qui demande l'inverse (« un seul
+enregistrement par scénario traité »).
+
+EN CAS D'ERREUR
+  TRAFIC_PDI_CALCULE     = 1  (inchangé, CA-07)
+  TRAFIC_AGREBAL_CALCULE = 0
+  CALCUL_TRAFIC_EN_COURS = 0
+et une ligne de journal trace l'incident.
+
+COMMENT TESTER
+  python -m pytest tests/test_traitements_trafic_agrebal.py -q  (13 tests)
+
+Sur la base, après DSR-702 :
+  SELECT trafic_pdi_calcule, trafic_agrebal_calcule,
+         Calcul_trafic_en_cours
+    FROM trppu_scenario WHERE id_scenario = 12345;   -- 1, 1, 0
+
+  SELECT (SELECT SUM(dense + faible1 + faible2) FROM trppu_trafic_pdi
+           WHERE id_scenario = 12345)
+       - (SELECT SUM(volume) FROM trppu_trafic_agrebal
+           WHERE id_scenario = 12345) AS ecart;      -- doit valoir 0
+
+Le scénario est alors complet et devient éligible à la visibilité
+Optipacc.
+
+------------------------------- FIN ------------------------------------
+========================================================================
+
+
+========================================================================
+DSR-704 — Mode ALL : calcul automatique et parallélisé
+========================================================================
+------------------------------ DÉBUT -----------------------------------
+
+Livré : commande ALL du batch YB05
+
+À EXÉCUTER
+  python -m app.main all            # tous les scénarios éligibles
+  python -m app.main all 12345      # ce scénario seul
+  python -m app.main --traitement=ALL --scenario=12345
+
+Parallélisme, par variable d'environnement :
+  NB_WORKER=4 python -m app.main all
+
+NB_WORKER=1 par défaut (séquentiel), comme le demande le ticket. Toute
+valeur inexploitable est ramenée à 1 : un batch d'exploitation ne refuse
+pas de démarrer pour une variable mal saisie.
+
+Code de retour : 0 si tout a abouti, 1 dès qu'un scénario est en échec.
+Le batch va toujours au bout de la file avant de rendre la main.
+
+CE QUE FAIT LA COMMANDE
+Elle cherche les scénarios éligibles avec la requête du ticket (VALIDE,
+figé, aucun calcul en cours, aucun trafic calculé), les place dans une
+file, et fait tourner NB_WORKER workers dessus. Pour chaque scénario :
+contrôle d'éligibilité, calcul des trafics PDI, calcul des trafics
+Agrébal.
+
+Aucune règle métier n'a été ajoutée (CA-09) : tout ce qui décide reste
+dans DSR-701, 702 et 703.
+
+LA RÉSERVATION N'A PAS ÉTÉ RÉIMPLÉMENTÉE
+Le verrou décrit par le ticket — UPDATE ... SET calcul_trafic_en_cours=1
+WHERE calcul_trafic_en_cours = 0 — est exactement celui que pose déjà
+DSR-702, atomique, avec le même test sur zéro ligne affectée. Un seul
+worker peut obtenir le scénario ; le perdant passe au suivant.
+
+TROIS ÉCARTS AVEC LE TICKET
+1. Le ticket fait RÉSERVER puis CONTRÔLER, alors que la règle 4 de
+   DSR-701 exige calcul_trafic_en_cours = 0. Appliqué tel quel, aucun
+   scénario n'aurait jamais été éligible en mode ALL. L'ordre est
+   inversé : contrôler (lecture seule), puis réserver.
+
+2. DSR-703 s'arrête sur ses contrôles préalables sans libérer le
+   verrou — correct lancé seul, où il ne le détient pas. Mais dans la
+   chaîne, DSR-702 vient de le poser : un échec précoce de l'étape
+   Agrébal laisserait le scénario bloqué, ce que le ticket interdit.
+   Un filet de sécurité a été ajouté dans l'orchestrateur, seul à savoir
+   qu'il détient le verrou. DSR-703 n'a pas été modifié.
+
+3. Un scénario dont le PDI a réussi mais pas l'Agrébal sort des critères
+   de recherche : aucun ALL suivant ne le reprendra. Les critères du
+   ticket sont respectés, mais ces scénarios sont nommés dans le bilan,
+   avec la commande à jouer. À arbitrer si ALL doit les reprendre
+   automatiquement (cela imposerait de contourner la règle 5 de
+   DSR-701).
+
+JOURNALISATION (CA-12)
+Le CA-12 demande une seule ligne par scénario, mais DSR-702 et DSR-703
+en écrivent déjà chacun une, et le CA-09 interdit à l'orchestrateur de
+porter une règle métier. Retenu : ALL n'écrit rien. Le journal contient
+deux lignes par calcul complet, une par étape — et jouer les commandes
+une par une conserve la traçabilité.
+
+DEUX POINTS TECHNIQUES
+- Les pools MySQL sont désormais dimensionnés sur NB_WORKER. Ils étaient
+  plafonnés à 10 connexions en dur : au-delà, le parallélisme annoncé
+  n'aurait pas existé sans que rien ne le signale.
+- Le rendu distingue trois marques : [OK], [KO], et [--] pour un
+  scénario NON ÉLIGIBLE, qui n'est pas une panne — il n'était pas prêt.
+  Le code de retour vaut 1 pour un [KO], jamais pour un [--].
+
+EXEMPLE DE BILAN
+  NB_WORKER = 4
+
+  4 scénario(s) détecté(s)
+
+  [OK] 12345
+  [OK] 12346
+  [KO] 12347
+       Version de clés introuvable
+  [--] 12348
+       Le scénario n'est pas figé
+
+  --------------------------------------------------
+  BILAN
+  --------------------------------------------------
+
+  NB_WORKER            : 4
+  Scénarios trouvés    : 4
+  Scénarios éligibles  : 3
+  Succès               : 2
+  Échecs               : 1
+  Non éligibles        : 1
+  Durée totale         : 00:03:12
+  Durée moyenne        : 00:00:48
+
+  RESULTAT : ECHEC
+
+COMMENT TESTER
+  python -m pytest tests/test_traitements_orchestrateur.py -q  (24 tests)
+
+Sur la base :
+  NB_WORKER=4 python -m app.main all
+
+  SELECT id_scenario, trafic_pdi_calcule, trafic_agrebal_calcule,
+         Calcul_trafic_en_cours
+    FROM trppu_scenario WHERE statut = 'VALIDE' AND est_fige = 1;
+  -- aucun scénario ne doit rester à Calcul_trafic_en_cours = 1
+
+Relancer ALL immédiatement : plus rien n'est trouvé. Forcer un échec sur
+un scénario : le code de retour passe à 1, les autres sont malgré tout
+traités.
+
+------------------------------- FIN ------------------------------------
+========================================================================

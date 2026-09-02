@@ -19,10 +19,15 @@ Python : weekday() -> lundi=0 ... samedi=5, dimanche=6.
 
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from app.log_utils import ctx
 from app.services.jours_fermes_client import fetch_feries_between
+
+logger = logging.getLogger(__name__)
 
 
 # --- Comptage des jours (logique pure) ---
@@ -100,7 +105,20 @@ async def load_feries(debut: date, fin: date) -> set[date]:
 async def compute_nb_jours(debut: date, fin: date) -> NbJours:
     """Wrapper async : charge les fériés en base puis calcule les comptages."""
     feries = await load_feries(debut, fin)
-    return count_jours(debut, fin, feries)
+    nbj = count_jours(debut, fin, feries)
+    # Ces comptages sont écrits tels quels dans trppu_scenario : les tracer permet
+    # de rejouer le calcul si un scénario affiche un nombre de jours contesté.
+    logger.debug(
+        "Nombres de jours calculés %s",
+        ctx(
+            debut=debut,
+            fin=fin,
+            nb_feries=len(feries),
+            nb_jours_ouvres=nbj.nb_jours_ouvres,
+            nb_jours_ouvrables=nbj.nb_jours_ouvrables,
+        ),
+    )
+    return nbj
 
 
 async def compute_nb_jour_neutralise_db(
@@ -108,4 +126,15 @@ async def compute_nb_jour_neutralise_db(
 ) -> int:
     """Wrapper async : charge les fériés en base puis calcule le nb_jour neutralisé."""
     feries = await load_feries(debut, fin)
-    return compute_nb_jour_neutralise(debut, fin, nb_jours_semaine, feries)
+    nb_jour = compute_nb_jour_neutralise(debut, fin, nb_jours_semaine, feries)
+    logger.debug(
+        "Nombre de jours neutralisés calculé %s",
+        ctx(
+            debut=debut,
+            fin=fin,
+            nb_jours_semaine=nb_jours_semaine,
+            nb_feries=len(feries),
+            nb_jour=nb_jour,
+        ),
+    )
+    return nb_jour

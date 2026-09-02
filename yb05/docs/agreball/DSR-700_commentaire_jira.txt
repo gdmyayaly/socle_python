@@ -1,0 +1,106 @@
+========================================================================
+DSR-700 - TRPPU : associer une version de cles a un scenario
+Commentaire de resolution
+========================================================================
+
+
+1. OU EST LE LIVRABLE
+------------------------------------------------------------------------
+
+Ce ticket n'a pas de traitement propre : il decrit une exigence de
+tracabilite portee par le calcul des trafics. Elle est satisfaite par
+l'etape 3 de DSR-702, livree dans le module YB05
+(app/traitements/trafic_pdi.py).
+
+Au moment de calculer les trafics d'un scenario, le batch resout puis
+memorise dans TRPPU_SCENARIO :
+
+  UPDATE trppu_scenario
+     SET id_referentiel = ?,
+         id_version_cle = ?
+   WHERE id_scenario = ?
+
+  - id_version_cle : la version de cles ACTIVE du site du scenario
+    (trppu_version_cle, co_regate du scenario, actif = 'O') ;
+  - id_referentiel : le referentiel actif du site, soit son plus grand
+    id_referentiel (trppu_referentiel).
+
+Cette ecriture a lieu AVANT le premier calcul et est commitee seule, ce
+qui garantit le CA-03 de DSR-702 ("memorises avant le premier calcul").
+
+
+2. LA REFERENCE EST CONSERVEE
+------------------------------------------------------------------------
+
+Une fois ecrite, elle n'est jamais retouchee par une nouvelle version de
+cles :
+
+  - DSR-698 peut creer autant de versions que necessaire pour le site :
+    les scenarios deja calcules gardent la leur ;
+  - DSR-703 ne touche ni ID_REFERENTIEL ni ID_VERSION_CLE (son CA-07
+    l'interdit explicitement) ;
+  - seul un RECALCUL du scenario lui-meme reecrit ces deux colonnes -
+    c'est bien le comportement attendu, puisque le recalcul repose alors
+    sur la nouvelle version.
+
+
+3. COUVERTURE DES CRITERES D'ACCEPTATION
+------------------------------------------------------------------------
+
+  CA1 - chaque scenario possede une version de cles
+        ............................ OK, des lors que ses trafics ont ete
+                                     calcules par YB05
+
+  CA2 - un scenario existant conserve la version utilisee
+        ............................ OK (aucun autre traitement ne
+                                     reecrit ces colonnes)
+
+  CA3 - il est possible de retrouver les cles utilisees par un scenario
+        ............................ OK
+
+          SELECT k.*
+            FROM trppu_scenario s
+            JOIN trppu_cles_repartition_calcule k
+              ON k.id_version_cle = s.id_version_cle
+           WHERE s.id_scenario = :idScenario;
+
+  CA4 - il est possible de retrouver les donnees source de ces cles
+        ............................ OK
+
+          SELECT c.*
+            FROM trppu_scenario s
+            JOIN trppu_cles_repartition c
+              ON c.id_referentiel = s.id_referentiel
+             AND c.co_regate_site = s.co_regate
+           WHERE s.id_scenario = :idScenario;
+
+
+4. POINT DE VIGILANCE
+------------------------------------------------------------------------
+
+Les scenarios crees par YS04 portent id_referentiel = 0 et
+id_version_cle = 0 : ces valeurs ne correspondent a aucune ligne, et
+l'absence de cle etrangere fait que rien ne le signale. La duplication de
+scenario perd egalement ces deux colonnes.
+
+YB05 est le premier traitement a les renseigner. Tant qu'un scenario n'a
+pas ete calcule, ses deux colonnes restent donc a 0 - et le CA1 n'est
+verifiable que sur les scenarios calcules. Aligner YS04 (a la creation et
+a la duplication) reste a cadrer, cf. docs/INCOHERENCES.md du module
+YB05.
+
+
+5. COMMENT TESTER
+------------------------------------------------------------------------
+
+  python -m app.main calcul-trafic-pdi 12345
+
+  SELECT id_referentiel, id_version_cle
+    FROM trppu_scenario WHERE id_scenario = 12345;
+  -- les deux colonnes sont renseignees, et pointent bien la version
+  -- active du site au moment du calcul
+
+Puis creer une nouvelle version pour le site (DSR-698) et verifier que le
+scenario conserve la sienne.
+
+========================================================================

@@ -69,6 +69,22 @@ CLES_PAR_PRODUIT = _parse_cles_par_produit(
     os.getenv("CLES_PAR_PRODUIT", CLES_PAR_PRODUIT_DEFAUT)
 )
 
+
+def _parse_nb_worker(brut: str) -> int:
+    """Nombre de scénarios traités simultanément par le mode ALL (DSR-704).
+
+    Toute valeur inexploitable — vide, non numérique, nulle ou négative — est ramenée à 1,
+    c'est-à-dire au mode séquentiel qui est le défaut du ticket. Un batch d'exploitation ne
+    doit pas refuser de démarrer pour une variable d'environnement mal saisie.
+    """
+    try:
+        return max(1, int(brut))
+    except (TypeError, ValueError):
+        return 1
+
+
+NB_WORKER = _parse_nb_worker(os.getenv("NB_WORKER", "1"))
+
 # Requêtes utilitaires pour les checks
 HEALTH_CHECK_QUERY = "SELECT 1 AS ok"
 

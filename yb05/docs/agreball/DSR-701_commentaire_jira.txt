@@ -1,0 +1,168 @@
+========================================================================
+DSR-701 - YB05 : Controle de l'eligibilite d'un scenario au calcul
+Commentaire de resolution
+========================================================================
+
+
+1. RESUME DU LIVRABLE
+------------------------------------------------------------------------
+
+Commande de controle qui evalue les douze regles d'eligibilite d'un
+scenario et rend un verdict, sans ecrire quoi que ce soit.
+
+Livre dans le module YB05 :
+
+  app/traitements/eligibilite.py   les douze regles
+  app/traitements/scenario.py      acces scenario, referentiel, agrebals
+  app/traitements/rapport.py       format [OK] / [KO] / RESULTAT
+  app/main.py                      la commande
+  tests/test_traitements_eligibilite.py   18 tests, sans base
+
+
+2. COMMANDE
+------------------------------------------------------------------------
+
+  python -m app.main eligibilite 12345
+
+Les orthographes du ticket sont acceptees telles quelles :
+
+  python -m app.main ELIGIBILITE 12345
+  python -m app.main --traitement=ELIGIBILITE --scenario=12345
+
+Options : --json (sortie machine), -v (logs applicatifs).
+
+Code de retour : 0 si ELIGIBLE, 1 si NON ELIGIBLE - directement
+exploitable par un ordonnanceur.
+
+
+3. SORTIE
+------------------------------------------------------------------------
+
+Exactement le format du ticket : bandeau, une ligne [OK] ou [KO] par
+regle, ligne RESULTAT, puis la liste des motifs bloquants.
+
+Les douze regles sont TOUTES evaluees, meme quand l'une echoue : le but
+d'un mode controle est de rendre d'un coup la liste complete de ce qui
+bloque, pas de s'arreter au premier refus. Seule l'absence de scenario
+court-circuite le reste, puisque plus rien n'est alors evaluable.
+
+Les lignes [OK] portent la valeur constatee quand elle aide au
+diagnostic, par exemple :
+
+  [OK] Coefficients de retention disponibles (30)
+  [OK] Version de cles active disponible (4)
+  [OK] Agrebals trouves (12)
+  [OK] PDI trouves (348)
+
+
+4. CA-05 : AUCUNE ECRITURE
+------------------------------------------------------------------------
+
+La fonction controle_eligibilite() ne recoit tout simplement pas
+d'instance d'ecriture : seule la base de lecture lui est passee. La
+violation du CA-05 est donc impossible par construction, et non
+seulement interdite par une consigne.
+
+Un test le verrouille : la doublure de base utilisee leve sur toute
+tentative d'ecriture.
+
+
+5. TROIS ECARTS AVEC LE TICKET
+------------------------------------------------------------------------
+
+a) REGLE 11 - MAUVAISE TABLE (bloquant)
+
+   Le ticket cherche les Agrebals du site dans trppu_trafic_agrebal.
+   Cette table contient les trafics CALCULES par DSR-703, pas la
+   structure des Agrebals. Or la regle 6 du meme ticket exige
+   TRAFIC_AGREBAL_CALCULE = 0, et DSR-702 vide cette table avant chaque
+   recalcul.
+
+   Applique litteralement, le controle ne pourrait JAMAIS passer pour un
+   premier calcul : la regle 11 exigerait la presence de donnees que les
+   regles voisines interdisent.
+
+   Les Agrebals sont donc lus dans trppu_agrebal_pdi
+   (agrebal_code_regate du site, agrebal_deleteddAt IS NULL). La regle
+   12 s'appuie sur la meme lecture, en comptant les PDI portes par
+   agrebal_pdiList.
+
+b) REGLE 10 - "REFERENTIEL ACTIF" N'EST PAS EXPRIMABLE EN BASE
+
+   trppu_referentiel ne porte ni colonne actif, ni date de fin de
+   validite, et son co_regate est nullable et sans index (deja signale
+   sur DSR-698).
+
+   Convention retenue, celle du ticket : le referentiel actif d'un site
+   est son plus grand id_referentiel. Consequence a connaitre - un
+   referentiel national (co_regate IS NULL) ne sera jamais retourne, et
+   la regle le declarerait absent.
+
+c) REGLE 10 - CAS NON PREVU : LES DEUX REQUETES DIVERGENT
+
+   Le ticket propose deux requetes et precise que la seconde "doit
+   renvoyer le meme id_referentiel", sans prevoir de message si elles
+   different.
+
+   Choix retenu : c'est BLOQUANT. Un ecart signifie que la version de
+   cles active repose sur un referentiel depasse ; calculer produirait
+   des trafics a partir de cles perimees. Le motif nomme les deux
+   identifiants :
+
+     [KO] Le referentiel de la version de cles active (2) n'est pas le
+          dernier referentiel du site (9)
+
+   A confirmer par le metier si ce cas doit au contraire etre tolere.
+
+
+6. COMMENT TESTER
+------------------------------------------------------------------------
+
+Sans base :
+
+  python -m pytest tests/test_traitements_eligibilite.py -q
+
+Avec une base accessible (python -m app.main db-check -> ok) :
+
+  python -m app.main eligibilite <id_scenario>
+
+Verifications utiles :
+
+  - un id inexistant rend NON ELIGIBLE / "Scenario inexistant" (CA-01) ;
+  - un scenario VALIDE, fige et complet rend ELIGIBLE (CA-02) ;
+  - poser calcul_trafic_en_cours = 1 rend NON ELIGIBLE avec le motif
+    correspondant (CA-03) ;
+  - poser trafic_pdi_calcule = 1 rend NON ELIGIBLE (CA-04) ;
+  - avant / apres execution, aucune donnee du scenario n'a change
+    (CA-05).
+
+
+7. COUVERTURE DES CRITERES D'ACCEPTATION
+------------------------------------------------------------------------
+
+  CA-01 - id inexistant -> NON ELIGIBLE / Scenario inexistant
+          ............................ OK (regle 1, court-circuit)
+  CA-02 - scenario complet -> ELIGIBLE
+          ............................ OK
+  CA-03 - calcul deja en cours -> motif dedie
+          ............................ OK (regle 4)
+  CA-04 - trafics deja calcules -> motif dedie
+          ............................ OK (regles 5 et 6)
+  CA-05 - aucune insertion, modification ni mise a jour
+          ............................ OK (aucune instance d'ecriture
+                                          n'est passee au traitement)
+
+
+8. SUITE
+------------------------------------------------------------------------
+
+  - DSR-702 appelle ce controle comme precondition ; un refus interrompt
+    le calcul sans aucune ecriture.
+  - DSR-704 devra l'appeler AVANT de reserver le scenario, et non apres
+    comme le decrit son enonce : la regle 4 exige
+    CALCUL_TRAFIC_EN_COURS = 0, qu'une reservation prealable rendrait
+    toujours fausse.
+  - L'analyse detaillee des ecarts est dans
+    docs/DIAGNOSTIC-DSR-701-703.md du module YB05.
+
+========================================================================

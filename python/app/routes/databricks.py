@@ -19,7 +19,7 @@ def databricks_test():
     try:
         result = databricks.fetch_one(HEALTH_CHECK_QUERY)
     except Exception as e:
-        logger.error("Erreur lors du test Databricks : %s", e)
+        logger.exception("Erreur lors du test Databricks")
         raise HTTPException(
             status_code=500,
             detail="Erreur lors du test de connexion à Databricks.",

@@ -24,7 +24,12 @@ from app.config import (
     CORS_ALLOW_ORIGINS,
 )
 from app.json_formatter import setup_logging
-from app.log_utils import reset_id_session_ihm, set_id_session_ihm
+from app.log_utils import (
+    ctx,
+    reset_id_session_ihm,
+    safe_preview,
+    set_id_session_ihm,
+)
 from app.services.jours_fermes_client import JoursFermesAPIError
 from app.routes import databricks as databricks_routes
 from app.routes import health as health_routes
@@ -109,7 +114,10 @@ app.add_middleware(
 
 @app.exception_handler(JoursFermesAPIError)
 async def _jours_fermes_unavailable(request: Request, exc: JoursFermesAPIError):
-    log.warning("API jours fermés indisponible sur %s : %s", request.url.path, exc)
+    log.warning(
+        "API jours fermés indisponible %s",
+        ctx(path=request.url.path, http=503, motif=str(exc)),
+    )
     return JSONResponse(
         status_code=503,
         content={"detail": "Service jours fermés indisponible"},
@@ -125,11 +133,16 @@ async def _validation_error(request: Request, exc: RequestValidationError):
     contexte de log, donc `JsonFormatter` l'ajoute d'office à cet enregistrement (champ
     racine `id_session_ihm`) pour le regroupement Kibana.
     """
+    # `exc.errors()` embarque les valeurs d'entrée fautives et n'est pas borné :
+    # il passe par `safe_preview` pour ne pas déverser un body entier dans le log.
     log.warning(
-        "Validation des paramètres échouée (%s %s) : %s",
-        request.method,
-        request.url.path,
-        exc.errors(),
+        "Rejet validation des paramètres %s",
+        ctx(
+            methode=request.method,
+            path=request.url.path,
+            http=422,
+            erreurs=safe_preview(exc.errors(), max_len=1000),
+        ),
     )
     return JSONResponse(
         status_code=422,

@@ -196,29 +196,50 @@ databricks.columns(schema="default", table="trafics_jours")  # colonnes d'une ta
 
 ## Logging
 
-L'application logge automatiquement toute son activité (requêtes HTTP, connexions base de données, erreurs) dans des fichiers journaliers au format **JSON** (via `python-json-logger`).
+L'application logge son activité au format **JSON** via `app/json_formatter.py`
+(formatteur maison, pas `python-json-logger`).
+
+> La convention complète — grammaire des messages, niveaux, règles de
+> reconstitution, champs interdits — est dans **`api_docs/CONVENTION-LOGS.md`**.
+> À lire avant d'ajouter un log.
 
 ### Fonctionnement
 
-- Les logs sont écrits dans le dossier `logs/`
-- Un fichier par jour : `logs/2026-04-02.log`
-- Les logs s'affichent aussi dans la console
+- **Console systématiquement** : c'est ce que Kibana ingère en `sdev`/`prod`.
+- **Fichier uniquement en local** (`APP_ENV=local`) ou si `LOGS_DIR` est fourni :
+  un fichier par jour, `logs/AAAA-MM-JJ.log`.
 
 ### Format des logs (JSON)
 
 ```json
-{"asctime": "2026-04-02 14:30:12", "levelname": "INFO", "name": "trppu", "message": ">>> GET /health"}
-{"asctime": "2026-04-02 14:30:12", "levelname": "INFO", "name": "trppu", "message": "<<< GET /health 200 (3.2ms)"}
-{"asctime": "2026-04-02 14:30:15", "levelname": "WARNING", "name": "database", "message": "Tentative 1/3 de connexion MySQL échouée : ..."}
+{"app_datetime":"2026-09-02T10:12:31.482Z","app_ccx":"dsr","app_env":"sdev","app_ptf":"build","app_tm":"ys04","app_version":"1.0.0","severity_label":"INFO","app_message":"Fin création scénario (id_scenario=52, co_regate=012345, rows_affected=1, duration_ms=84.2)","id_session_ihm":"a1b2c3d4-...","name":"app.routes.trppu_scenario.routes","filename":"routes.py","lineno":331}
 ```
+
+`id_session_ihm` (query param posé par l'IHM) est ajouté à **chaque** ligne d'une
+requête par le middleware, ce qui permet de regrouper une session dans Kibana.
+
+Le jeu de clés est fixe : `logger.info(..., extra={...})` est **sans effet**.
+Tout le contexte métier vit donc dans `app_message`, sous la grammaire
+`Début|Fin|Rejet|Erreur <action> (cle=valeur, …)`.
 
 ### Ce qui est loggé
 
-- Chaque requête HTTP entrante (méthode, chemin)
-- Chaque réponse HTTP (code statut, durée en ms)
-- Connexions et déconnexions à la base de données
-- Tentatives de retry et erreurs
-- Démarrage et arrêt de l'application
+- Chaque requête et réponse HTTP (méthode, chemin, statut, durée).
+- Chaque action métier : `Début` avec les paramètres reçus, `Fin` avec les
+  identifiants générés, la volumétrie et `duration_ms`.
+- Chaque **rejet métier** (4xx) en WARNING, avec `http=` et `motif=`.
+- De quoi **reconstituer une donnée** : état avant modification/suppression,
+  delta avant/après, nombre de lignes affectées par table.
+- Connexions base de données, retries, démarrage/arrêt.
+
+Les écritures sont en outre persistées en base dans `trppu_api_log`
+(cf. `app/services/api_log.py`), indépendamment de la rétention Kibana.
+
+### Ce qui n'est jamais loggé
+
+`id_rh` en clair (ni son token, qui n'est pas chiffré si `ID_RH_CRYPTO_KEY` est
+vide), la clé de déchiffrement de l'endpoint d'audit, et les jeux de résultats
+complets en INFO.
 
 ## Documentation Swagger
 

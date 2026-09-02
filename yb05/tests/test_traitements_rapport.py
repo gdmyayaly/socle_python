@@ -10,7 +10,14 @@ import json
 import pytest
 
 from app import main as cli
-from app.traitements.rapport import ECHEC, ELIGIBLE, NON_ELIGIBLE, Rapport
+from app.traitements.rapport import (
+    ECHEC,
+    ELIGIBLE,
+    NON_ELIGIBLE,
+    SUCCES,
+    Bilan,
+    Rapport,
+)
 
 
 def _rapport_nominal() -> Rapport:
@@ -162,3 +169,75 @@ def test_la_cli_rend_0_sur_un_traitement_reussi(monkeypatch, capsys):
 
     assert code == cli.EXIT_OK
     assert charge["statut"] == ELIGIBLE
+
+
+# ---------------------------------------------------------------------------
+# CLI — mode ALL (DSR-704)
+# ---------------------------------------------------------------------------
+
+
+def _bilan(echecs=()):
+    bilan = Bilan(nb_workers=2, scenarios_trouves=[12345, 12346])
+    bilan.ajouter(12345, SUCCES)
+    bilan.ajouter(12346, ECHEC if 12346 in echecs else SUCCES, "en échec" if echecs else None)
+    return bilan
+
+
+@pytest.mark.parametrize("commande", ["all", "ALL"])
+def test_la_commande_all_accepte_un_identifiant_optionnel(commande):
+    """Seule commande dont l'identifiant est facultatif : sans lui, le batch cherche seul."""
+    avec = cli.build_parser().parse_args([commande, "12345"])
+    sans = cli.build_parser().parse_args([commande])
+
+    assert avec.id_scenario == 12345
+    assert sans.id_scenario is None
+    assert avec.handler is sans.handler
+
+
+def test_normalisation_de_all_sans_scenario():
+    assert cli.normaliser_argv(["--traitement=ALL"]) == ["ALL"]
+    assert cli.normaliser_argv(["--traitement=ALL", "--scenario=12345"]) == ["ALL", "12345"]
+
+
+def test_la_cli_rend_1_si_un_scenario_a_echoue(monkeypatch, capsys):
+    """Décision d'exploitation : le batch va au bout, mais l'ordonnanceur voit l'incident."""
+
+    async def mode_all(id_scenario):
+        return _bilan(echecs=(12346,))
+
+    monkeypatch.setattr(cli, "executer_tout", mode_all)
+
+    code = cli.main(["all"])
+    sortie = capsys.readouterr().out
+
+    assert code == cli.EXIT_KO
+    assert "[OK] 12345" in sortie
+    assert "[KO] 12346" in sortie
+
+
+def test_la_cli_rend_0_quand_tout_a_abouti(monkeypatch, capsys):
+    async def mode_all(id_scenario):
+        return _bilan()
+
+    monkeypatch.setattr(cli, "executer_tout", mode_all)
+
+    code = cli.main(["all", "--json"])
+    charge = json.loads(capsys.readouterr().out)
+
+    assert code == cli.EXIT_OK
+    assert charge["compteurs"]["succes"] == 2
+
+
+def test_la_cli_reste_lisible_si_le_mode_all_explose(monkeypatch, capsys):
+    async def mode_all(id_scenario):
+        raise RuntimeError("MySQL injoignable")
+
+    monkeypatch.setattr(cli, "executer_tout", mode_all)
+
+    code = cli.main(["all"])
+    sortie = capsys.readouterr().out
+
+    assert code == cli.EXIT_KO
+    assert "[ERREUR]" in sortie
+    assert "MySQL injoignable" in sortie
+    assert "Traceback" not in sortie

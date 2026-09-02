@@ -2,6 +2,8 @@
 
 import logging
 
+from app.log_utils import ctx
+
 from fastapi import APIRouter
 
 from app.config import HEALTH_CHECK_QUERY
@@ -47,21 +49,21 @@ async def health_resources():
         result = await db_read.fetch_one(HEALTH_CHECK_QUERY)
         mysql_read_status = "connected" if result else "error"
     except Exception as e:
-        logger.warning("Health check MySQL (read) échoué : %s", e)
+        logger.warning("Health check MySQL en échec %s", ctx(cible="read", erreur=str(e)))
         mysql_read_status = "disconnected"
 
     try:
         result = await db_write.fetch_one(HEALTH_CHECK_QUERY)
         mysql_write_status = "connected" if result else "error"
     except Exception as e:
-        logger.warning("Health check MySQL (write) échoué : %s", e)
+        logger.warning("Health check MySQL en échec %s", ctx(cible="write", erreur=str(e)))
         mysql_write_status = "disconnected"
 
     try:
         result = databricks.fetch_one(HEALTH_CHECK_QUERY)
         databricks_status = "connected" if result else "error"
     except Exception as e:
-        logger.warning("Health check Databricks échoué : %s", e)
+        logger.warning("Health check Databricks en échec %s", ctx(erreur=str(e)))
         databricks_status = "disconnected"
 
     return {

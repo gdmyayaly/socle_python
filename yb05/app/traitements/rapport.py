@@ -126,11 +126,156 @@ class Rapport:
         }
 
 
+@dataclass(frozen=True)
+class ResultatScenario:
+    """Issue du traitement d'un scénario par le mode ALL."""
+
+    id_scenario: int
+    statut: str
+    """`SUCCES`, `ECHEC` ou `NON_ELIGIBLE`."""
+    motif: str | None = None
+
+    @property
+    def reussi(self) -> bool:
+        return self.statut == SUCCES
+
+
+@dataclass
+class Bilan:
+    """Résultat d'une exécution du mode ALL (DSR-704).
+
+    `Rapport` décrit un traitement, `Bilan` décrit une campagne : ce qui a été trouvé, ce qui a
+    abouti, ce qui a échoué, et en combien de temps. Les deux se rendent en texte comme en JSON.
+    """
+
+    nb_workers: int
+    scenarios_trouves: list[int] = field(default_factory=list)
+    resultats: list[ResultatScenario] = field(default_factory=list)
+    scenarios_a_moitie_calcules: list[int] = field(default_factory=list)
+    """Trafics PDI calculés mais pas les Agrébal : hors critères du mode ALL, donc jamais repris
+    automatiquement. Listés pour que l'exploitant les voie au lieu de les découvrir plus tard."""
+    duree_s: float = 0.0
+    erreur: str | None = None
+    """Erreur système ayant empêché le batch de fonctionner (base injoignable…)."""
+
+    def ajouter(self, id_scenario: int, statut: str, motif: str | None = None) -> None:
+        self.resultats.append(ResultatScenario(id_scenario, statut, motif))
+
+    # ------------------------------------------------------------------
+    # Compteurs
+    # ------------------------------------------------------------------
+
+    @property
+    def succes(self) -> list[ResultatScenario]:
+        return [r for r in self.resultats if r.statut == SUCCES]
+
+    @property
+    def echecs(self) -> list[ResultatScenario]:
+        return [r for r in self.resultats if r.statut == ECHEC]
+
+    @property
+    def non_eligibles(self) -> list[ResultatScenario]:
+        return [r for r in self.resultats if r.statut == NON_ELIGIBLE]
+
+    @property
+    def reussi(self) -> bool:
+        """Un seul scénario en échec suffit à alerter l'ordonnanceur.
+
+        Les scénarios non éligibles, eux, ne sont pas des échecs : le ticket les distingue.
+        """
+        return not self.echecs and self.erreur is None
+
+    @property
+    def duree_moyenne_s(self) -> float:
+        traites = len(self.resultats)
+        return self.duree_s / traites if traites else 0.0
+
+    # ------------------------------------------------------------------
+    # Rendu
+    # ------------------------------------------------------------------
+
+    def texte(self) -> str:
+        bandeau = "-" * LARGEUR_BANDEAU
+        lignes = [bandeau, "YB05 - Mode ALL", bandeau, ""]
+        lignes.append(f"NB_WORKER = {self.nb_workers}")
+        lignes.append("")
+        lignes.append(f"{len(self.scenarios_trouves)} scénario(s) détecté(s)")
+        lignes.append("")
+
+        if self.erreur:
+            lignes += ["[ERREUR]", self.erreur, ""]
+
+        for resultat in self.resultats:
+            # Trois marques et non deux : un scénario non éligible n'est pas en échec — il
+            # n'était pas prêt. Les confondre ferait chercher une panne là où il n'y en a pas.
+            if resultat.reussi:
+                marque = "OK"
+            elif resultat.statut == NON_ELIGIBLE:
+                marque = "--"
+            else:
+                marque = "KO"
+            lignes.append(f"[{marque}] {resultat.id_scenario}")
+            if resultat.motif:
+                lignes.append(f"     {resultat.motif}")
+
+        if self.scenarios_a_moitie_calcules:
+            lignes += ["", "À REPRENDRE À LA MAIN"]
+            for id_scenario in self.scenarios_a_moitie_calcules:
+                lignes.append(
+                    f"  - {id_scenario} : trafics PDI calculés, Agrébal non calculés — "
+                    f"jouer calcul-trafic-agrebal {id_scenario}"
+                )
+
+        lignes += ["", bandeau, "BILAN", bandeau, ""]
+        lignes.append(f"NB_WORKER            : {self.nb_workers}")
+        lignes.append(f"Scénarios trouvés    : {len(self.scenarios_trouves)}")
+        lignes.append(f"Scénarios éligibles  : {len(self.resultats) - len(self.non_eligibles)}")
+        lignes.append(f"Succès               : {len(self.succes)}")
+        lignes.append(f"Échecs               : {len(self.echecs)}")
+        lignes.append(f"Non éligibles        : {len(self.non_eligibles)}")
+        lignes.append(f"Durée totale         : {duree_hms(self.duree_s)}")
+        lignes.append(f"Durée moyenne        : {duree_hms(self.duree_moyenne_s)}")
+
+        lignes += ["", f"RESULTAT : {SUCCES if self.reussi else ECHEC}"]
+        return "\n".join(lignes)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "nb_workers": self.nb_workers,
+            "scenarios_trouves": self.scenarios_trouves,
+            "scenarios_a_moitie_calcules": self.scenarios_a_moitie_calcules,
+            "resultats": [
+                {"id_scenario": r.id_scenario, "statut": r.statut, "motif": r.motif}
+                for r in self.resultats
+            ],
+            "compteurs": {
+                "trouves": len(self.scenarios_trouves),
+                "eligibles": len(self.resultats) - len(self.non_eligibles),
+                "succes": len(self.succes),
+                "echecs": len(self.echecs),
+                "non_eligibles": len(self.non_eligibles),
+            },
+            "duree_totale": duree_hms(self.duree_s),
+            "duree_moyenne": duree_hms(self.duree_moyenne_s),
+            "erreur": self.erreur,
+            "reussi": self.reussi,
+        }
+
+
+def duree_hms(secondes: float) -> str:
+    """Durée en `HH:MM:SS`, format du bilan attendu par le ticket."""
+    total = int(round(secondes))
+    return f"{total // 3600:02d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
+
+
 __all__ = [
     "ECHEC",
     "ELIGIBLE",
     "NON_ELIGIBLE",
     "SUCCES",
+    "Bilan",
     "Controle",
     "Rapport",
+    "ResultatScenario",
+    "duree_hms",
 ]

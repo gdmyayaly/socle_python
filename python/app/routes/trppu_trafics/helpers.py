@@ -21,6 +21,7 @@ from app.config import (
     MAX_DATE_RANGE_DAYS,
 )
 from app.db.databricks import databricks
+from app.log_utils import ctx
 from app.routes.trppu_trafics.errors import erreur_400
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,9 @@ def executer_requete(sql: str, params: dict | None = None) -> dict:
     try:
         rows = databricks.fetch_all(sql, params or None)
     except Exception as e:
-        logger.warning("Requête Databricks trafics en échec : %s", e)
+        # Seul endroit où l'exception est vivante : c'est ici, et pas chez
+        # l'appelant qui ne reçoit qu'une trace, que la stacktrace est exploitable.
+        logger.exception("Erreur requête Databricks trafics %s", ctx(erreur=str(e)))
         trace["statut"] = "echec"
         trace["erreur"] = str(e)
         return trace
@@ -198,7 +201,8 @@ def fetch_libelles_objets(force: bool = False) -> dict[str, str]:
     trace = executer_requete(build_libelles_query())
     if trace["statut"] == "echec":
         logger.warning(
-            "Libellés d'objets indisponibles (%s) — restitution sans libellé.", trace["erreur"]
+            "Libellés d'objets indisponibles %s",
+            ctx(erreur=trace["erreur"], consequence="restitution sans libellé"),
         )
         _libelles_cache = _libelles_cache or {}
         _libelles_cache_ts = maintenant  # évite de réinterroger à chaque requête
@@ -265,7 +269,15 @@ def validate_params_pivot(co_regate, date_debut, date_fin, date_pivot):
     ]
     if manquants:
         msg = f"Paramètre(s) manquant(s) : {', '.join(manquants)}. {PARAMETRES_RAPPEL_PIVOT}"
-        logger.warning(msg)
+        logger.warning(
+            "Rejet lecture trafics pivot %s",
+            ctx(
+                co_regate=co_regate,
+                manquants=manquants,
+                http=400,
+                motif="paramètres manquants",
+            ),
+        )
         raise erreur_400(msg)
 
     dt_debut = parse_date(date_debut, "date_debut")
@@ -274,7 +286,16 @@ def validate_params_pivot(co_regate, date_debut, date_fin, date_pivot):
 
     if dt_debut > dt_fin:
         msg = f"date_debut doit être antérieure ou égale à date_fin. {PARAMETRES_RAPPEL_PIVOT}"
-        logger.warning(msg)
+        logger.warning(
+            "Rejet lecture trafics pivot %s",
+            ctx(
+                co_regate=co_regate,
+                date_debut=date_debut,
+                date_fin=date_fin,
+                http=400,
+                motif="date_debut > date_fin",
+            ),
+        )
         raise erreur_400(msg)
 
     ecart = (dt_fin - dt_debut).days
@@ -283,7 +304,16 @@ def validate_params_pivot(co_regate, date_debut, date_fin, date_pivot):
             f"La période dépasse les 2 ans d'interrogation permis ({MAX_DATE_RANGE_DAYS} jours). "
             f"Écart actuel : {ecart} jours. {PARAMETRES_RAPPEL_PIVOT}"
         )
-        logger.warning(msg)
+        logger.warning(
+            "Rejet lecture trafics pivot %s",
+            ctx(
+                co_regate=co_regate,
+                ecart_jours=ecart,
+                max_jours=MAX_DATE_RANGE_DAYS,
+                http=400,
+                motif="période supérieure à 2 ans",
+            ),
+        )
         raise erreur_400(msg)
 
     return dt_debut, dt_fin, dt_pivot

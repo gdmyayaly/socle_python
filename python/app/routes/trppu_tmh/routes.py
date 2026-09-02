@@ -11,10 +11,11 @@ import time
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from app.db.mysql import db_read, db_write
-from app.log_utils import safe_preview
+from app.log_utils import ctx, params_loggables
 from app.routes.trppu_produit.helpers import ensure_produits_exist
 from app.routes.trppu_scenario.helpers import assert_editable, fetch_scenario_or_404
 from app.security.crypto import encrypt_id_rh
+from app.services.api_log import ACTION_ECRITURE_TMH, enregistrer_appel
 
 from .helpers import (
     SELECT_TMH_BY_ID_SQL,
@@ -44,24 +45,18 @@ async def list_tmh(
 ):
     """DSR-650 : trafics moyen hebdo d'un scénario (1+ ligne(s) par produit)."""
     start = time.perf_counter()
-    logger.info(
-        "Début lecture TMH (id_scenario=%d, id_session_ihm=%s)",
-        id_scenario,
-        safe_preview(id_session_ihm),
-    )
+    logger.info("Début lecture TMH %s", ctx(id_scenario=id_scenario))
     await fetch_scenario_or_404(id_scenario)
     try:
         rows = await fetch_tmh(db_read, id_scenario)
     except Exception as e:
-        logger.exception("Erreur lecture TMH (id_scenario=%d)", id_scenario)
+        logger.exception("Erreur lecture TMH %s", ctx(id_scenario=id_scenario))
         raise HTTPException(status_code=500, detail="Erreur lecture TMH.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "Lecture TMH terminée (id_scenario=%d, count=%d, duration_ms=%.1f)",
-        id_scenario,
-        len(rows),
-        duration_ms,
+        "Fin lecture TMH %s",
+        ctx(id_scenario=id_scenario, count=len(rows), duration_ms=duration_ms),
     )
     return rows
 
@@ -70,10 +65,10 @@ async def list_tmh(
 async def create_tmh(id_scenario: int, payload: TmhCreate):
     """Crée une nouvelle ligne TMH (le produit peut déjà être présent sur le scénario)."""
     start = time.perf_counter()
+    logged = params_loggables(payload)
     logger.info(
-        "Début création TMH (id_scenario=%d, co_produit=%s)",
-        id_scenario,
-        payload.co_produit,
+        "Début création TMH %s",
+        ctx(id_scenario=id_scenario, co_produit=payload.co_produit, params=logged),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
@@ -87,7 +82,10 @@ async def create_tmh(id_scenario: int, payload: TmhCreate):
             # laisser la FK fk_tmh_produit casser la transaction.
             crees = await ensure_produits_exist(tx, [payload.co_produit], libelles)
             if crees:
-                logger.info("Produits créés automatiquement : %s", ", ".join(crees))
+                logger.info(
+                    "Produits créés automatiquement %s",
+                    ctx(id_scenario=id_scenario, nb=len(crees), codes=crees),
+                )
             new_id = await insert_tmh_row(
                 tx,
                 id_scenario,
@@ -106,15 +104,26 @@ async def create_tmh(id_scenario: int, payload: TmhCreate):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Erreur création TMH (id_scenario=%d)", id_scenario)
+        logger.exception(
+            "Erreur création TMH %s", ctx(id_scenario=id_scenario, params=logged)
+        )
         raise HTTPException(status_code=500, detail="Erreur création TMH.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_TMH,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={"operation": "creation", "id_tmh": new_id, "params": logged},
+    )
     logger.info(
-        "Création TMH terminée (id_scenario=%d, id_tmh=%d, duration_ms=%.1f)",
-        id_scenario,
-        new_id,
-        duration_ms,
+        "Fin création TMH %s",
+        ctx(
+            id_scenario=id_scenario,
+            id_tmh=new_id,
+            co_produit=payload.co_produit,
+            duration_ms=duration_ms,
+        ),
     )
     return row
 
@@ -125,9 +134,12 @@ async def upsert_tmh(id_scenario: int, payload: TmhBatchUpdate):
     sinon une nouvelle ligne est insérée."""
     start = time.perf_counter()
     logger.info(
-        "Début MAJ TMH batch (id_scenario=%d, nb_lignes=%d)",
-        id_scenario,
-        len(payload.tmh),
+        "Début MAJ TMH batch %s",
+        ctx(
+            id_scenario=id_scenario,
+            nb_lignes=len(payload.tmh),
+            produits=[item.co_produit for item in payload.tmh],
+        ),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
@@ -140,23 +152,39 @@ async def upsert_tmh(id_scenario: int, payload: TmhBatchUpdate):
                 tx, [item.co_produit for item in payload.tmh], libelles
             )
             if crees:
-                logger.info("Produits créés automatiquement : %s", ", ".join(crees))
+                logger.info(
+                    "Produits créés automatiquement %s",
+                    ctx(id_scenario=id_scenario, nb=len(crees), codes=crees),
+                )
             nb_inserted, nb_updated = await upsert_tmh_rows(
                 tx, id_scenario, payload.tmh, id_rh=id_rh_token
             )
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Erreur MAJ TMH batch (id_scenario=%d)", id_scenario)
+        logger.exception("Erreur MAJ TMH batch %s", ctx(id_scenario=id_scenario))
         raise HTTPException(status_code=500, detail="Erreur mise à jour TMH.") from e
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_TMH,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "operation": "upsert_batch",
+            "inseres": nb_inserted,
+            "modifies": nb_updated,
+            "lignes": [params_loggables(item) for item in payload.tmh],
+        },
+    )
     logger.info(
-        "MAJ TMH batch terminée (id_scenario=%d, insérés=%d, modifiés=%d, duration_ms=%.1f)",
-        id_scenario,
-        nb_inserted,
-        nb_updated,
-        duration_ms,
+        "Fin MAJ TMH batch %s",
+        ctx(
+            id_scenario=id_scenario,
+            inseres=nb_inserted,
+            modifies=nb_updated,
+            duration_ms=duration_ms,
+        ),
     )
     return TmhBatchResult(
         id_scenario=id_scenario, nb_inserted=nb_inserted, nb_updated=nb_updated
@@ -167,11 +195,10 @@ async def upsert_tmh(id_scenario: int, payload: TmhBatchUpdate):
 async def update_tmh_volume(id_scenario: int, id_tmh: int, payload: TmhVolumeUpdate):
     """DSR-649 : MAJ ciblée d'un trafic initial modifié (volume réalisé + moyennes), par id_tmh."""
     start = time.perf_counter()
+    logged = params_loggables(payload)
     logger.info(
-        "Début MAJ TMH ciblée (id_scenario=%d, id_tmh=%d, payload=%s)",
-        id_scenario,
-        id_tmh,
-        safe_preview(payload.model_dump(mode="json")),
+        "Début MAJ TMH ciblée %s",
+        ctx(id_scenario=id_scenario, id_tmh=id_tmh, params=logged),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
@@ -186,7 +213,7 @@ async def update_tmh_volume(id_scenario: int, id_tmh: int, payload: TmhVolumeUpd
             # écrit ici à partir du volume reçu et de volume_previsionnel — inchangé
             # par cette requête — plutôt que des colonnes en cours de MAJ, pour ne pas
             # dépendre de l'ordre d'évaluation des affectations du SET.
-            await tx.execute(
+            rows_maj = await tx.execute(
                 "UPDATE trppu_tmh SET volume_realise = %s, moyenne_journaliere = %s, "
                 "moyenne_hebdo = %s, motif = %s, bl_manuel = 1, "
                 "volume_previsionnel_recalcule = volume_previsionnel, "
@@ -208,22 +235,41 @@ async def update_tmh_volume(id_scenario: int, id_tmh: int, payload: TmhVolumeUpd
         raise
     except Exception as e:
         logger.exception(
-            "Erreur MAJ TMH ciblée (id_scenario=%d, id_tmh=%d)", id_scenario, id_tmh
+            "Erreur MAJ TMH ciblée %s",
+            ctx(id_scenario=id_scenario, id_tmh=id_tmh, params=logged),
         )
         raise HTTPException(status_code=500, detail="Erreur mise à jour TMH.") from e
 
     if not row:
+        logger.warning(
+            "Rejet MAJ TMH ciblée %s",
+            ctx(
+                id_scenario=id_scenario,
+                id_tmh=id_tmh,
+                http=404,
+                motif="ligne TMH introuvable",
+            ),
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Ligne TMH introuvable (scénario {id_scenario}, id_tmh {id_tmh}).",
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_TMH,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={"operation": "maj_ciblee", "id_tmh": id_tmh, "params": logged},
+    )
     logger.info(
-        "MAJ TMH ciblée terminée (id_scenario=%d, id_tmh=%d, duration_ms=%.1f)",
-        id_scenario,
-        id_tmh,
-        duration_ms,
+        "Fin MAJ TMH ciblée %s",
+        ctx(
+            id_scenario=id_scenario,
+            id_tmh=id_tmh,
+            rows_affected=rows_maj,
+            duration_ms=duration_ms,
+        ),
     )
     return row
 
@@ -235,17 +281,20 @@ async def toggle_tmh_exclusion(
     """Switch de l'exclusion d'une ligne TMH (bl_exclu) du calcul du scénario, par id_tmh."""
     start = time.perf_counter()
     logger.info(
-        "Début switch exclusion TMH (id_scenario=%d, id_tmh=%d, bl_exclu=%s)",
-        id_scenario,
-        id_tmh,
-        payload.bl_exclu,
+        "Début switch exclusion TMH %s",
+        ctx(
+            id_scenario=id_scenario,
+            id_tmh=id_tmh,
+            bl_exclu=payload.bl_exclu,
+            motif=payload.motif,
+        ),
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
 
     try:
         async with db_write.transaction() as tx:
-            await tx.execute(
+            rows_maj = await tx.execute(
                 "UPDATE trppu_tmh SET bl_exclu = %s, motif = %s, dt_calcul = NOW() "
                 "WHERE id_tmh = %s AND id_scenario = %s",
                 (1 if payload.bl_exclu else 0, payload.motif, id_tmh, id_scenario),
@@ -255,28 +304,49 @@ async def toggle_tmh_exclusion(
         raise
     except Exception as e:
         logger.exception(
-            "Erreur switch exclusion TMH (id_scenario=%d, id_tmh=%d)",
-            id_scenario,
-            id_tmh,
+            "Erreur switch exclusion TMH %s",
+            ctx(id_scenario=id_scenario, id_tmh=id_tmh),
         )
         raise HTTPException(
             status_code=500, detail="Erreur mise à jour exclusion TMH."
         ) from e
 
     if not row:
+        logger.warning(
+            "Rejet switch exclusion TMH %s",
+            ctx(
+                id_scenario=id_scenario,
+                id_tmh=id_tmh,
+                http=404,
+                motif="ligne TMH introuvable",
+            ),
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Ligne TMH introuvable (scénario {id_scenario}, id_tmh {id_tmh}).",
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_TMH,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "operation": "exclusion",
+            "id_tmh": id_tmh,
+            "bl_exclu": payload.bl_exclu,
+            "motif": payload.motif,
+        },
+    )
     logger.info(
-        "Switch exclusion TMH terminé (id_scenario=%d, id_tmh=%d, bl_exclu=%s, "
-        "duration_ms=%.1f)",
-        id_scenario,
-        id_tmh,
-        payload.bl_exclu,
-        duration_ms,
+        "Fin switch exclusion TMH %s",
+        ctx(
+            id_scenario=id_scenario,
+            id_tmh=id_tmh,
+            bl_exclu=payload.bl_exclu,
+            rows_affected=rows_maj,
+            duration_ms=duration_ms,
+        ),
     )
     return row
 
@@ -290,13 +360,20 @@ async def delete_tmh(
     """Supprime une ligne TMH (utile pour retirer un produit ajouté plusieurs fois)."""
     start = time.perf_counter()
     logger.info(
-        "Début suppression TMH (id_scenario=%d, id_tmh=%d, id_session_ihm=%s)",
-        id_scenario,
-        id_tmh,
-        safe_preview(id_session_ihm),
+        "Début suppression TMH %s", ctx(id_scenario=id_scenario, id_tmh=id_tmh)
     )
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_editable(scenario)
+
+    # Suppression définitive : l'état de la ligne est journalisé avant écriture,
+    # sans quoi elle devient irrécupérable.
+    avant = await db_read.fetch_one(SELECT_TMH_BY_ID_SQL, (id_tmh, id_scenario))
+    etat_avant = params_loggables(dict(avant)) if avant else None
+    if etat_avant is not None:
+        logger.info(
+            "État avant suppression TMH %s",
+            ctx(id_scenario=id_scenario, id_tmh=id_tmh, etat=etat_avant),
+        )
 
     try:
         async with db_write.transaction() as tx:
@@ -308,21 +385,44 @@ async def delete_tmh(
         raise
     except Exception as e:
         logger.exception(
-            "Erreur suppression TMH (id_scenario=%d, id_tmh=%d)", id_scenario, id_tmh
+            "Erreur suppression TMH %s",
+            ctx(id_scenario=id_scenario, id_tmh=id_tmh, etat=etat_avant),
         )
         raise HTTPException(status_code=500, detail="Erreur suppression TMH.") from e
 
     if not rc:
+        logger.warning(
+            "Rejet suppression TMH %s",
+            ctx(
+                id_scenario=id_scenario,
+                id_tmh=id_tmh,
+                http=404,
+                motif="ligne TMH introuvable",
+            ),
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Ligne TMH introuvable (scénario {id_scenario}, id_tmh {id_tmh}).",
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_TMH,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "operation": "suppression",
+            "id_tmh": id_tmh,
+            "etat_avant": etat_avant,
+        },
+    )
     logger.info(
-        "Suppression TMH terminée (id_scenario=%d, id_tmh=%d, duration_ms=%.1f)",
-        id_scenario,
-        id_tmh,
-        duration_ms,
+        "Fin suppression TMH %s",
+        ctx(
+            id_scenario=id_scenario,
+            id_tmh=id_tmh,
+            rows_affected=rc,
+            duration_ms=duration_ms,
+        ),
     )
     return Response(status_code=204)

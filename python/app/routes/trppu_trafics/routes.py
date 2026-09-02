@@ -1,11 +1,11 @@
 """DSR-679 — Endpoint de récupération des trafics pivot (structure gold `_3`)."""
 
-import json
 import logging
 import time
 
 from fastapi import APIRouter
 
+from app.log_utils import ctx
 from app.routes.trppu_trafics.errors import bloc_debug, erreur_500
 from app.routes.trppu_trafics.helpers import (
     accumulate_trafics,
@@ -41,6 +41,16 @@ async def get_trafics_pivot(
     La liste des objets restitués est dynamique (elle sort du SQL), pas figée.
     Paramètres au format AAAAMMJJ ; période <= 2 ans. `is_day` force la table jour.
     """
+    logger.info(
+        "Début lecture trafics pivot %s",
+        ctx(
+            co_regate=co_regate,
+            date_debut=date_debut,
+            date_fin=date_fin,
+            date_pivot=date_pivot,
+            is_day=is_day,
+        ),
+    )
     dt_debut, dt_fin, dt_pivot = validate_params_pivot(
         co_regate, date_debut, date_fin, date_pivot
     )
@@ -58,7 +68,12 @@ async def get_trafics_pivot(
             trace = await executer_requete_async(sql, params)
             traces.append(trace)  # tracé AVANT le test : la requête fautive doit y figurer
             if trace["statut"] == "echec":
-                logger.error("Erreur requête trafics pivot : %s", trace["erreur"])
+                # Pas de `logger.exception` ici : l'exception a été absorbée par
+                # `executer_requete`, qui a déjà journalisé la stacktrace.
+                logger.error(
+                    "Échec requête trafics pivot %s",
+                    ctx(co_regate=co_regate, erreur=trace["erreur"]),
+                )
                 raise erreur_500(
                     "Erreur lors de la récupération des trafics.", traces, trace["erreur"]
                 )
@@ -66,23 +81,28 @@ async def get_trafics_pivot(
             accumulate_trafics(trace["lignes"], target_key, acc)
     duration_s = round(time.perf_counter() - start, 3)
 
+    # Le jeu de résultats complet peut peser plusieurs Mo : volumétrie en INFO,
+    # contenu en DEBUG et borné par `ctx`.
     logger.info(
-        "Trafics pivot (co_regate=%s) — réponse non transformée (%d lignes) : %s",
-        co_regate,
-        len(raw_rows),
-        json.dumps(raw_rows, ensure_ascii=False, default=str),
+        "Trafics pivot lus %s", ctx(co_regate=co_regate, lignes=len(raw_rows))
+    )
+    logger.debug(
+        "Trafics pivot — réponse non transformée %s",
+        ctx(co_regate=co_regate, lignes=raw_rows),
     )
 
     trafics = formater_trafics(acc)
     sans_libelle = objets_sans_libelle(acc)
     if sans_libelle:
         # On expose l'objet avec un libellé nul plutôt que d'inventer une correspondance.
-        logger.warning("Objets absents du mapping (libellé nul) : %s", ", ".join(sans_libelle))
+        logger.warning(
+            "Objets absents du mapping %s",
+            ctx(co_regate=co_regate, nb=len(sans_libelle), objets=sans_libelle),
+        )
 
-    logger.info(
-        "Trafics pivot (co_regate=%s) — réponse transformée : %s",
-        co_regate,
-        json.dumps(trafics, ensure_ascii=False, default=str),
+    logger.debug(
+        "Trafics pivot — réponse transformée %s",
+        ctx(co_regate=co_regate, trafics=trafics),
     )
 
     # Le calcul des jours ouvrés (DSR-613) ne doit pas faire échouer la restitution des trafics.
@@ -95,7 +115,9 @@ async def get_trafics_pivot(
         }
     except Exception:
         logger.warning(
-            "Calcul nb_jours indisponible (co_regate=%s) — bloc nb_jours=null.", co_regate
+            "Calcul nb_jours indisponible %s",
+            ctx(co_regate=co_regate, consequence="bloc nb_jours=null"),
+            exc_info=True,
         )
 
     response = {
@@ -113,4 +135,15 @@ async def get_trafics_pivot(
     debug = bloc_debug(traces)
     if debug is not None:
         response["debug"] = debug
+
+    logger.info(
+        "Fin lecture trafics pivot %s",
+        ctx(
+            co_regate=co_regate,
+            count=len(trafics),
+            lignes=len(raw_rows),
+            objets_sans_libelle=len(sans_libelle),
+            duration_ms=round(duration_s * 1000, 1),
+        ),
+    )
     return response

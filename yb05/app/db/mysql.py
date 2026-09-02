@@ -21,6 +21,7 @@ from app.config import (
     MYSQL_RETRY_DELAY,
     MYSQL_USER_WRITE,
     MYSQL_USER_READ,
+    NB_WORKER,
     SQL_SCRIPT_WARN_SIZE,
 )
 from app.db.sql_script import (
@@ -526,14 +527,23 @@ class _TransactionCursor:
             return await cur.fetchall()
 
 
-# Instances globales : écriture et lecture
+# Instances globales : écriture et lecture.
+#
+# Le pool est dimensionné sur NB_WORKER (DSR-704) : le mode ALL traite NB_WORKER scénarios
+# simultanément, et chacun détient au plus une connexion par pool à un instant donné. Sans
+# cela, les workers au-delà de la dixième s'attendraient sur `pool.acquire()` et le
+# parallélisme annoncé n'existerait pas.
+_TAILLE_POOL = max(10, NB_WORKER)
+
 db_write = Database(
     host=MYSQL_HOST_WRITE,
     user=MYSQL_USER_WRITE,
     password=MYSQL_PASSWORD_WRITE,
+    max_connections=_TAILLE_POOL,
 )
 db_read = Database(
     host=MYSQL_HOST_READ,
     user=MYSQL_USER_READ,
     password=MYSQL_PASSWORD_READ,
+    max_connections=_TAILLE_POOL,
 )

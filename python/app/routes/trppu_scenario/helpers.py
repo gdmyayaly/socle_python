@@ -1,11 +1,21 @@
-"""Helpers pour trppu_scenario : SQL constants, défauts métier, recalcul des bornes."""
+"""Helpers pour trppu_scenario : SQL constants, défauts métier, recalcul des bornes.
 
+Les gardes métier (`fetch_scenario_or_404`, `assert_not_fige`, `assert_not_archive`)
+journalisent leur refus en WARNING avant de lever : ces 404/409 sont émis depuis
+la couche helpers, donc invisibles dans les logs des endpoints qui les appellent
+(cf. api_docs/CONVENTION-LOGS.md).
+"""
+
+import logging
 from datetime import date, timedelta
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.db.mysql import db_read
+from app.log_utils import ctx
+
+logger = logging.getLogger(__name__)
 
 SELECT_SCENARIO_SQL = (
     "SELECT id_scenario, co_regate, lb_scenario, co_roc, statut, dt_creation, "
@@ -74,6 +84,10 @@ async def resolve_default_pic_version() -> int:
     )
     if row:
         return int(row["id_pic_version"])
+    logger.warning(
+        "Rejet résolution version PIC par défaut %s",
+        ctx(http=422, motif="aucune version PIC candidate en base"),
+    )
     raise HTTPException(
         status_code=422,
         detail=(
@@ -88,6 +102,10 @@ async def fetch_scenario_or_404(id_scenario: int) -> dict[str, Any]:
         SELECT_SCENARIO_SQL + " WHERE id_scenario = %s", (id_scenario,)
     )
     if not row:
+        logger.warning(
+            "Rejet accès scénario %s",
+            ctx(id_scenario=id_scenario, http=404, motif="scénario introuvable"),
+        )
         raise HTTPException(
             status_code=404, detail=f"Scénario {id_scenario} introuvable."
         )
@@ -102,6 +120,15 @@ def assert_not_fige(scenario: dict[str, Any]) -> None:
     de ce check : un scénario EN PRODUCTION reste archivable.
     """
     if scenario.get("est_fige"):
+        logger.warning(
+            "Rejet modification scénario %s",
+            ctx(
+                id_scenario=scenario["id_scenario"],
+                statut=scenario["statut"],
+                http=409,
+                motif="scénario figé",
+            ),
+        )
         raise HTTPException(
             status_code=409,
             detail=(
@@ -118,6 +145,15 @@ def assert_not_archive(scenario: dict[str, Any]) -> None:
     sous-ressources) n'est autorisée.
     """
     if scenario.get("statut") == "ARCHIVE":
+        logger.warning(
+            "Rejet modification scénario %s",
+            ctx(
+                id_scenario=scenario["id_scenario"],
+                statut="ARCHIVE",
+                http=409,
+                motif="scénario archivé",
+            ),
+        )
         raise HTTPException(
             status_code=409,
             detail=f"Scénario {scenario['id_scenario']} archivé : modification interdite.",
@@ -137,7 +173,9 @@ def assert_editable(scenario: dict[str, Any]) -> None:
 # pic_version). On supprime donc explicitement les enfants avant le parent : ça
 # couvre les RESTRICT et reste sûr pour les CASCADE (idempotent).
 # Les tables de logs (trppu_api_log, trppu_recalcul_log) sont volontairement
-# exclues pour préserver la traçabilité.
+# exclues pour préserver la traçabilité : elles sont traitées à part par
+# `detach_logs_scenario`, qui détache plutôt que de supprimer quand la colonne
+# le permet.
 SCENARIO_CHILD_TABLES = (
     "trppu_neutralisations",
     "trppu_tmh",
@@ -151,16 +189,62 @@ SCENARIO_CHILD_TABLES = (
 )
 
 
-async def delete_scenario_cascade(tx, id_scenario: int) -> None:
+async def last_insert_id(tx) -> int:
+    """Id auto-incrémenté généré par le dernier INSERT de la transaction.
+
+    `execute()` ne retourne que le `rowcount` (cf. app/db/mysql.py) : l'id passe
+    par LAST_INSERT_ID(), qui est propre à la connexion — donc fiable tant qu'on
+    reste dans la même transaction.
+    """
+    row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
+    return int(row["id"])
+
+
+async def detach_logs_scenario(tx, id_scenario: int) -> dict[str, int]:
+    """Détache les tables de logs avant la suppression du scénario parent.
+
+    `trppu_api_log` et `trppu_recalcul_log` sont volontairement absentes de
+    SCENARIO_CHILD_TABLES pour préserver la traçabilité, mais leurs FK sont
+    déclarées **sans ON DELETE** (donc RESTRICT, cf. db/db_new.sql:95 et :245) :
+    dès qu'une ligne de log référence le scénario, le DELETE parent échoue en
+    MySQL 1451. C'est l'écart n°10 de db/RAPPORT-ECARTS-db_new-2026-08-17.md.
+
+    On applique la correction qu'il prescrit :
+    - `trppu_api_log.id_scenario` est nullable -> on détache (la copie de
+      l'id_scenario dans la colonne `params` conserve l'information) ;
+    - `trppu_recalcul_log.id_scenario` est NOT NULL -> pas de détachement
+      possible, on supprime les lignes en assumant la perte de traçabilité.
+    """
+    detaches = await tx.execute(
+        "UPDATE trppu_api_log SET id_scenario = NULL WHERE id_scenario = %s",
+        (id_scenario,),
+    )
+    supprimes = await tx.execute(
+        "DELETE FROM trppu_recalcul_log WHERE id_scenario = %s", (id_scenario,)
+    )
+    return {"trppu_api_log": detaches, "trppu_recalcul_log": supprimes}
+
+
+async def delete_scenario_cascade(tx, id_scenario: int) -> dict[str, int]:
     """Supprime définitivement un scénario et toutes ses données rattachées.
 
     On supprime explicitement les lignes des tables enfants (cf.
     SCENARIO_CHILD_TABLES) avant le scénario lui-même : nécessaire pour les FK
     en ON DELETE RESTRICT, et sans effet de bord pour celles en CASCADE.
+
+    Retourne le nombre de lignes supprimées par table : c'est la volumétrie que
+    l'endpoint journalise, seule trace exploitable pour reconstituer l'ampleur
+    d'une suppression après coup.
     """
+    supprimes: dict[str, int] = dict(await detach_logs_scenario(tx, id_scenario))
     for table in SCENARIO_CHILD_TABLES:
-        await tx.execute(f"DELETE FROM {table} WHERE id_scenario = %s", (id_scenario,))
-    await tx.execute("DELETE FROM trppu_scenario WHERE id_scenario = %s", (id_scenario,))
+        supprimes[table] = await tx.execute(
+            f"DELETE FROM {table} WHERE id_scenario = %s", (id_scenario,)
+        )
+    supprimes["trppu_scenario"] = await tx.execute(
+        "DELETE FROM trppu_scenario WHERE id_scenario = %s", (id_scenario,)
+    )
+    return supprimes
 
 
 # Miroir "copie" de SCENARIO_CHILD_TABLES pour la duplication profonde d'un
@@ -268,6 +352,15 @@ async def duplicate_scenario_children(
             )
             params = (new_id, src_id)
         counts[table] = await tx.execute(sql, params)
+    logger.info(
+        "Données filles dupliquées %s",
+        ctx(
+            source_id=src_id,
+            id_scenario=new_id,
+            total=sum(counts.values()),
+            par_table={t: c for t, c in counts.items() if c},
+        ),
+    )
     return counts
 
 
@@ -296,8 +389,7 @@ async def duplicate_scenario_pic_version(
         "VALUES (%s, 'SCENARIO', %s, %s, NOW(), %s, %s)",
         (f"{co_regate}_{new_id}", co_regate, new_id, id_rh_token, id_rh_token),
     )
-    row = await tx.fetch_one("SELECT LAST_INSERT_ID() AS id")
-    new_pic_id = int(row["id"])
+    new_pic_id = await last_insert_id(tx)
 
     await tx.execute(
         "INSERT INTO trppu_pic_coefficients "
@@ -309,6 +401,15 @@ async def duplicate_scenario_pic_version(
     await tx.execute(
         "UPDATE trppu_scenario SET id_pic_version = %s WHERE id_scenario = %s",
         (new_pic_id, new_id),
+    )
+    logger.info(
+        "Version PIC scénario dupliquée %s",
+        ctx(
+            source_id=src_id,
+            id_scenario=new_id,
+            id_pic_version_source=src_pic_id,
+            id_pic_version=new_pic_id,
+        ),
     )
     return new_pic_id
 
@@ -331,6 +432,10 @@ async def ensure_site_exists(
     if row:
         return False
 
+    logger.info(
+        "Création implicite du site %s",
+        ctx(co_regate=co_regate, type_site=type_site, co_roc=co_roc),
+    )
     await tx.execute(
         "INSERT INTO trppu_site (co_regate, lb_regate, type_site, co_roc) "
         "VALUES (%s, %s, %s, %s)",
@@ -350,4 +455,9 @@ async def increment_version(tx, id_scenario: int) -> int:
         "SELECT version_scenario FROM trppu_scenario WHERE id_scenario = %s",
         (id_scenario,),
     )
-    return int(row["version_scenario"])
+    version = int(row["version_scenario"])
+    logger.debug(
+        "Version scénario incrémentée %s",
+        ctx(id_scenario=id_scenario, version_scenario=version),
+    )
+    return version

@@ -128,7 +128,10 @@ async def calcul_trafic_pdi(
     # Étape 1 — éligibilité. Non éligible : aucune écriture, aucun verrou (CA-01).
     eligibilite = await controle_eligibilite(id_scenario, db_lecture=db_lecture)
     if not eligibilite.reussi:
-        rapport.ko("Contrôle d'éligibilité", libelle="Contrôle d'éligibilité")
+        rapport.ko(
+            "Contrôle d'éligibilité : scénario non éligible au calcul",
+            libelle="Contrôle d'éligibilité",
+        )
         for motif in eligibilite.motifs:
             rapport.ko(motif)
         rapport.statut = ECHEC

@@ -1,0 +1,213 @@
+========================================================================
+DSR-703 - YB05 : Calcul des trafics Agrebal d'un scenario
+Commentaire de resolution
+========================================================================
+
+
+1. RESUME DU LIVRABLE
+------------------------------------------------------------------------
+
+Commande qui agrege les trafics PDI d'un scenario par Agrebal et alimente
+TRPPU_TRAFIC_AGREBAL. Aucune formule metier : ni coefficient de
+retention, ni cle de repartition (CA-06). C'est la derniere etape du
+calcul complet, celle qui libere le scenario.
+
+Livre dans le module YB05 :
+
+  app/traitements/trafic_agrebal.py   le traitement
+  app/main.py                        la commande
+  tests/test_traitements_trafic_agrebal.py   13 tests, sans base
+
+
+2. COMMANDE
+------------------------------------------------------------------------
+
+  python -m app.main calcul-trafic-agrebal 12345
+  python -m app.main CALCUL_TRAFIC_AGREBAL 12345
+  python -m app.main --traitement=CALCUL_TRAFIC_AGREBAL --scenario=12345
+
+Code de retour : 0 si SUCCES, 1 si ECHEC.
+
+
+3. CONTROLES PREALABLES
+------------------------------------------------------------------------
+
+  - le scenario existe ;
+  - TRAFIC_PDI_CALCULE = 1 ;
+  - au moins une ligne dans TRPPU_TRAFIC_PDI pour ce scenario.
+
+Le flag seul ne suffit pas : les deux conditions sont verifiees, comme le
+demande le ticket. En cas de refus, aucun calcul n'est lance et le
+message rappelle la commande a jouer :
+
+  Calcul des trafics Agrebal impossible.
+  Les trafics PDI du scenario 12345 n'ont pas ete calcules.
+  Executer prealablement : YB05 CALCUL_TRAFIC_PDI 12345
+
+  RESULTAT : ECHEC
+
+
+4. TRAITEMENT
+------------------------------------------------------------------------
+
+Une seule transaction :
+
+  1. DELETE FROM trppu_trafic_agrebal WHERE id_scenario = ?
+  2. trois INSERT ... SELECT ... GROUP BY, un par couleur PIC
+  3. ligne dans TRPPU_RECALCUL_LOG
+  4. UPDATE trppu_scenario SET trafic_agrebal_calcule = 1,
+                               calcul_trafic_en_cours = 0
+
+L'agregation est faite EN SQL, pas en Python :
+
+  INSERT INTO trppu_trafic_agrebal
+      (id_scenario, co_regate, id_agrebal, agrebal_uuid, co_produit,
+       jour_semaine, couleur_pic, volume)
+  SELECT id_scenario, co_regate, id_agrebal, agrebal_uuid, co_produit,
+         jour_semaine, 'DENSE', SUM(dense)
+    FROM trppu_trafic_pdi
+   WHERE id_scenario = ?
+   GROUP BY id_scenario, co_regate, id_agrebal, agrebal_uuid,
+            co_produit, jour_semaine;
+
+puis les memes pour FAIBLE1 (SUM(faible1)) et FAIBLE2 (SUM(faible2)).
+
+Les volumes ne transitent jamais par l'application : c'est plus rapide
+d'un ordre de grandeur sur les volumes en jeu, et volume etant un
+decimal(12,4), aucun arrondi n'est introduit.
+
+LE VERROU N'EST PAS REPRIS. Ce traitement tourne sous celui pose par
+DSR-702, et c'est sa mise a jour finale qui le relache. Tenter de le
+poser echouerait puisqu'il vaut deja 1.
+
+
+5. CONTROLE INTEGRE
+------------------------------------------------------------------------
+
+Apres agregation, le traitement compare :
+
+  somme des volumes Agrebal  vs  somme (dense + faible1 + faible2) des
+                                 trafics PDI du scenario
+
+Les deux doivent etre egales. Un ecart signale un PDI compte deux fois
+ou un GROUP BY incomplet - ce qu'aucun decompte de lignes ne montrerait.
+Le verdict devient ECHEC dans ce cas, meme si les donnees ont ete
+ecrites : l'exploitant ne doit pas lire SUCCES sur un calcul douteux.
+
+
+6. JOURNALISATION
+------------------------------------------------------------------------
+
+Une ligne dans TRPPU_RECALCUL_LOG, avec le motif de la derniere demande
+enregistree pour le scenario, ou INITIAL en l'absence d'historique, et
+les commentaires du ticket :
+
+  INITIAL          Premier calcul des trafics Agrebal
+  AGREBAL          Recalcul Agrebal execute suite evolution Agrebal
+  CLE_REPARTITION  Recalcul Agrebal execute suite activation d'une
+                   nouvelle version de cles
+  MANUEL           Recalcul manuel des trafics Agrebal
+
+Point a connaitre : ce traitement relit "la derniere raison" et y trouve
+donc la ligne ecrite par DSR-702 juste avant. C'est le comportement
+voulu - le motif d'un meme calcul se propage d'une etape a l'autre - mais
+il faut le savoir pour lire le journal, qui contient donc deux lignes par
+calcul complet.
+
+A RECONCILIER AVEC DSR-704, qui enonce l'inverse : "un seul
+enregistrement de journalisation est cree par scenario traite". Les
+tickets implementes font foi pour l'instant.
+
+
+7. UN ECART DE SCHEMA CONTROLE
+------------------------------------------------------------------------
+
+trppu_trafic_pdi.id_agrebal est un bigint, trppu_trafic_agrebal.id_agrebal
+un int. Le meme concept metier porte trois noms et trois types dans le
+schema (deja signale dans docs/INCOHERENCES.md).
+
+Le traitement refuse d'agreger si un id_agrebal depasse la capacite de la
+cible, plutot que de laisser MySQL tronquer ou echouer au milieu de
+l'insertion.
+
+
+8. GESTION DES ERREURS
+------------------------------------------------------------------------
+
+Quelle que soit la cause, le scenario est deverrouille avant la fin :
+
+  TRAFIC_PDI_CALCULE     = 1  (inchange, CA-07)
+  TRAFIC_AGREBAL_CALCULE = 0
+  CALCUL_TRAFIC_EN_COURS = 0
+
+et une ligne de TRPPU_RECALCUL_LOG trace l'incident avec son motif, hors
+de la transaction annulee.
+
+
+9. COUVERTURE DES CRITERES D'ACCEPTATION
+------------------------------------------------------------------------
+
+  CA-01 - scenario inexistant -> arret en erreur
+          ............................ OK
+  CA-02 - TRAFIC_PDI_CALCULE = 0 -> aucun calcul
+          ............................ OK (et table vide controlee aussi)
+  CA-03 - agregation exclusivement depuis TRPPU_TRAFIC_PDI
+          ............................ OK
+  CA-04 - volume = somme des trafics PDI par (Agrebal, produit, jour,
+          couleur)
+          ............................ OK (+ controle d'ecart integre)
+  CA-05 - TRAFIC_AGREBAL_CALCULE = 1, CALCUL_TRAFIC_EN_COURS = 0
+          ............................ OK
+  CA-06 - aucune cle ni coefficient utilise
+          ............................ OK (verrouille par un test : les
+                                          requetes du traitement ne
+                                          touchent ni
+                                          trppu_cles_repartition_calcule
+                                          ni trppu_pic_coefficients)
+  CA-07 - STATUT, EST_FIGE, ID_REFERENTIEL, ID_VERSION_CLE,
+          TRAFIC_PDI_CALCULE jamais modifies
+          ............................ OK
+  CA-08 a CA-11 - motifs de journalisation
+          ............................ OK
+
+
+10. COMMENT TESTER
+------------------------------------------------------------------------
+
+Sans base :
+
+  python -m pytest tests/test_traitements_trafic_agrebal.py -q
+
+Avec une base, apres DSR-702 :
+
+  python -m app.main calcul-trafic-agrebal 12345
+
+Puis :
+
+  SELECT trafic_pdi_calcule, trafic_agrebal_calcule,
+         Calcul_trafic_en_cours
+    FROM trppu_scenario WHERE id_scenario = 12345;
+  -- attendu : 1, 1, 0
+
+  SELECT (SELECT SUM(dense + faible1 + faible2) FROM trppu_trafic_pdi
+           WHERE id_scenario = 12345)
+       - (SELECT SUM(volume) FROM trppu_trafic_agrebal
+           WHERE id_scenario = 12345) AS ecart;
+  -- doit valoir 0
+
+Verifier aussi qu'un lancement sans trafics PDI rend ECHEC sans rien
+ecrire.
+
+
+11. SUITE
+------------------------------------------------------------------------
+
+  - Le scenario est desormais complet : TRAFIC_PDI_CALCULE = 1,
+    TRAFIC_AGREBAL_CALCULE = 1, CALCUL_TRAFIC_EN_COURS = 0. Il devient
+    eligible a la visibilite Optipacc.
+  - DSR-704 (mode ALL, parallelisme NB_WORKER) reste a implementer : il
+    orchestrera les trois traitements sans logique metier propre.
+  - L'analyse detaillee des ecarts est dans
+    docs/DIAGNOSTIC-DSR-701-703.md du module YB05.
+
+========================================================================
