@@ -27,8 +27,12 @@ servent l'IHM TRPPU.
 
 | Méthode | Chemin | Service (Jira) | Description |
 |---------|--------|----------------|-------------|
-| `POST` | `/trppu-api/optipacc/site-liste-scenarios` | `S_SiteListeScenarios` (DSR-690) | Scénarios exploitables d'un site |
+| `GET` | `/trppu-api/optipacc/site-liste-scenarios?codeRegate=` | `S_SiteListeScenarios` (DSR-690) | Scénarios exploitables d'un site |
 | `POST` | `/trppu-api/optipacc/scenario-trafic-brut` | `S_ScenarioTraficBrut` (DSR-689) | Volume brut final par produit |
+
+`site-liste-scenarios` est une simple lecture paramétrée par un seul champ : il est exposé
+en `GET`, avec `codeRegate` en paramètre de requête. `scenario-trafic-brut` reste en `POST`
+avec un corps JSON.
 
 Les deux services acceptent un paramètre de requête optionnel `?id_session_ihm=` utilisé
 uniquement pour la traçabilité (regroupement des lignes de log dans Kibana).
@@ -37,19 +41,19 @@ Documentation interactive : **`/docs`** (Swagger UI), tag « OPTIPACC ».
 
 ---
 
-## 2. `POST /trppu-api/optipacc/site-liste-scenarios` — DSR-690
+## 2. `GET /trppu-api/optipacc/site-liste-scenarios` — DSR-690
 
 Retourne les scénarios d'un site que TRPPU considère comme **prêts à être exploités** par
 OPTIPACC.
 
 ### 2.1 Entrée
 
-```json
-{ "codeRegate": "123456" }
+```
+GET /trppu-api/optipacc/site-liste-scenarios?codeRegate=123456
 ```
 
-| Champ | Type | Obligatoire | Règle |
-|-------|------|-------------|-------|
+| Paramètre de requête | Type | Obligatoire | Règle |
+|----------------------|------|-------------|-------|
 | `codeRegate` | string | oui | exactement 6 caractères alphanumériques |
 
 ### 2.2 Sortie
@@ -113,7 +117,9 @@ Retourne, pour un site et un scénario, le **volume brut final de chaque produit
 |-------|------|-------------|-------|
 | `codeRegate` | string | oui | 6 caractères alphanumériques |
 | `scenarioId` | entier | oui | ≥ 1 ; le scénario doit appartenir à ce site |
-| `inclureExclus` | booléen | non (défaut `false`) | voir §3.4 |
+
+Aucun autre champ n'est accepté : le corps est validé en `extra="forbid"`, un champ inconnu
+donne un `422`.
 
 ### 3.2 Sortie
 
@@ -162,14 +168,9 @@ Seule la valeur finale exploitable est transmise.
 ### 3.4 Produits exclus
 
 Un produit que l'utilisateur a marqué comme **exclu** dans le tableau des trafics du
-scénario n'est pas restitué à OPTIPACC — c'est le comportement par défaut, cohérent avec
-le fait que l'exclusion est une décision utilisateur à respecter.
-
-Pour obtenir malgré tout la totalité des produits (contrôle, rapprochement, audit) :
-
-```json
-{ "codeRegate": "123456", "scenarioId": 789, "inclureExclus": true }
-```
+scénario n'est **jamais** restitué à OPTIPACC : l'exclusion est une décision utilisateur
+que le service respecte sans dérogation possible. Il n'existe pas d'option pour les
+inclure.
 
 ### 3.5 Quels scénarios sont interrogeables ?
 
@@ -210,19 +211,12 @@ Un scénario sans aucun trafic renvoie `200` avec `"produits": []`.
 
 ```bash
 # Liste des scénarios exploitables du site 123456
-curl -X POST http://localhost:8080/trppu-api/optipacc/site-liste-scenarios \
-  -H "Content-Type: application/json" \
-  -d '{"codeRegate":"123456"}'
+curl "http://localhost:8080/trppu-api/optipacc/site-liste-scenarios?codeRegate=123456"
 
 # Volumes bruts du scénario 789
 curl -X POST http://localhost:8080/trppu-api/optipacc/scenario-trafic-brut \
   -H "Content-Type: application/json" \
   -d '{"codeRegate":"123456","scenarioId":789}'
-
-# Variante : inclure les produits exclus
-curl -X POST http://localhost:8080/trppu-api/optipacc/scenario-trafic-brut \
-  -H "Content-Type: application/json" \
-  -d '{"codeRegate":"123456","scenarioId":789,"inclureExclus":true}'
 ```
 
 ---

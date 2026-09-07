@@ -15,8 +15,10 @@ Le verrou n'est pas repris : ce traitement tourne sous celui posé par DSR-702, 
 from __future__ import annotations
 
 import logging
+import time
 
 from app.db.mysql import db_read, db_write
+from app.log_utils import ctx
 from app.traitements import scenario as scn
 from app.traitements.erreurs import TraitementImpossible
 from app.traitements.rapport import ECHEC, SUCCES, Rapport
@@ -80,11 +82,17 @@ async def calcul_trafic_agrebal(
     id_scenario: int, *, db_lecture=db_read, db_ecriture=db_write
 ) -> Rapport:
     """Agrège les trafics PDI du scénario en trafics Agrébal. Ne lève pas : rend un rapport."""
+    debut = time.perf_counter()
     rapport = Rapport(titre=TITRE, id_scenario=id_scenario)
+    logger.info("Début calcul trafics Agrébal %s", ctx(id_scenario=id_scenario))
 
     # Contrôle préalable 1 — le scénario existe.
     scenario = await scn.charger_scenario(db_lecture, id_scenario)
     if scenario is None:
+        logger.warning(
+            "Rejet calcul trafics Agrébal %s",
+            ctx(verdict=ECHEC, motif="scénario inexistant"),
+        )
         rapport.ko("Scénario inexistant", libelle="Scénario trouvé")
         rapport.statut = ECHEC
         return rapport
@@ -94,6 +102,15 @@ async def calcul_trafic_agrebal(
     etat = await db_lecture.fetch_one(SELECT_ETAT_PDI_SQL, (id_scenario,))
     nb_pdi = int(etat["nb_lignes"]) if etat else 0
     if not scenario["trafic_pdi_calcule"] or nb_pdi == 0:
+        logger.warning(
+            "Rejet calcul trafics Agrébal %s",
+            ctx(
+                verdict=ECHEC,
+                motif="trafics PDI non calculés",
+                trafic_pdi_calcule=bool(scenario["trafic_pdi_calcule"]),
+                lignes_pdi=nb_pdi,
+            ),
+        )
         rapport.ko("Trafics PDI non calculés", libelle="Trafics PDI calculés")
         rapport.erreur = (
             "Calcul des trafics Agrébal impossible.\n"
@@ -110,7 +127,7 @@ async def calcul_trafic_agrebal(
     try:
         nb_lignes = await _agreger(rapport, id_scenario, etat, raison, db_lecture, db_ecriture)
     except Exception as erreur:  # noqa: BLE001 — le scénario doit être déverrouillé quoi qu'il arrive
-        logger.exception("Calcul des trafics Agrébal du scénario %s en échec", id_scenario)
+        logger.exception("Erreur calcul trafics Agrébal %s", ctx(raison=raison))
         await scn.liberer_verrou(db_ecriture, id_scenario)
         await scn.journaliser(
             db_ecriture,
@@ -131,6 +148,16 @@ async def calcul_trafic_agrebal(
     # Les données sont écrites et le scénario déverrouillé, mais un écart de totaux reste une
     # anomalie : le verdict la reflète, sinon l'exploitant lirait SUCCES sur un calcul douteux.
     rapport.statut = SUCCES if rapport.reussi else ECHEC
+    logger.info(
+        "Fin calcul trafics Agrébal %s",
+        ctx(
+            verdict=rapport.statut,
+            lignes=nb_lignes,
+            lignes_pdi=nb_pdi,
+            raison=raison,
+            duration_ms=(time.perf_counter() - debut) * 1000,
+        ),
+    )
     return rapport
 
 
@@ -160,10 +187,8 @@ async def _agreger(
     await _controler_totaux(rapport, id_scenario, etat, db_lecture)
 
     logger.info(
-        "Trafics Agrébal du scénario %s : %d lignes écrites (raison %s)",
-        id_scenario,
-        nb_lignes,
-        raison,
+        "Trafics Agrébal écrits %s",
+        ctx(lignes=nb_lignes, couleurs=len(COULEURS), raison=raison),
     )
     return nb_lignes
 

@@ -32,6 +32,7 @@ from app.db.sql_script import (
     split_sql_script,
     statement_preview,
 )
+from app.log_utils import ctx
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +83,20 @@ class Database:
                     maxsize=self.max_connections,
                     autocommit=True,
                 )
-                logger.info("Connexion au pool MySQL réussie.")
+                logger.info(
+                    "Connexion au pool MySQL établie %s",
+                    ctx(hote=self.host, port=self.port, base=self.database),
+                )
                 return
             except Exception as e:
                 logger.warning(
-                    "Tentative %d/%d de connexion MySQL échouée : %s",
-                    attempt,
-                    self.max_retries,
-                    e,
+                    "Tentative de connexion MySQL échouée %s",
+                    ctx(
+                        tentative=attempt,
+                        max_tentatives=self.max_retries,
+                        hote=self.host,
+                        erreur=str(e),
+                    ),
                 )
                 if attempt == self.max_retries:
                     raise
@@ -101,11 +108,11 @@ class Database:
             self._pool.close()
             await self._pool.wait_closed()
             self._pool = None
-            logger.info("Pool MySQL fermé.")
+            logger.info("Pool MySQL fermé %s", ctx(hote=self.host))
 
     async def _ensure_pool(self) -> aiomysql.Pool:
         if self._pool is None:
-            logger.info("Connexion lazy à MySQL (premier appel)...")
+            logger.debug("Connexion lazy à MySQL %s", ctx(hote=self.host))
             await self.connect()
         return self._pool
 
@@ -124,10 +131,8 @@ class Database:
                         return cur.rowcount
             except Exception as e:
                 logger.warning(
-                    "Tentative %d/%d pour execute échouée : %s",
-                    attempt,
-                    max_retries,
-                    e,
+                    "Tentative d'exécution MySQL échouée %s",
+                    ctx(tentative=attempt, max_tentatives=max_retries, erreur=str(e)),
                 )
                 if attempt == max_retries:
                     raise
@@ -266,9 +271,13 @@ class Database:
             size = p.stat().st_size
             if size > SQL_SCRIPT_WARN_SIZE:
                 logger.warning(
-                    "Script SQL %s : %d octets chargés intégralement en mémoire.",
-                    p,
-                    size,
+                    "Script SQL volumineux %s",
+                    ctx(
+                        fichier=str(p),
+                        taille_octets=size,
+                        seuil_octets=SQL_SCRIPT_WARN_SIZE,
+                        consequence="chargé intégralement en mémoire",
+                    ),
                 )
             units.append((str(p), split_sql_script(p.read_text(encoding=encoding))))
 
@@ -333,10 +342,12 @@ class Database:
                 break
             except Exception as e:
                 logger.warning(
-                    "Tentative %d/%d de connexion MySQL (script SQL) échouée : %s",
-                    attempt,
-                    self.max_retries,
-                    e,
+                    "Tentative de connexion MySQL (script SQL) échouée %s",
+                    ctx(
+                        tentative=attempt,
+                        max_tentatives=self.max_retries,
+                        erreur=str(e),
+                    ),
                 )
                 if attempt == self.max_retries:
                     raise
@@ -376,23 +387,27 @@ class Database:
         nb_ddl = sum(1 for _, stmts in units for sql in stmts if is_ddl(sql))
 
         logger.info(
-            "Script SQL %s : %d instruction(s), transactionnel=%s, dry_run=%s.",
-            ", ".join(result.sources),
-            total,
-            transactional,
-            dry_run,
+            "Début script SQL %s",
+            ctx(
+                sources=", ".join(result.sources),
+                instructions=total,
+                transactionnel=transactional,
+                dry_run=dry_run,
+            ),
         )
 
         if transactional and nb_ddl and not dry_run:
             logger.warning(
-                "Script SQL : %d instruction(s) DDL détectée(s). MySQL effectue un "
-                "COMMIT implicite sur le DDL : un ROLLBACK ne les annulera PAS.",
-                nb_ddl,
+                "Script SQL : DDL en mode transactionnel %s",
+                ctx(
+                    nb_ddl=nb_ddl,
+                    consequence="COMMIT implicite MySQL, un ROLLBACK ne les annulera PAS",
+                ),
             )
         if transactional and continue_on_error and not dry_run:
             logger.warning(
-                "Script SQL : continue_on_error=True en mode transactionnel — la "
-                "transaction sera validée malgré les erreurs rencontrées."
+                "Script SQL : continue_on_error en mode transactionnel %s",
+                ctx(consequence="transaction validée malgré les erreurs"),
             )
 
         if dry_run:
@@ -409,8 +424,8 @@ class Database:
                     )
             result.duration_ms = (time.perf_counter() - started) * 1000
             logger.info(
-                "Script SQL en dry_run : %d instruction(s) analysée(s), aucune exécution.",
-                total,
+                "Fin script SQL (dry_run) %s",
+                ctx(instructions=total, duration_ms=result.duration_ms),
             )
             return result
 
@@ -422,8 +437,9 @@ class Database:
                     await conn.begin()
                 if disable_foreign_keys:
                     await self._run_statement(conn, "SET FOREIGN_KEY_CHECKS = 0")
-                    logger.info(
-                        "Script SQL : contraintes de clés étrangères désactivées sur la connexion."
+                    logger.warning(
+                        "Script SQL : contraintes de clés étrangères désactivées %s",
+                        ctx(portee="connexion"),
                     )
 
                 for label, stmts in units:
@@ -435,7 +451,10 @@ class Database:
                             is_ddl=is_ddl(sql),
                         )
                         result.statements.append(entry)
-                        logger.debug("[%s] instruction %d : %s", label, i, entry.preview)
+                        logger.debug(
+                            "Instruction SQL %s",
+                            ctx(source=label, index=i, apercu=entry.preview),
+                        )
 
                         t0 = time.perf_counter()
                         try:
@@ -445,19 +464,19 @@ class Database:
                             entry.duration_ms = (time.perf_counter() - t0) * 1000
                             if continue_on_error:
                                 logger.warning(
-                                    "[%s] instruction %d ignorée (continue_on_error) : %s | %s",
-                                    label,
-                                    i,
-                                    e,
-                                    entry.preview,
+                                    "Instruction SQL ignorée %s",
+                                    ctx(
+                                        source=label,
+                                        index=i,
+                                        motif="continue_on_error",
+                                        erreur=str(e),
+                                        apercu=entry.preview,
+                                    ),
                                 )
                                 continue
-                            logger.error(
-                                "[%s] échec de l'instruction %d : %s | %s",
-                                label,
-                                i,
-                                e,
-                                entry.preview,
+                            logger.exception(
+                                "Erreur instruction SQL %s",
+                                ctx(source=label, index=i, apercu=entry.preview),
                             )
                             raise SqlScriptError(
                                 f"Échec du script SQL {label} à l'instruction {i}",
@@ -477,20 +496,25 @@ class Database:
                     try:
                         await conn.rollback()
                         logger.warning(
-                            "Script SQL : ROLLBACK effectué (le DDL déjà exécuté n'est pas annulé)."
+                            "Script SQL : ROLLBACK effectué %s",
+                            ctx(reserve="le DDL déjà exécuté n'est pas annulé"),
                         )
                     except Exception as rb:
-                        logger.error("Script SQL : échec du ROLLBACK : %s", rb)
+                        logger.exception(
+                            "Erreur ROLLBACK script SQL %s", ctx(erreur=str(rb))
+                        )
                 raise
             finally:
                 result.duration_ms = (time.perf_counter() - started) * 1000
 
         logger.info(
-            "Script SQL terminé : %d/%d instruction(s) exécutée(s) en %.0f ms (%d erreur(s)).",
-            result.executed_count,
-            result.total_count,
-            result.duration_ms,
-            result.error_count,
+            "Fin script SQL %s",
+            ctx(
+                executees=result.executed_count,
+                instructions=result.total_count,
+                duration_ms=result.duration_ms,
+                erreurs=result.error_count,
+            ),
         )
         return result
 

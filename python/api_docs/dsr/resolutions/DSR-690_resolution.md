@@ -11,16 +11,16 @@ regroupant les services consommés par OPTIPACC. Lecture seule, sans état.
 - `api_docs/api_trppu_optipacc.md` — documentation d'usage destinée au métier / à OPTIPACC.
 
 ## 3. Endpoint livré
-`POST /trppu-api/optipacc/site-liste-scenarios`
-```json
-{ "codeRegate": "123456" }
-```
+`GET /trppu-api/optipacc/site-liste-scenarios?codeRegate=123456`
+
+`codeRegate` en paramètre de requête, obligatoire, exactement 6 caractères alphanumériques.
+
 Réponse :
 ```json
 { "codeRegate": "123456",
   "scenarios": [ { "id_scenario": 125, "lb_scenario": "Scénario Septembre 2026" } ] }
 ```
-Codes : `200`, `422` body invalide, `500` erreur technique.
+Codes : `200`, `422` paramètre invalide, `500` erreur technique.
 
 Filtre appliqué (`SELECT_SCENARIOS_EXPLOITABLES_SQL`) :
 ```sql
@@ -42,7 +42,9 @@ systématiquement une liste vide.
   (`response_model_exclude_none`), le cas nominal reste donc strictement le contrat.
 - **Existence du site non contrôlée** : le ticket ne prévoit pas ce cas d'erreur, un code
   Regate inconnu donne la même réponse « aucun scénario ».
-- `POST` retenu (et non `GET`) pour reprendre littéralement le contrat d'entrée du ticket.
+- **`GET` retenu** (et non `POST`) : le service est une lecture sans état paramétrée par un
+  seul champ, `codeRegate` passe donc en paramètre de requête. Le nom du champ du contrat du
+  ticket est conservé tel quel (`?codeRegate=`), seul le mode de transport change.
 - Sortie en `snake_case` (`id_scenario`, `lb_scenario`) conforme au ticket, alors que
   l'entrée est en `camelCase` (`codeRegate`) — incohérence du contrat source, reproduite
   telle quelle pour ne pas créer d'écart d'intégration.
@@ -56,8 +58,7 @@ systématiquement une liste vide.
 UPDATE trppu_scenario SET statut = 'VALIDE', trafic_agrebal_calcule = 1 WHERE id_scenario = 12;
 ```
 ```bash
-curl -X POST http://localhost:8080/trppu-api/optipacc/site-liste-scenarios \
-  -H "Content-Type: application/json" -d '{"codeRegate":"123456"}'
+curl "http://localhost:8080/trppu-api/optipacc/site-liste-scenarios?codeRegate=123456"
 ```
 
 ## 7. Mapping critères d'acceptance
@@ -72,12 +73,12 @@ curl -X POST http://localhost:8080/trppu-api/optipacc/site-liste-scenarios \
 
 > **✅ Service de liste des scénarios exploitables — livré.**
 >
-> **Endpoint :** `POST /trppu-api/optipacc/site-liste-scenarios`
+> **Endpoint :** `GET /trppu-api/optipacc/site-liste-scenarios?codeRegate=123456`
 > Les services destinés à OPTIPACC sont regroupés sous le segment `/optipacc` pour être
 > identifiables sans ambiguïté par les applications tierces.
 >
-> **Entrée :** `{ "codeRegate": "123456" }` — `codeRegate` obligatoire, exactement
-> 6 caractères alphanumériques ; tout autre champ dans le body est refusé.
+> **Entrée :** paramètre de requête `codeRegate` — obligatoire, exactement 6 caractères
+> alphanumériques. Le service est une lecture simple : pas de corps de requête.
 > **Sortie :** `{ "codeRegate": "123456", "scenarios": [ { "id_scenario": 125, "lb_scenario": "Scénario Septembre 2026" } ] }`
 > **Codes :** `200` OK · `422` requête invalide · `500` erreur technique.
 >
@@ -102,5 +103,5 @@ curl -X POST http://localhost:8080/trppu-api/optipacc/site-liste-scenarios \
 > **Documentation :** `api_docs/api_trppu_optipacc.md` (fiche d'usage partageable au métier
 > et à l'équipe OPTIPACC).
 >
-> **Tests :** `tests/test_optipacc.py` — 30 tests (mutualisés DSR-689/690). Suite complète OK
-> (130/130).
+> **Tests :** `tests/test_optipacc.py` — 32 tests (mutualisés DSR-689/690). Suite complète OK
+> (166/166).

@@ -2349,17 +2349,12 @@
       "name": "OPTIPACC",
       "item": [
         {
-          "name": "POST /trppu-api/optipacc/site-liste-scenarios",
+          "name": "GET /trppu-api/optipacc/site-liste-scenarios",
           "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "method": "GET",
+            "header": [],
             "url": {
-              "raw": "{{baseUrl}}/trppu-api/optipacc/site-liste-scenarios?",
+              "raw": "{{baseUrl}}/trppu-api/optipacc/site-liste-scenarios?codeRegate=string",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2370,6 +2365,12 @@
               ],
               "query": [
                 {
+                  "key": "codeRegate",
+                  "value": "string",
+                  "disabled": false,
+                  "description": "Code Regate du site (6 caractères alphanumériques)"
+                },
+                {
                   "key": "id_session_ihm",
                   "value": "{{id_session_ihm}}",
                   "disabled": true,
@@ -2377,16 +2378,7 @@
                 }
               ]
             },
-            "description": "Site Liste Scenarios",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"codeRegate\": \"string\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
+            "description": "Site Liste Scenarios"
           }
         },
         {
@@ -2421,7 +2413,7 @@
             "description": "Scenario Trafic Brut",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"codeRegate\": \"string\",\n  \"scenarioId\": 0,\n  \"inclureExclus\": false\n}",
+              "raw": "{\n  \"codeRegate\": \"string\",\n  \"scenarioId\": 0\n}",
               "options": {
                 "raw": {
                   "language": "json"

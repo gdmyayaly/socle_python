@@ -13,6 +13,7 @@ from app.config import (
     MYSQL_USER_WRITE,
 )
 from app.db.mysql import Database, db_read, db_write
+from app.log_utils import ctx
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,10 @@ async def fetch_server_info(db: Database | None = None) -> dict:
         info = await db.fetch_one(SERVER_INFO_QUERY) or {}
         tables = await db.fetch_one(TABLE_COUNT_QUERY) or {}
     except Exception as e:
-        logger.warning("Récupération des informations serveur échouée : %s", e)
+        logger.warning(
+            "Récupération des informations serveur en échec %s",
+            ctx(erreur=str(e)),
+        )
         return {"status": "disconnected", "error": str(e)}
 
     return {
@@ -83,7 +87,10 @@ async def _ping(db: Database, libelle: str) -> str:
         result = await db.fetch_one(HEALTH_CHECK_QUERY)
         return "connected" if result else "error"
     except Exception as e:
-        logger.warning("Vérification MySQL (%s) échouée : %s", libelle, e)
+        logger.warning(
+            "Vérification MySQL en échec %s",
+            ctx(instance=libelle, erreur=str(e)),
+        )
         return "disconnected"
 
 

@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 
 from app.config import APP, APP_ENV, APP_VERSION, MODULE, NB_WORKER
 from app.db.mysql import db_read, db_write
@@ -39,6 +40,7 @@ from app.health import (
     fetch_server_info,
 )
 from app.json_formatter import setup_logging
+from app.log_utils import ctx, reset_id_scenario, set_id_scenario
 from app.traitements import (
     calcul_trafic_agrebal,
     calcul_trafic_pdi,
@@ -128,14 +130,19 @@ async def _executer_traitement(traitement, args: argparse.Namespace) -> int:
     Une base injoignable ou une erreur inattendue est rendue dans le même format que le reste :
     l'exploitant lit un `[KO]` et un `RESULTAT`, pas une trace Python.
     """
+    # Le scénario est posé ici plutôt que dans chaque `cmd_*` : toutes les lignes
+    # émises dessous, y compris celles de `app.db.mysql`, le porteront.
+    jeton = set_id_scenario(args.id_scenario)
     try:
         rapport = await traitement(args.id_scenario)
     except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
-        log.exception("Traitement %s interrompu", args.commande)
+        log.exception("Erreur traitement %s", ctx(commande=args.commande))
         rapport = Rapport(titre=f"Traitement {args.commande}", id_scenario=args.id_scenario)
         rapport.ko(f"Traitement interrompu : {erreur}")
         rapport.erreur = str(erreur)
         rapport.statut = ECHEC
+    finally:
+        reset_id_scenario(jeton)
 
     if args.json:
         _print_json(rapport.to_dict())
@@ -170,7 +177,7 @@ async def cmd_all(args: argparse.Namespace) -> int:
     try:
         bilan = await executer_tout(args.id_scenario)
     except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
-        log.exception("Mode ALL interrompu")
+        log.exception("Erreur mode ALL %s", ctx(id_scenario=args.id_scenario))
         bilan = Bilan(nb_workers=NB_WORKER)
         bilan.erreur = str(erreur)
 
@@ -252,7 +259,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--verbose",
             action="store_true",
             default=argparse.SUPPRESS if cible is commun else False,
-            help="Affiche aussi les logs applicatifs (niveau INFO) en plus du résultat.",
+            help="Détaille les logs applicatifs (niveau DEBUG) sur la sortie d'erreur.",
         )
         cible.add_argument(
             "--json",
@@ -314,10 +321,28 @@ async def _run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = normaliser_argv(list(sys.argv[1:] if argv is None else argv))
     args = build_parser().parse_args(argv)
-    # Par défaut on limite les logs aux avertissements pour ne pas polluer la sortie console.
-    setup_logging(level=logging.INFO if args.verbose else logging.WARNING)
-    log.info("Commande %s", args.commande)
-    return asyncio.run(_run(args))
+    # INFO par défaut : le batch tourne sous ordonnanceur, sans `-v`, et c'est la
+    # seule trace de ce qu'il a fait. La sortie console de l'exploitant n'en pâtit
+    # pas — le rapport part sur stdout, les logs JSON sur stderr.
+    setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
+
+    debut = time.perf_counter()
+    log.info(
+        "Début commande %s",
+        ctx(commande=args.commande, id_scenario=getattr(args, "id_scenario", None)),
+    )
+    code = asyncio.run(_run(args))
+    duration_ms = round((time.perf_counter() - debut) * 1000, 1)
+    log.info(
+        "Fin commande %s",
+        ctx(
+            commande=args.commande,
+            id_scenario=getattr(args, "id_scenario", None),
+            exit_code=code,
+            duration_ms=duration_ms,
+        ),
+    )
+    return code
 
 
 if __name__ == "__main__":

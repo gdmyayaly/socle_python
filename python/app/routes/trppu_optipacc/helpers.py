@@ -67,13 +67,6 @@ SELECT_VOLUMES_BRUTS_SQL = (
     "GROUP BY co_produit ORDER BY co_produit"
 )
 
-# Variante inclure_exclus=true : aucun filtre sur bl_exclu.
-SELECT_VOLUMES_BRUTS_TOUS_SQL = (
-    f"SELECT co_produit, {_VOLUME_BRUT_EXPR} FROM trppu_tmh "
-    "WHERE id_scenario = %s "
-    "GROUP BY co_produit ORDER BY co_produit"
-)
-
 
 def assert_exploitable(scenario: dict[str, Any], co_regate: str) -> None:
     """Contrôle qu'un scénario est interrogeable par OPTIPACC (DSR-689 cas 2 et 3).

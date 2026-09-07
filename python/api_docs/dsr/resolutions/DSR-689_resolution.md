@@ -62,9 +62,9 @@ aucun traitement de ce dépôt (batch Agrébal DSR-702/703) → en l'état, le s
 - **Statuts exploitables : `VALIDE` et `EN PRODUCTION`** (+ Agrébal calculé). Choix assumé :
   un projet OPTIPACC déjà créé doit continuer de fonctionner après la mise en production du
   scénario, alors que DSR-690 ne liste que les `VALIDE`. Asymétrie documentée.
-- **Produits exclus (`bl_exclu = 1`) non restitués par défaut**, avec une extension
-  optionnelle du contrat : `"inclureExclus": true` (champ facultatif, le payload exact du
-  ticket fonctionne inchangé).
+- **Produits exclus (`bl_exclu = 1`) jamais restitués**, sans dérogation : l'exclusion est
+  une décision utilisateur. Le corps est validé en `extra="forbid"`, il se limite donc
+  strictement au payload du ticket (`codeRegate`, `scenarioId`).
 - **Comptages manuels hors périmètre** : RG4 vise explicitement « la table TRPPU_TMH », et
   `trppu_scenario_comptages_manuels` n'est jamais reporté dans `trppu_tmh` par le code —
   l'additionner créerait un double comptage. **À confirmer par le PO.**
@@ -128,10 +128,8 @@ SQL du §4 exécutée directement en base.
 > les `VALIDE` : un projet OPTIPACC déjà créé doit continuer à fonctionner après la mise en
 > production du scénario. Le message du `409` précise le statut et l'état du calcul Agrébal.
 >
-> **Produits exclus :** les produits marqués exclus dans le TMH ne sont pas restitués (c'est
-> une décision utilisateur). Extension optionnelle pour les cas de contrôle :
-> `{"codeRegate": "...", "scenarioId": ..., "inclureExclus": true}` — champ facultatif, le
-> payload du contrat fonctionne inchangé.
+> **Produits exclus :** les produits marqués exclus dans le TMH ne sont jamais restitués —
+> c'est une décision utilisateur que le service respecte sans dérogation possible.
 >
 > **⚠️ Deux points à arbitrer côté métier :**
 > 1. **Comptages manuels** (`trppu_scenario_comptages_manuels`) **non inclus** : RG4 vise
@@ -149,5 +147,5 @@ SQL du §4 exécutée directement en base.
 > **Documentation :** `api_docs/api_trppu_optipacc.md`.
 > **Tests :** `tests/test_optipacc.py` (dont l'arithmétique du volume brut vérifiée sur une
 > base en mémoire : lignes multiples par produit, repli du prévisionnel, produits exclus) et
-> `tests/test_tmh_volume_brut.py` (persistance de la colonne, 17 tests) — 30 tests OPTIPACC
-> mutualisés DSR-689/690, suite complète OK (130/130).
+> `tests/test_tmh_volume_brut.py` (persistance de la colonne, 17 tests) — 32 tests OPTIPACC
+> mutualisés DSR-689/690, suite complète OK (166/166).

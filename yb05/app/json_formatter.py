@@ -19,6 +19,7 @@ from app.config import (
     LOGS_DIR as CONFIG_LOGS_DIR,
     MODULE,
 )
+from app.log_utils import get_id_scenario
 
 DEFAULT_LOGS_DIR = os.path.join(os.getcwd(), "logs")
 
@@ -49,11 +50,21 @@ class JsonFormatter(logging.Formatter):
                 - app_version : version de l'application (par défaut '1.0.0')
                 - severity_label : niveau de log (INFO, ERROR, etc.)
                 - app_message : message du log
+                - id_scenario : scénario en cours de traitement (null hors
+                  traitement) — permet de suivre un scénario dans Kibana malgré
+                  l'entrelacement des workers du mode ALL
                 - name : nom du logger
                 - filename : fichier source du log
                 - lineno : numéro de ligne du log
         """
         app_run_mode = 'run' if APP_ENV == 'prod' else 'build'
+        # La clé est toujours posée (à null hors traitement) pour que le mapping
+        # Kibana reste stable. `format()` ne doit jamais lever : on se protège
+        # d'un contexte inattendu.
+        try:
+            id_scenario = get_id_scenario()
+        except Exception:
+            id_scenario = None
         log_record = {
             'app_datetime': datetime.fromtimestamp(record.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             'app_ccx': APP,
@@ -63,6 +74,7 @@ class JsonFormatter(logging.Formatter):
             'app_version': APP_VERSION,
             'severity_label': record.levelname,
             'app_message': record.getMessage(),
+            'id_scenario': id_scenario,
             'name': record.name,
             'filename': record.filename,
             'lineno': record.lineno

@@ -25,6 +25,7 @@ import time
 
 from app.config import NB_WORKER
 from app.db.mysql import db_read, db_write
+from app.log_utils import ctx, reset_id_scenario, set_id_scenario
 from app.traitements import scenario as scn
 from app.traitements.eligibilite import controle_eligibilite
 from app.traitements.rapport import ECHEC, NON_ELIGIBLE, SUCCES, Bilan
@@ -78,20 +79,30 @@ async def executer_tout(
     bilan = Bilan(nb_workers=nb_workers)
     debut = time.monotonic()
 
+    logger.info(
+        "Début mode ALL %s",
+        ctx(id_scenario=id_scenario, nb_workers=nb_workers),
+    )
+
     try:
         bilan.scenarios_trouves = await _lister_scenarios(db_lecture, id_scenario)
         if id_scenario is None:
             bilan.scenarios_a_moitie_calcules = await _lister_a_moitie_calcules(db_lecture)
     except Exception as erreur:  # noqa: BLE001 — une erreur système ne rend pas de stacktrace
-        logger.exception("Mode ALL : recherche des scénarios impossible")
+        logger.exception(
+            "Erreur mode ALL %s", ctx(etape="recherche des scénarios éligibles")
+        )
         bilan.erreur = str(erreur)
         bilan.duree_s = time.monotonic() - debut
         return bilan
 
     logger.info(
-        "Mode ALL : %d scénario(s) à traiter, %d worker(s)",
-        len(bilan.scenarios_trouves),
-        nb_workers,
+        "Scénarios à traiter %s",
+        ctx(
+            nb_scenarios=len(bilan.scenarios_trouves),
+            nb_workers=nb_workers,
+            a_moitie_calcules=len(bilan.scenarios_a_moitie_calcules),
+        ),
     )
 
     file: asyncio.Queue[int] = asyncio.Queue()
@@ -110,11 +121,14 @@ async def executer_tout(
     bilan.duree_s = time.monotonic() - debut
 
     logger.info(
-        "Mode ALL terminé : %d succès, %d échec(s), %d non éligible(s) en %.1fs",
-        len(bilan.succes),
-        len(bilan.echecs),
-        len(bilan.non_eligibles),
-        bilan.duree_s,
+        "Fin mode ALL %s",
+        ctx(
+            nb_scenarios=len(bilan.scenarios_trouves),
+            succes=len(bilan.succes),
+            echecs=len(bilan.echecs),
+            non_eligibles=len(bilan.non_eligibles),
+            duration_ms=bilan.duree_s * 1000,
+        ),
     )
     return bilan
 
@@ -139,13 +153,18 @@ async def _worker(numero: int, file: asyncio.Queue, bilan: Bilan, db_lecture, db
         except asyncio.QueueEmpty:
             return
 
-        logger.info("Worker %d -> scénario %s", numero, id_scenario)
+        # Pose du scénario dans le contexte de log : en mode ALL les workers
+        # s'entrelacent, et c'est ce qui permet de reconstituer la trace d'un
+        # scénario donné — y compris les lignes émises par `app.db.mysql`.
+        jeton = set_id_scenario(id_scenario)
+        logger.info("Début traitement scénario %s", ctx(worker=numero))
         try:
             await _traiter(id_scenario, bilan, db_lecture, db_ecriture)
         except Exception as erreur:  # noqa: BLE001 — CA-08 : un scénario ne fait pas tomber la file
-            logger.exception("Worker %d : scénario %s interrompu", numero, id_scenario)
+            logger.exception("Erreur traitement scénario %s", ctx(worker=numero))
             bilan.ajouter(id_scenario, ECHEC, str(erreur))
         finally:
+            reset_id_scenario(jeton)
             file.task_done()
 
 
@@ -155,6 +174,16 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
     # son bilan, et aucun verrou n'a été posé à ce stade.
     eligibilite = await controle_eligibilite(id_scenario, db_lecture=db_lecture)
     if not eligibilite.reussi:
+        # Un traitement ne lève pas, il rend un rapport : sans cette ligne le
+        # verdict ne vivrait que dans le `Bilan` en mémoire.
+        logger.warning(
+            "Rejet traitement scénario %s",
+            ctx(
+                verdict=NON_ELIGIBLE,
+                etape="éligibilité",
+                motifs=eligibilite.motifs,
+            ),
+        )
         bilan.ajouter(id_scenario, NON_ELIGIBLE, " ; ".join(eligibilite.motifs))
         return
 
@@ -168,6 +197,10 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
         id_scenario, db_lecture=db_lecture, db_ecriture=db_ecriture
     )
     if not rapport_pdi.reussi:
+        logger.warning(
+            "Rejet traitement scénario %s",
+            ctx(verdict=ECHEC, etape="trafics PDI", motif=_motif(rapport_pdi)),
+        )
         bilan.ajouter(id_scenario, ECHEC, _motif(rapport_pdi))
         return
 
@@ -176,6 +209,7 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
         id_scenario, db_lecture=db_lecture, db_ecriture=db_ecriture
     )
     if rapport_agrebal.reussi:
+        logger.info("Fin traitement scénario %s", ctx(verdict=SUCCES))
         bilan.ajouter(id_scenario, SUCCES)
         return
 
@@ -183,6 +217,15 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
     # s'arrête sur ses contrôles préalables sans libérer le verrou, et il a raison : lancé seul,
     # il ne le détient pas et le relâcher couperait le calcul d'un autre processus. Ici, nous
     # savons qu'il est à nous, puisque l'étape 2 vient de le poser.
+    logger.warning(
+        "Rejet traitement scénario %s",
+        ctx(
+            verdict=ECHEC,
+            etape="trafics Agrébal",
+            motif=_motif(rapport_agrebal),
+            filet="libération du verrou",
+        ),
+    )
     await scn.liberer_verrou(db_ecriture, id_scenario)
     bilan.ajouter(id_scenario, ECHEC, _motif(rapport_agrebal))
 

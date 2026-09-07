@@ -21,11 +21,13 @@ Ordre des écritures, et pourquoi :
 from __future__ import annotations
 
 import logging
+import time
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from app.config import CLES_PAR_PRODUIT
 from app.db.mysql import db_read, db_write
+from app.log_utils import ctx
 from app.traitements import scenario as scn
 from app.traitements.eligibilite import controle_eligibilite
 from app.traitements.erreurs import TraitementImpossible
@@ -123,11 +125,17 @@ async def calcul_trafic_pdi(
     id_scenario: int, *, db_lecture=db_read, db_ecriture=db_write
 ) -> Rapport:
     """Calcule et enregistre les trafics PDI du scénario. Ne lève pas : rend un rapport."""
+    debut = time.perf_counter()
     rapport = Rapport(titre=TITRE, id_scenario=id_scenario)
+    logger.info("Début calcul trafics PDI %s", ctx(id_scenario=id_scenario))
 
     # Étape 1 — éligibilité. Non éligible : aucune écriture, aucun verrou (CA-01).
     eligibilite = await controle_eligibilite(id_scenario, db_lecture=db_lecture)
     if not eligibilite.reussi:
+        logger.warning(
+            "Rejet calcul trafics PDI %s",
+            ctx(verdict=ECHEC, motif="scénario non éligible", motifs=eligibilite.motifs),
+        )
         rapport.ko(
             "Contrôle d'éligibilité : scénario non éligible au calcul",
             libelle="Contrôle d'éligibilité",
@@ -145,16 +153,23 @@ async def calcul_trafic_pdi(
     # Étape 2 — verrou. 0 ligne affectée : un autre processus a pris le scénario entre le
     # contrôle et maintenant. Il est propriétaire, on ne touche à rien.
     if not await scn.prendre_verrou(db_ecriture, id_scenario):
+        # Rejet métier jusqu'ici silencieux : sans cette ligne, une collision entre
+        # deux workers ne laisse aucune trace côté log.
+        logger.warning(
+            "Rejet calcul trafics PDI %s",
+            ctx(verdict=ECHEC, motif="verrou déjà pris par un autre calcul"),
+        )
         rapport.ko("Un calcul de trafic est déjà en cours", libelle="Verrou du scénario")
         rapport.statut = ECHEC
         rapport.etats["TRAFIC_PDI_CALCULE"] = 0
         return rapport
     rapport.ok("Verrou posé (CALCUL_TRAFIC_EN_COURS = 1)")
+    logger.debug("Verrou posé %s", ctx(raison=raison))
 
     try:
         nb_lignes = await _calculer(rapport, scenario, raison, db_lecture, db_ecriture)
     except Exception as erreur:  # noqa: BLE001 — tout échec doit libérer le verrou
-        logger.exception("Calcul des trafics PDI du scénario %s en échec", id_scenario)
+        logger.exception("Erreur calcul trafics PDI %s", ctx(raison=raison))
         await scn.liberer_verrou(db_ecriture, id_scenario)
         await scn.journaliser(
             db_ecriture,
@@ -169,6 +184,14 @@ async def calcul_trafic_pdi(
         return rapport
 
     rapport.ok(f"{nb_lignes} lignes trafic PDI calculées")
+    logger.info(
+        "Fin calcul trafics PDI %s",
+        ctx(
+            lignes=nb_lignes,
+            raison=raison,
+            duration_ms=(time.perf_counter() - debut) * 1000,
+        ),
+    )
     rapport.statut = SUCCES
     rapport.etats["TRAFIC_PDI_CALCULE"] = 1
     # Volontairement laissé à 1 : c'est le calcul des trafics Agrébal qui libère le scénario.
@@ -195,6 +218,10 @@ async def _calculer(
     )
     rapport.ok(f"Référentiel associé ({id_referentiel})")
     rapport.ok(f"Version de clés associée ({id_version_cle})")
+    logger.debug(
+        "Traçabilité associée %s",
+        ctx(id_referentiel=id_referentiel, id_version_cle=id_version_cle),
+    )
 
     # Étape 5 — chargement (avant la purge : rien n'est détruit si une donnée manque).
     tmh = await _charger_tmh(db_lecture, id_scenario)
@@ -209,12 +236,27 @@ async def _calculer(
     agrebal_par_pdi = await _charger_mapping_agrebal(db_lecture, co_regate)
     rapport.ok(f"Mapping Agrébal/PDI chargé ({len(agrebal_par_pdi)} PDI)")
 
+    logger.debug(
+        "Données de calcul chargées %s",
+        ctx(
+            tmh=len(tmh),
+            coefficients=len(coefficients),
+            cles=len(cles),
+            agrebal_par_pdi=len(agrebal_par_pdi),
+        ),
+    )
+
     _signaler_ecarts_de_perimetre(rapport, cles, agrebal_par_pdi)
 
     jours = _jours_a_calculer(scenario, coefficients)
     rapport.ok(f"Jours calculés : {', '.join(jours)}")
+    logger.debug("Jours à calculer %s", ctx(nb=len(jours), jours=jours))
 
     lignes = _construire_lignes(scenario, tmh, coefficients, cles, agrebal_par_pdi, jours)
+    logger.debug(
+        "Lignes de trafic PDI construites %s",
+        ctx(lignes=len(lignes), taille_lot=TAILLE_LOT),
+    )
     if not lignes:
         raise TraitementImpossible(
             "Aucun trafic PDI à écrire : vérifier les TMH, les coefficients et les clés"
@@ -225,8 +267,10 @@ async def _calculer(
         await tx.execute(DELETE_TRAFIC_AGREBAL_SQL, (id_scenario,))
         await tx.execute(DELETE_TRAFIC_PDI_SQL, (id_scenario,))
         await tx.execute(RESET_FLAGS_SQL, (id_scenario,))
-        for debut in range(0, len(lignes), TAILLE_LOT):
-            await tx.execute_many(INSERT_TRAFIC_PDI_SQL, lignes[debut : debut + TAILLE_LOT])
+        nb_lots = 0
+        for depart in range(0, len(lignes), TAILLE_LOT):
+            await tx.execute_many(INSERT_TRAFIC_PDI_SQL, lignes[depart : depart + TAILLE_LOT])
+            nb_lots += 1
         await tx.execute(
             scn.INSERT_RECALCUL_LOG_SQL,
             (id_scenario, raison, _commentaire(raison, len(lignes))),
@@ -234,10 +278,8 @@ async def _calculer(
         await tx.execute(MARQUER_PDI_CALCULE_SQL, (id_scenario,))
 
     logger.info(
-        "Trafics PDI du scénario %s : %d lignes écrites (raison %s)",
-        id_scenario,
-        len(lignes),
-        raison,
+        "Trafics PDI écrits %s",
+        ctx(lignes=len(lignes), raison=raison, lots=nb_lots),
     )
     return len(lignes)
 

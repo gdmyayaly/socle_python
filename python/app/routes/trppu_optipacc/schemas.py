@@ -5,6 +5,9 @@ entrées et pour les produits (`codeRegate`, `scenarioId`, `codeProduit`,
 `volumeBrut`), snake_case pour les scénarios (`id_scenario`, `lb_scenario`,
 contrat DSR-690). Les champs restent en snake_case côté Python et portent un
 alias ; FastAPI sérialise les `response_model` avec `by_alias=True` par défaut.
+
+DSR-690 n'a pas de schéma d'entrée : le service est un GET, son unique paramètre
+`codeRegate` est déclaré en `Query` dans `routes.py`.
 """
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,20 +20,6 @@ _REQUEST_CONFIG = ConfigDict(
     populate_by_name=True,
     str_strip_whitespace=True,
 )
-
-
-class SiteScenariosRequest(BaseModel):
-    """Body du service S_SiteListeScenarios (DSR-690)."""
-
-    model_config = _REQUEST_CONFIG
-
-    code_regate: str = Field(
-        ...,
-        alias="codeRegate",
-        min_length=6,
-        max_length=6,
-        pattern=CO_REGATE_PATTERN,
-    )
 
 
 class ScenarioItem(BaseModel):
@@ -55,11 +44,7 @@ class SiteScenariosResponse(BaseModel):
 
 
 class TraficBrutRequest(BaseModel):
-    """Body du service S_ScenarioTraficBrut (DSR-689).
-
-    `inclureExclus` est une extension optionnelle du contrat : par défaut les
-    produits marqués exclus dans le TMH ne sont pas restitués.
-    """
+    """Body du service S_ScenarioTraficBrut (DSR-689)."""
 
     model_config = _REQUEST_CONFIG
 
@@ -71,7 +56,6 @@ class TraficBrutRequest(BaseModel):
         pattern=CO_REGATE_PATTERN,
     )
     scenario_id: int = Field(..., alias="scenarioId", ge=1)
-    inclure_exclus: bool = Field(False, alias="inclureExclus")
 
 
 class ProduitVolume(BaseModel):

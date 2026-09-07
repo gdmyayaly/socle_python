@@ -72,7 +72,7 @@ Options communes :
 | Option | Effet |
 |---|---|
 | `--json` | Sort le résultat en JSON au lieu du texte (pour chaînage / supervision). |
-| `-v`, `--verbose` | Passe les logs applicatifs en INFO ; par défaut seuls les WARNING sont affichés pour ne pas polluer la sortie. |
+| `-v`, `--verbose` | Détaille les logs applicatifs en DEBUG (étapes de calcul). Le niveau par défaut est INFO — les logs partent sur la **sortie d'erreur**, ils ne polluent donc pas le rapport. |
 
 **Code de retour** : `0` si la vérification est concluante, `1` sinon — directement
 exploitable par un ordonnanceur ou une probe.
@@ -373,6 +373,9 @@ retenue et la correction appliquée. Les trois pièges principaux :
 
 ## Logging
 
+> La convention (grammaire des messages, niveaux, champ de corrélation) est décrite
+> dans **`docs/CONVENTION-LOGS.md`**. À lire avant d'ajouter un log.
+
 ### Fonctionnement
 
 `setup_logging()` doit être appelé **explicitement** au démarrage du programme (la CLI le
@@ -383,20 +386,39 @@ Le fichier est nommé `AAAA-MM-JJ.log` dans `LOGS_DIR` (ou `./logs`). Le nom est
 **une seule fois au démarrage** : ce n'est pas une rotation quotidienne, un processus qui
 tourne plusieurs jours continue d'écrire dans le fichier du jour de son démarrage.
 
+**Niveau par défaut : INFO.** Le batch tourne sous ordonnanceur, sans `-v`, et ses logs
+sont la seule trace de ce qu'il a fait. Cela ne gêne pas l'exploitant : le rapport part
+sur la sortie standard, les logs JSON sur la sortie d'erreur (cf. « Deux flux distincts »
+plus haut). `-v` ajoute le niveau DEBUG — étapes de calcul, instructions SQL.
+
 ### Format des logs (JSON)
 
 ```json
-{"app_datetime": "2026-07-31T07:49:35.874Z", "app_ccx": "dsr", "app_env": "sdev", "app_ptf": "build", "app_tm": "yb05", "app_version": "1.0.0", "severity_label": "INFO", "app_message": "Commande db-check", "name": "yb05", "filename": "main.py", "lineno": 143}
+{"app_datetime": "2026-07-31T07:49:35.874Z", "app_ccx": "dsr", "app_env": "sdev", "app_ptf": "build", "app_tm": "yb05", "app_version": "1.0.0", "severity_label": "INFO", "app_message": "Fin calcul trafics PDI (lignes=1240, raison=INITIAL, duration_ms=8421.0)", "id_scenario": 12345, "name": "app.traitements.trafic_pdi", "filename": "trafic_pdi.py", "lineno": 231}
 ```
+
+`id_scenario` est posé une fois par traitement et repris sur **toutes** les lignes qui en
+découlent, y compris celles de `app.db.mysql`. En mode `ALL`, où `NB_WORKER` scénarios sont
+traités en parallèle et où les lignes s'entrelacent, c'est ce champ qui permet de
+reconstituer la trace d'un seul scénario. Il vaut `null` hors traitement.
+
+Le jeu de clés est fixe : `logger.info(..., extra={...})` est **sans effet**. Le contexte
+métier vit donc dans `app_message`, sous la grammaire
+`Début|Fin|Rejet|Erreur <action> (cle=valeur, …)`.
 
 ### Ce qui est loggé
 
-- La commande exécutée (niveau INFO, visible avec `-v`)
-- Les exceptions non gérées, avec la stack trace
-- Les tentatives de connexion MySQL et les vérifications en échec
+- Début et fin de chaque commande, avec `exit_code` et `duration_ms`.
+- Début et fin de chaque traitement, avec la volumétrie écrite et la `raison`.
+- **Le verdict de chaque scénario** — `SUCCES` en INFO, `NON_ELIGIBLE` et `ECHEC` en
+  WARNING avec leurs motifs. Un traitement ne lève pas, il rend un rapport : sans ces
+  lignes, un scénario en échec ne laisserait aucune trace.
+- Les rejets métier : scénario non éligible, verrou déjà pris par un autre calcul.
+- Les exceptions, avec la stack trace.
+- Les tentatives de connexion MySQL et les vérifications en échec.
 - L'exécution des scripts SQL (début, fin, avertissements DDL, échecs) — l'aperçu des
   instructions est tronqué à 120 caractères et **jamais** le SQL complet, les scripts de
-  données pouvant contenir des informations personnelles
+  données pouvant contenir des informations personnelles.
 
 ## Tests
 

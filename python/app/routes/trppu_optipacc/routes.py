@@ -19,13 +19,12 @@ from .helpers import (
     SELECT_SCENARIO_GARDE_SQL,
     SELECT_SCENARIOS_EXPLOITABLES_SQL,
     SELECT_VOLUMES_BRUTS_SQL,
-    SELECT_VOLUMES_BRUTS_TOUS_SQL,
     assert_exploitable,
 )
 from .schemas import (
+    CO_REGATE_PATTERN,
     ProduitVolume,
     ScenarioItem,
-    SiteScenariosRequest,
     SiteScenariosResponse,
     TraficBrutRequest,
     TraficBrutResponse,
@@ -36,7 +35,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/trppu-api/optipacc", tags=["OPTIPACC"])
 
 
-@router.post(
+@router.get(
     "/site-liste-scenarios",
     response_model=SiteScenariosResponse,
     # `message` n'apparaît dans la réponse que lorsqu'il est renseigné : le cas
@@ -44,7 +43,14 @@ router = APIRouter(prefix="/trppu-api/optipacc", tags=["OPTIPACC"])
     response_model_exclude_none=True,
 )
 async def site_liste_scenarios(
-    payload: SiteScenariosRequest,
+    co_regate: str = Query(
+        ...,
+        alias="codeRegate",
+        min_length=6,
+        max_length=6,
+        pattern=CO_REGATE_PATTERN,
+        description="Code Regate du site (6 caractères alphanumériques)",
+    ),
     id_session_ihm: str | None = Query(None, description="Id de session IHM (traçabilité)"),
 ):
     """DSR-690 (S_SiteListeScenarios) : scénarios exploitables d'un site.
@@ -59,7 +65,6 @@ async def site_liste_scenarios(
     contrôlée — un code Regate inconnu donne la même réponse.
     """
     start = time.perf_counter()
-    co_regate = payload.code_regate
     logger.info("Début liste scénarios OPTIPACC %s", ctx(co_regate=co_regate))
     try:
         rows = await db_read.fetch_all(SELECT_SCENARIOS_EXPLOITABLES_SQL, (co_regate,))
@@ -105,19 +110,15 @@ async def scenario_trafic_brut(
     module helpers pour le détail de la formule). Aucun détail de calcul n'est
     restitué : ni constaté, ni prévisionnel, ni TMH, ni trafic manuel (RG6, CA5).
 
-    Les produits marqués exclus dans le TMH sont ignorés, sauf si le body porte
-    `inclureExclus: true`.
+    Les produits marqués exclus dans le TMH ne sont jamais restitués : l'exclusion
+    est une décision utilisateur que le service respecte sans dérogation possible.
     """
     start = time.perf_counter()
     co_regate = payload.code_regate
     id_scenario = payload.scenario_id
     logger.info(
         "Début trafic brut OPTIPACC %s",
-        ctx(
-            co_regate=co_regate,
-            id_scenario=id_scenario,
-            inclure_exclus=payload.inclure_exclus,
-        ),
+        ctx(co_regate=co_regate, id_scenario=id_scenario),
     )
 
     await fetch_site_or_404(co_regate)
@@ -138,13 +139,8 @@ async def scenario_trafic_brut(
         )
     assert_exploitable(scenario, co_regate)
 
-    sql = (
-        SELECT_VOLUMES_BRUTS_TOUS_SQL
-        if payload.inclure_exclus
-        else SELECT_VOLUMES_BRUTS_SQL
-    )
     try:
-        rows = await db_read.fetch_all(sql, (id_scenario,))
+        rows = await db_read.fetch_all(SELECT_VOLUMES_BRUTS_SQL, (id_scenario,))
     except Exception as e:
         logger.exception(
             "Erreur trafic brut OPTIPACC %s",
@@ -171,7 +167,6 @@ async def scenario_trafic_brut(
             co_regate=co_regate,
             id_scenario=id_scenario,
             count=len(produits),
-            inclure_exclus=payload.inclure_exclus,
             duration_ms=duration_ms,
         ),
     )

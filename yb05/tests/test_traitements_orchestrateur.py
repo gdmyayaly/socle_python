@@ -10,9 +10,11 @@ test qui ment une fois sur dix.
 """
 
 import asyncio
+import logging
 
 import pytest
 
+from app.log_utils import get_id_scenario
 from app.traitements import orchestrateur
 from app.traitements.rapport import ECHEC, NON_ELIGIBLE, SUCCES, Bilan, Rapport
 from tests.conftest import FausseBase
@@ -391,3 +393,83 @@ def test_format_des_durees(secondes, attendu):
 def test_bilan_vide_ne_divise_pas_par_zero():
     """Durée moyenne d'un batch qui n'a rien traité : 0, pas une ZeroDivisionError."""
     assert Bilan(nb_workers=1).duree_moyenne_s == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Journalisation des verdicts
+#
+# Les traitements ne lèvent pas : ils rendent un `Rapport`. Sans ces lignes, un
+# scénario en échec ou non éligible ne laissait AUCUNE trace dans les logs — le
+# verdict ne vivait que dans le `Bilan`, en mémoire.
+# ---------------------------------------------------------------------------
+
+
+def test_verdict_succes_journalise(monkeypatch, caplog):
+    traitements = Traitements()
+
+    with caplog.at_level(logging.INFO, logger="app.traitements.orchestrateur"):
+        _executer(monkeypatch, traitements, base=_base((12345,)))
+
+    assert "Fin traitement scénario" in caplog.text
+    assert f"verdict={SUCCES}" in caplog.text
+
+
+def test_verdict_non_eligible_journalise_avec_ses_motifs(monkeypatch, caplog):
+    """Les motifs bloquants doivent figurer dans le log, pas seulement leur nombre."""
+    traitements = Traitements(non_eligibles=(12345,))
+
+    with caplog.at_level(logging.WARNING, logger="app.traitements.orchestrateur"):
+        _executer(monkeypatch, traitements, base=_base((12345,)))
+
+    assert "Rejet traitement scénario" in caplog.text
+    assert f"verdict={NON_ELIGIBLE}" in caplog.text
+
+
+def test_verdict_echec_pdi_journalise(monkeypatch, caplog):
+    traitements = Traitements(echecs_pdi=(12345,))
+
+    with caplog.at_level(logging.WARNING, logger="app.traitements.orchestrateur"):
+        _executer(monkeypatch, traitements, base=_base((12345,)))
+
+    assert "Rejet traitement scénario" in caplog.text
+    assert f"verdict={ECHEC}" in caplog.text
+    assert "etape=trafics PDI" in caplog.text
+
+
+def test_verdict_echec_agrebal_journalise_le_filet_de_securite(monkeypatch, caplog):
+    """L'échec Agrébal libère le verrou : la réparation doit se voir dans le log."""
+    traitements = Traitements(echecs_agrebal=(12345,))
+
+    with caplog.at_level(logging.WARNING, logger="app.traitements.orchestrateur"):
+        _executer(monkeypatch, traitements, base=_base((12345,)))
+
+    assert "etape=trafics Agrébal" in caplog.text
+    assert "filet=libération du verrou" in caplog.text
+
+
+def test_bornes_du_mode_all_journalisees(monkeypatch, caplog):
+    traitements = Traitements()
+
+    with caplog.at_level(logging.INFO, logger="app.traitements.orchestrateur"):
+        _executer(monkeypatch, traitements, base=_base((12345, 12346)))
+
+    assert "Début mode ALL" in caplog.text
+    assert "Fin mode ALL" in caplog.text
+    assert "duration_ms=" in caplog.text
+    # « terminé » : accord de genre banni par la convention.
+    assert "terminé" not in caplog.text
+
+
+def test_chaque_ligne_porte_le_scenario_traite(monkeypatch, caplog):
+    """Le ContextVar doit être posé pendant le traitement, et rendu ensuite."""
+    vus: list[int | None] = []
+
+    class TraitementsEspions(Traitements):
+        async def eligibilite(self, id_scenario, **kwargs):
+            vus.append(get_id_scenario())
+            return await super().eligibilite(id_scenario, **kwargs)
+
+    _executer(monkeypatch, TraitementsEspions(), base=_base((12345, 12346)))
+
+    assert sorted(vus) == [12345, 12346]
+    assert get_id_scenario() is None, "le scénario a fuité hors du worker"

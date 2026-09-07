@@ -22,9 +22,10 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.routes.trppu_optipacc import helpers, routes
-from app.routes.trppu_optipacc.schemas import SiteScenariosRequest, TraficBrutRequest
+from app.routes.trppu_optipacc.schemas import TraficBrutRequest
 
 
 # --- Outils communs -------------------------------------------------------------
@@ -69,9 +70,19 @@ def site_existant(monkeypatch):
     monkeypatch.setattr(routes, "fetch_site_or_404", _ok)
 
 
-def _appeler_trafic_brut(**kwargs):
-    payload = TraficBrutRequest(**{"codeRegate": "123456", "scenarioId": 12, **kwargs})
+def _appeler_trafic_brut():
+    payload = TraficBrutRequest(codeRegate="123456", scenarioId=12)
     return asyncio.run(routes.scenario_trafic_brut(payload, id_session_ihm=None))
+
+
+def _methodes_de(chemin: str) -> set[str]:
+    """Verbes HTTP exposés par une route du routeur OPTIPACC."""
+    return {
+        m
+        for route in routes.router.routes
+        if route.path == f"/trppu-api/optipacc/{chemin}"
+        for m in route.methods
+    }
 
 
 # --- 1. Arithmétique du volume brut (SQLite en mémoire) -------------------------
@@ -135,7 +146,7 @@ def test_volume_brut_tolere_les_volumes_null():
     assert _executer(helpers.SELECT_VOLUMES_BRUTS_SQL, lignes) == {"EP": 0}
 
 
-def test_volume_brut_ignore_les_produits_exclus_par_defaut():
+def test_volume_brut_ignore_les_produits_exclus():
     lignes = [
         (12, "OS", 100, 0, 0, 0, 0),
         (12, "PQ", 999, 0, 0, 1, 0),  # exclu
@@ -143,20 +154,10 @@ def test_volume_brut_ignore_les_produits_exclus_par_defaut():
     assert _executer(helpers.SELECT_VOLUMES_BRUTS_SQL, lignes) == {"OS": 100}
 
 
-def test_volume_brut_inclut_les_exclus_avec_la_variante_dediee():
-    lignes = [
-        (12, "OS", 100, 0, 0, 0, 0),
-        (12, "PQ", 999, 0, 0, 1, 0),
-    ]
-    obtenu = _executer(helpers.SELECT_VOLUMES_BRUTS_TOUS_SQL, lignes)
-    assert obtenu == {"OS": 100, "PQ": 999}
-
-
 def test_volume_brut_ne_filtre_jamais_sur_bl_manuel():
     """bl_manuel est un flag de provenance : le filtrer double-compterait ou perdrait
     des lignes (une correction DSR-649 le pose aussi sur une ligne calculée)."""
-    for sql in (helpers.SELECT_VOLUMES_BRUTS_SQL, helpers.SELECT_VOLUMES_BRUTS_TOUS_SQL):
-        assert "bl_manuel" not in sql
+    assert "bl_manuel" not in helpers.SELECT_VOLUMES_BRUTS_SQL
 
 
 def test_volume_brut_isole_le_scenario_demande():
@@ -250,15 +251,22 @@ def test_trafic_brut_respecte_le_contrat_camel_case(monkeypatch, site_existant):
     }
 
 
-def test_trafic_brut_choisit_la_requete_selon_inclure_exclus(monkeypatch, site_existant):
+def test_trafic_brut_reste_en_post():
+    assert _methodes_de("scenario-trafic-brut") == {"POST"}
+
+
+def test_trafic_brut_rejette_un_champ_inconnu():
+    """`extra=forbid` : l'ancienne option `inclureExclus` doit être refusée."""
+    with pytest.raises(ValidationError):
+        TraficBrutRequest(codeRegate="123456", scenarioId=12, inclureExclus=True)
+
+
+def test_trafic_brut_exclut_toujours_les_produits_exclus(monkeypatch, site_existant):
+    """Plus de variante : la requête filtrante est la seule jouée par la route."""
     fake = FakeDb(one=_scenario(), all_rows=[])
     monkeypatch.setattr(routes, "db_read", fake)
-
     _appeler_trafic_brut()
     assert fake.executed[-1][0] is helpers.SELECT_VOLUMES_BRUTS_SQL
-
-    _appeler_trafic_brut(inclureExclus=True)
-    assert fake.executed[-1][0] is helpers.SELECT_VOLUMES_BRUTS_TOUS_SQL
 
 
 def test_trafic_brut_500_sur_erreur_technique(monkeypatch, site_existant):
@@ -279,9 +287,13 @@ def test_trafic_brut_scenario_sans_tmh_renvoie_une_liste_vide(monkeypatch, site_
 # --- 3. DSR-690 : liste des scénarios -------------------------------------------
 
 
-def _appeler_liste(code_regate="123456"):
-    payload = SiteScenariosRequest(codeRegate=code_regate)
-    return asyncio.run(routes.site_liste_scenarios(payload, id_session_ihm=None))
+def _appeler_liste(co_regate="123456"):
+    return asyncio.run(routes.site_liste_scenarios(co_regate, id_session_ihm=None))
+
+
+def test_liste_scenarios_est_expose_en_get():
+    """DSR-690 est une lecture sans corps : le service s'appelle en GET."""
+    assert _methodes_de("site-liste-scenarios") == {"GET"}
 
 
 def test_liste_scenarios_retourne_id_et_libelle(monkeypatch):

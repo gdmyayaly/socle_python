@@ -14,6 +14,8 @@ import json
 import logging
 from typing import Any
 
+from app.log_utils import ctx, safe_preview
+
 logger = logging.getLogger(__name__)
 
 # Motifs de calcul autorisés par l'enum `trppu_recalcul_log.raison`.
@@ -157,7 +159,10 @@ def _extraire_pdi_ids(brut: Any) -> list[int]:
         try:
             brut = json.loads(brut)
         except (ValueError, TypeError):
-            logger.warning("agrebal_pdiList illisible, agrébal ignoré")
+            logger.warning(
+                "Agrébal ignoré %s",
+                ctx(motif="agrebal_pdiList illisible", brut=safe_preview(brut, 120)),
+            )
             return []
     if not isinstance(brut, list):
         return []
@@ -202,12 +207,31 @@ async def prendre_verrou(db_ecriture, id_scenario: int) -> bool:
     autres processus jusqu'au commit final, c'est-à-dire trop tard.
     """
     lignes = await db_ecriture.execute(PRENDRE_VERROU_SQL, (id_scenario,))
-    return bool(lignes)
+    obtenu = bool(lignes)
+    if obtenu:
+        logger.debug("Verrou de calcul obtenu %s", ctx(id_scenario=id_scenario))
+    else:
+        # 0 ligne affectée = un autre processus détient le scénario. L'appelant
+        # se contente d'un `Rapport` : sans cette ligne, la collision est muette.
+        logger.warning(
+            "Verrou de calcul non obtenu %s",
+            ctx(id_scenario=id_scenario, motif="calcul déjà en cours"),
+        )
+    return obtenu
 
 
 async def liberer_verrou(db_ecriture, id_scenario: int) -> None:
-    """Remet `calcul_trafic_en_cours = 0` — à appeler dans tous les chemins d'échec."""
-    await db_ecriture.execute(LIBERER_VERROU_SQL, (id_scenario,))
+    """Remet `calcul_trafic_en_cours = 0` — à appeler dans tous les chemins d'échec.
+
+    Volontairement **non** protégée : un verrou qui n'a pas pu être libéré laisse le
+    scénario bloqué pour tous les autres processus. Cela doit rester un échec visible,
+    pas un simple avertissement.
+    """
+    lignes = await db_ecriture.execute(LIBERER_VERROU_SQL, (id_scenario,))
+    logger.info(
+        "Verrou de calcul libéré %s",
+        ctx(id_scenario=id_scenario, rows_affected=lignes),
+    )
 
 
 async def journaliser(db_ecriture, id_scenario: int, raison: str, commentaire: str) -> None:
@@ -215,10 +239,26 @@ async def journaliser(db_ecriture, id_scenario: int, raison: str, commentaire: s
 
     Sur un échec, l'écriture doit se faire HORS de la transaction annulée : une trace
     d'incident qui disparaît avec le rollback ne sert à rien.
+
+    **Best-effort** : cette fonction est appelée depuis les chemins d'échec, juste
+    après `liberer_verrou`. Si elle levait, son exception remplacerait l'erreur métier
+    d'origine — l'exploitant lirait un incident base à la place de la cause réelle.
+    L'échec d'écriture est donc capté et redescendu en WARNING.
     """
-    await db_ecriture.execute(
-        INSERT_RECALCUL_LOG_SQL, (id_scenario, raison, commentaire[:255])
-    )
+    try:
+        await db_ecriture.execute(
+            INSERT_RECALCUL_LOG_SQL, (id_scenario, raison, commentaire[:255])
+        )
+    except Exception:
+        logger.warning(
+            "Écriture trppu_recalcul_log impossible %s",
+            ctx(
+                id_scenario=id_scenario,
+                raison=raison,
+                consequence="traitement non impacté",
+            ),
+            exc_info=True,
+        )
 
 
 __all__ = [

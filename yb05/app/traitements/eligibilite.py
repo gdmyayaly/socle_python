@@ -13,8 +13,10 @@ rien n'est alors évaluable.
 from __future__ import annotations
 
 import logging
+import time
 
 from app.db.mysql import db_read
+from app.log_utils import ctx
 from app.traitements import scenario as scn
 from app.traitements.rapport import ELIGIBLE, NON_ELIGIBLE, Rapport
 
@@ -25,14 +27,19 @@ TITRE = "Contrôle d'éligibilité YB05"
 
 async def controle_eligibilite(id_scenario: int, *, db_lecture=db_read) -> Rapport:
     """Évalue les douze règles d'éligibilité et retourne le rapport correspondant."""
+    debut = time.perf_counter()
     rapport = Rapport(titre=TITRE, id_scenario=id_scenario)
+    logger.info("Début contrôle éligibilité %s", ctx(id_scenario=id_scenario))
 
     # Règle 1 — le scénario doit exister.
     scenario = await scn.charger_scenario(db_lecture, id_scenario)
     if scenario is None:
         rapport.ko("Scénario inexistant", libelle="Scénario trouvé")
         rapport.statut = NON_ELIGIBLE
-        logger.warning("Éligibilité : scénario %s inexistant", id_scenario)
+        logger.warning(
+            "Rejet contrôle éligibilité %s",
+            ctx(verdict=NON_ELIGIBLE, motif="scénario inexistant"),
+        )
         return rapport
     rapport.ok("Scénario trouvé")
 
@@ -40,12 +47,24 @@ async def controle_eligibilite(id_scenario: int, *, db_lecture=db_read) -> Rappo
     await _regles_sur_les_donnees(rapport, scenario, db_lecture)
 
     rapport.statut = ELIGIBLE if rapport.reussi else NON_ELIGIBLE
-    logger.info(
-        "Éligibilité du scénario %s : %s (%d motif(s))",
-        id_scenario,
-        rapport.statut,
-        len(rapport.motifs),
-    )
+    duration_ms = (time.perf_counter() - debut) * 1000
+    if rapport.reussi:
+        logger.info(
+            "Fin contrôle éligibilité %s",
+            ctx(verdict=rapport.statut, duration_ms=duration_ms),
+        )
+    else:
+        # Les motifs bloquants étaient perdus : seul leur nombre était journalisé,
+        # alors que c'est la liste qui dit à l'exploitant quoi corriger.
+        logger.warning(
+            "Rejet contrôle éligibilité %s",
+            ctx(
+                verdict=rapport.statut,
+                nb_motifs=len(rapport.motifs),
+                motifs=rapport.motifs,
+                duration_ms=duration_ms,
+            ),
+        )
     return rapport
 
 
