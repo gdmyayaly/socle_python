@@ -532,8 +532,8 @@ La gestion **fonctionnelle** des coefficients passe par les routes scénario (§
 | `GET /mysql/indexes` | `table` | index | `SHOW INDEX` | — |
 | `GET /mysql/sample` | `table`, `limit=10` (≤100) | lignes brutes | `SELECT * LIMIT` | — |
 | `GET /mysql/schema` | — | schéma complet (tables + colonnes) | `information_schema` | — |
-| `GET /mysql/dump` | `fmt=sql\|json`, `drop=true` | DDL complet | `SHOW CREATE TABLE/VIEW` | — |
-| `GET /mysql/export` | `table`, `fmt=json\|sql`, `truncate` | données complètes | `SELECT *` | — |
+| `GET /mysql/dump` | `fmt=sql\|json`, `drop=true`, `data=false`, `limit_per_table`, `rows_per_insert=200`, `download` | DDL complet (+ INSERT si `data=true`), **streamé** | `SHOW CREATE TABLE/VIEW`, `SELECT *` par curseur serveur | — |
+| `GET /mysql/export` | `table`, `fmt=json\|sql`, `schema=false`, `data=true`, `drop`, `truncate`, `limit`, `after`, `offset`, `rows_per_insert=200`, `download` | structure et/ou données, **streamé** (lots via `limit`+`after`) | `SHOW CREATE TABLE`, `SELECT *` par curseur serveur | — |
 | `POST /mysql/import` ⚠️ | `{table, rows[], columns?, truncate=true}` | `{inserted, truncated, ...}` | `information_schema.columns` | **TRUNCATE + INSERT par lots de 500** sur table arbitraire, `FOREIGN_KEY_CHECKS=0` |
 | `GET /logs/latest` | — | fichier .log (download) | FS local | — |
 | `DELETE /logs` | `keep_today=false` | `{deleted[], truncated[], errors[]}` | FS local | suppression fichiers logs |

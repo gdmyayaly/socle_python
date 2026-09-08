@@ -256,6 +256,24 @@
                   "value": "False",
                   "disabled": true,
                   "description": "Inclure aussi les données (INSERT) de chaque table après son CREATE."
+                },
+                {
+                  "key": "limit_per_table",
+                  "value": "0",
+                  "disabled": true,
+                  "description": "data=true : nombre maximal de lignes exportées PAR table (défaut : toutes). Permet un dump de dev allégé — ex. 10000 lignes par table."
+                },
+                {
+                  "key": "rows_per_insert",
+                  "value": "200",
+                  "disabled": true,
+                  "description": "fmt=sql : lignes regroupées par INSERT généré."
+                },
+                {
+                  "key": "download",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "Renvoyer la réponse en pièce jointe (téléchargement fichier)."
                 }
               ]
             },
@@ -287,13 +305,61 @@
                   "key": "fmt",
                   "value": "json",
                   "disabled": true,
-                  "description": "Format : 'json' (réinjectable via POST /mysql/import) ou 'sql' (INSERT copiables)."
+                  "description": "Format : 'json' (réinjectable via POST /mysql/import) ou 'sql' (script copiable)."
+                },
+                {
+                  "key": "schema",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "Inclure le DDL (CREATE TABLE) de la table, comme /mysql/dump."
+                },
+                {
+                  "key": "data",
+                  "value": "True",
+                  "disabled": true,
+                  "description": "Inclure les données. schema=true&data=false = structure seule."
+                },
+                {
+                  "key": "drop",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "schema=true uniquement : ajoute un DROP TABLE IF EXISTS avant le CREATE."
                 },
                 {
                   "key": "truncate",
                   "value": "True",
                   "disabled": true,
                   "description": "fmt=sql uniquement : ajoute un TRUNCATE TABLE avant les INSERT."
+                },
+                {
+                  "key": "limit",
+                  "value": "0",
+                  "disabled": true,
+                  "description": "Nombre maximal de lignes exportées (défaut : toutes). Ex. 10000, 100000."
+                },
+                {
+                  "key": "after",
+                  "value": "string",
+                  "disabled": true,
+                  "description": "Pagination par curseur : n'exporte que les lignes dont la clé primaire est strictement supérieure à cette valeur. À privilégier sur 'offset' pour découper une grosse table (voir 'next_after' en fin de réponse)."
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true,
+                  "description": "Lignes à sauter avant l'export. Coûteux sur grosse table : préférer 'after'."
+                },
+                {
+                  "key": "rows_per_insert",
+                  "value": "200",
+                  "disabled": true,
+                  "description": "fmt=sql : lignes regroupées par INSERT généré."
+                },
+                {
+                  "key": "download",
+                  "value": "False",
+                  "disabled": true,
+                  "description": "Renvoyer la réponse en pièce jointe (téléchargement fichier)."
                 }
               ]
             },

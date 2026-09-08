@@ -134,6 +134,49 @@ class Database:
                 await cur.execute(query, params)
                 return await cur.fetchall()
 
+    async def iter_rows(
+        self,
+        query: str,
+        params: tuple | None = None,
+        chunk_size: int = 1000,
+    ):
+        """Itère les lignes d'un SELECT sans jamais charger le résultat complet.
+
+        Utilise un **curseur côté serveur** (`SSDictCursor`) : MySQL streame le
+        résultat au lieu que le client le bufferise intégralement, contrairement à
+        `fetch_all`. C'est la seule voie praticable pour les tables volumineuses
+        (plusieurs dizaines de millions de lignes), où `fetch_all` ferait exploser
+        la mémoire du process.
+
+        Deux contraintes propres au curseur serveur :
+
+        - la connexion reste mobilisée pendant toute l'itération (le pool étant
+          dimensionné pour l'IHM, réserver cet usage aux exports / diagnostics) ;
+        - un abandon en cours de flux laisse le reste du résultat dans le tampon
+          réseau. Le drainer coûterait un scan complet, la connexion est donc
+          fermée et remplacée par le pool.
+        """
+        pool = await self._ensure_pool()
+        conn = await pool.acquire()
+        cur = await conn.cursor(aiomysql.SSDictCursor)
+        epuise = False
+        try:
+            await cur.execute(query, params)
+            while True:
+                rows = await cur.fetchmany(chunk_size)
+                if not rows:
+                    epuise = True
+                    break
+                for row in rows:
+                    yield row
+        finally:
+            if epuise:
+                await cur.close()
+            else:
+                # Fermeture franche : `cur.close()` drainerait le reste du résultat.
+                conn.close()
+            pool.release(conn)
+
     @asynccontextmanager
     async def transaction(self):
         """Context manager pour exécuter des requêtes dans une transaction.
