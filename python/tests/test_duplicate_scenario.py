@@ -56,8 +56,13 @@ SCHEMA = _parse_schema()
 
 def test_schema_de_reference_lisible():
     """Garde-fou du parseur : si db_new.sql change de forme, les tests suivants
-    deviendraient silencieusement vides au lieu d'échouer."""
-    assert len(SCHEMA) == 25
+    deviendraient silencieusement vides au lieu d'échouer.
+
+    24 depuis le re-dump du 11/09/2026 : `trppu_pic_coefficients_ko` a disparu du
+    schéma. Table legacy jamais lue par le code (cf. cartographie_donnees_persistees.md),
+    sa suppression n'a donc aucun impact applicatif.
+    """
+    assert len(SCHEMA) == 24
     for table, _, _ in DUPLICATE_CHILD_SPECS:
         assert table in SCHEMA, f"Table {table} absente du schéma de référence."
         assert SCHEMA[table], f"Aucune colonne extraite pour {table}."
