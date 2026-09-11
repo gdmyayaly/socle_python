@@ -60,6 +60,11 @@ ID_RH_CRYPTO_KEY = os.getenv("ID_RH_CRYPTO_KEY", "")
 
 # Validation
 MAX_DATE_RANGE_DAYS = 730 # SOIT 365 * 2
+
+# OPTIPACC
+# DSR-705 : taille maximale d'une page d'Agrebals restituee par /trafic-amas.
+# Le ticket cite 200 ou 500 selon la configuration retenue.
+NB_AMAS_PAR_PAGE = int(os.getenv("NB_AMAS_PAR_PAGE", "200"))
  
 # Debug
 DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"

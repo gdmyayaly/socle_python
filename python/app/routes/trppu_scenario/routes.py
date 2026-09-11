@@ -22,8 +22,10 @@ from app.services.jours_service import compute_nb_jours
 
 from .helpers import (
     SELECT_SCENARIO_SQL,
+    assert_aucun_scenario_en_production,
     assert_editable,
     assert_not_archive,
+    assert_trafics_calcules,
     default_periode,
     delete_scenario_cascade,
     duplicate_scenario_children,
@@ -861,6 +863,11 @@ async def mise_en_prod(id_scenario: int):
 
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_internal_transition_allowed(scenario["statut"], "EN PRODUCTION")
+    # DSR-707 C4/C5 : mêmes garde-fous que la route OPTIPACC. Sans eux, l'IHM
+    # resterait un chemin de contournement de RG-API-PROD-005 (un seul scénario
+    # en production par site) et pourrait produire un scénario en production dont
+    # les trafics ne sont pas calculés.
+    assert_trafics_calcules(scenario)
     logger.debug(
         "Transition autorisée %s",
         ctx(depuis=scenario["statut"], vers="EN PRODUCTION"),
@@ -868,6 +875,9 @@ async def mise_en_prod(id_scenario: int):
 
     try:
         async with db_write.transaction() as tx:
+            await assert_aucun_scenario_en_production(
+                tx, scenario["co_regate"], id_scenario
+            )
             await apply_transition_side_effects(tx, scenario, "EN PRODUCTION")
             await increment_version(tx, id_scenario)
     except HTTPException:

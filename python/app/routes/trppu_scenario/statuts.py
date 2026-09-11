@@ -86,9 +86,18 @@ INTERNAL_TRANSITIONS: dict[str, set[str]] = {
 
 
 def _internal_route_for(current: str, target: str) -> str | None:
-    """Retourne le nom de l'endpoint dédié si la transition n'est accessible que par lui."""
+    """Retourne le nom de l'endpoint dédié si la transition n'est accessible que par lui.
+
+    Deux routes mènent à EN PRODUCTION : celle de l'IHM (date = NOW()) et celle
+    d'OPTIPACC (DSR-707, date de mise en œuvre fournie par l'appelant). Les deux
+    sont citées pour que le message d'erreur reste actionnable quel que soit
+    l'appelant.
+    """
     if current == "VALIDE" and target == "EN PRODUCTION":
-        return "POST /trppu-api/scenarios/{id_scenario}/mise-en-prod"
+        return (
+            "POST /trppu-api/scenarios/{id_scenario}/mise-en-prod"
+            " ou POST /trppu-api/optipacc/scenario/mise-en-production"
+        )
     return None
 
 

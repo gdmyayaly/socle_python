@@ -2487,6 +2487,89 @@
               }
             }
           }
+        },
+        {
+          "name": "POST /trppu-api/optipacc/scenario/mise-en-production",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/optipacc/scenario/mise-en-production?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "optipacc",
+                "scenario",
+                "mise-en-production"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Scenario Mise En Production",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code_regate\": \"string\",\n  \"scenario_id\": 0,\n  \"date_mise_en_oeuvre\": \"2026-01-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /trppu-api/optipacc/trafic-amas",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/optipacc/trafic-amas?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "optipacc",
+                "trafic-amas"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Trafic Amas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code_regate\": \"string\",\n  \"scenario_id\": 0,\n  \"amas\": [\n    \"string\"\n  ],\n  \"page\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
         }
       ]
     }

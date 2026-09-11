@@ -3,14 +3,15 @@
 > Module : `app/routes/trppu_optipacc/`
 > Préfixe HTTP : `/trppu-api/optipacc`
 > Tag Swagger : **OPTIPACC**
-> Tickets : **DSR-690** (liste des scénarios) · **DSR-689** (volumes bruts)
+> Tickets : **DSR-690** (liste des scénarios) · **DSR-689** (volumes bruts) ·
+> **DSR-705** (trafics Agrébal) · **DSR-707** (mise en production)
 
-TRPPU met à disposition d'OPTIPACC deux services de **lecture seule**, sans état, qui
-permettent de récupérer directement le résultat des calculs TRPPU. OPTIPACC n'a rien à
-recalculer ni à réagréger : TRPPU reste seul responsable du calcul, OPTIPACC ne consomme
-que la valeur finale.
+TRPPU met à disposition d'OPTIPACC quatre services sans état. Trois sont en **lecture
+seule** et permettent de récupérer directement le résultat des calculs TRPPU : OPTIPACC n'a
+rien à recalculer ni à réagréger, TRPPU reste seul responsable du calcul. Le quatrième
+(DSR-707) est le seul en écriture : il acte la mise en production d'un scénario.
 
-Les deux services sont regroupés sous le segment `/optipacc` pour être identifiables sans
+Les services sont regroupés sous le segment `/optipacc` pour être identifiables sans
 ambiguïté par les applications tierces et pouvoir évoluer indépendamment des routes qui
 servent l'IHM TRPPU.
 
@@ -20,6 +21,11 @@ servent l'IHM TRPPU.
    alimenter la liste déroulante des scénarios sélectionnables.
 2. L'utilisateur choisit un scénario → appel de **`scenario-trafic-brut`** pour récupérer
    les volumes par produit et construire les charges de travail.
+3. Pour construire les organisations de distribution → appel de **`trafic-amas`**, qui
+   descend au niveau Agrébal × jour × produit × densité.
+4. Une fois les simulations terminées, le scénario retenu est acté par
+   **`scenario/mise-en-production`** : TRPPU historise la date de mise en œuvre et fige
+   définitivement le scénario.
 
 ---
 
@@ -29,13 +35,19 @@ servent l'IHM TRPPU.
 |---------|--------|----------------|-------------|
 | `GET` | `/trppu-api/optipacc/site-liste-scenarios?codeRegate=` | `S_SiteListeScenarios` (DSR-690) | Scénarios exploitables d'un site |
 | `POST` | `/trppu-api/optipacc/scenario-trafic-brut` | `S_ScenarioTraficBrut` (DSR-689) | Volume brut final par produit |
+| `POST` | `/trppu-api/optipacc/trafic-amas` | DSR-705 | Trafics Agrébal calculés, paginés |
+| `POST` | `/trppu-api/optipacc/scenario/mise-en-production` | DSR-707 | Déclare un scénario en production |
 
 `site-liste-scenarios` est une simple lecture paramétrée par un seul champ : il est exposé
-en `GET`, avec `codeRegate` en paramètre de requête. `scenario-trafic-brut` reste en `POST`
-avec un corps JSON.
+en `GET`, avec `codeRegate` en paramètre de requête. Les trois autres sont en `POST` avec
+un corps JSON.
 
-Les deux services acceptent un paramètre de requête optionnel `?id_session_ihm=` utilisé
+Tous les services acceptent un paramètre de requête optionnel `?id_session_ihm=` utilisé
 uniquement pour la traçabilité (regroupement des lignes de log dans Kibana).
+
+> **Nommage des corps JSON.** DSR-689/690 sont en camelCase (`codeRegate`, `scenarioId`),
+> DSR-705/707 en snake_case (`code_regate`, `scenario_id`). Chaque contrat reproduit son
+> ticket : l'écart est dans les spécifications, pas dans l'implémentation.
 
 Documentation interactive : **`/docs`** (Swagger UI), tag « OPTIPACC ».
 
@@ -258,9 +270,248 @@ curl -X POST http://localhost:8080/trppu-api/optipacc/scenario-trafic-brut \
 ```
 app/routes/trppu_optipacc/
 ├── __init__.py
-├── routes.py     # les 2 endpoints
+├── routes.py     # les 4 endpoints
 ├── schemas.py    # contrats d'entrée/sortie (Pydantic v2)
-└── helpers.py    # requêtes SQL + contrôle d'exploitabilité
+└── helpers.py    # requêtes SQL + gardes de visibilité
 tests/
-└── test_optipacc.py
+├── test_optipacc.py              # DSR-689, DSR-690
+├── test_optipacc_amas.py         # DSR-705
+└── test_optipacc_mise_en_prod.py # DSR-707
 ```
+
+Les gardes partagées avec la route IHM de mise en production (C4, C5) vivent dans
+`app/routes/trppu_scenario/helpers.py` : `assert_trafics_calcules` et
+`assert_aucun_scenario_en_production`.
+
+---
+
+## 9. `POST /trppu-api/optipacc/trafic-amas` — DSR-705
+
+Restitue les **trafics Agrébal** (les « amas ») calculés par le batch YB05 pour un
+scénario. C'est le niveau de restitution nominal attendu par OPTIPACC pour construire les
+organisations de distribution.
+
+Service **purement consultatif** : aucun recalcul n'est déclenché (RG-API-003), et les
+volumes sont ceux stockés dans `trppu_trafic_agrebal`, sans clé de répartition ni
+coefficient PIC appliqué à la restitution (RG-API-006).
+
+### 9.1 Entrée
+
+```json
+{
+  "code_regate": "123456",
+  "scenario_id": 125,
+  "amas": ["0bb6f27c-e4ec-42fa-a61b-f0fe6e4a1234"],
+  "page": 1
+}
+```
+
+| Champ | Type | Obligatoire | Règle |
+|-------|------|-------------|-------|
+| `code_regate` | string | oui | exactement 6 caractères alphanumériques |
+| `scenario_id` | int | oui | ≥ 1 |
+| `amas` | array\<string\> | non | `agrebal_uuid` à restituer, 1000 maximum. Absent → **tous** les amas du scénario (RG-API-005) |
+| `page` | int | non | défaut `1`. **Ignoré** lorsque `amas` est fourni |
+
+> Le corps est en **snake_case**, comme l'écrit le ticket — contrairement à DSR-689/690 qui
+> sont en camelCase. Les deux conventions coexistent volontairement : chaque contrat
+> reproduit son ticket.
+
+### 9.2 Sortie
+
+```json
+{
+  "site": "123456",
+  "scenario": 125,
+  "pagination": {
+    "page": 1,
+    "taille_page": 200,
+    "nb_amas_total": 742,
+    "nb_pages": 4,
+    "page_suivante": 2
+  },
+  "amas": [
+    {
+      "agrebal_uuid": "0bb6f27c-e4ec-42fa-a61b-f0fe6e4a1234",
+      "nom_amas": "PLUVENCE_2449",
+      "jours": {
+        "lundi": [
+          {"produit": "OO", "fort": 12, "faible1": 2, "faible2": 1},
+          {"produit": "PPI", "fort": 8, "faible1": 1, "faible2": 1}
+        ],
+        "mardi": [
+          {"produit": "OO", "fort": 10, "faible1": 3, "faible2": 2}
+        ]
+      }
+    }
+  ],
+  "amas_non_trouves": []
+}
+```
+
+`nom_amas` provient de `trppu_agrebal_pdi.agrebal_nom` : colonne nullable, jointe en
+`LEFT JOIN`. Un amas dont la ligne référentiel a disparu conserve ses trafics avec
+`"nom_amas": null`.
+
+**Mapping des densités** (en base, la densité est un discriminant de ligne `couleur_pic` ;
+la réponse la pivote sur trois clés) :
+
+| Base | JSON |
+|------|------|
+| `DENSE` | `fort` |
+| `FAIBLE1` | `faible1` |
+| `FAIBLE2` | `faible2` |
+
+Une densité absente pour un couple (jour, produit) vaut `0` dans la réponse.
+
+**Mapping des jours** : `LUNDI` → `lundi`, … `SAMEDI` → `samedi`.
+
+### 9.3 Pagination
+
+La taille de page est pilotée par la variable d'environnement **`NB_AMAS_PAR_PAGE`**
+(défaut `200`, cf. `app/config.py`).
+
+| Champ | Signification |
+|-------|---------------|
+| `page` | page actuellement restituée |
+| `taille_page` | nombre maximum d'Agrébals par page |
+| `nb_amas_total` | nombre total d'Agrébals disponibles pour le scénario |
+| `nb_pages` | nombre total de pages |
+| `page_suivante` | page suivante, ou `null` s'il n'y en a plus |
+
+Les Agrébals sont triés par `agrebal_uuid` **avant** découpage (RG-API-008) : un même
+Agrébal ne change donc jamais de page entre deux appels.
+
+Deux comportements à connaître :
+
+- **Filtre `amas` fourni** → la pagination n'est pas appliquée (le périmètre est déjà borné
+  par l'appelant, Cas 8). Le bloc `pagination` reste présent et décrit l'unique page
+  renvoyée (`page: 1`, `nb_pages: 1`, `page_suivante: null`).
+- **Page au-delà de la dernière** → `200` avec `"amas": []`, ce n'est pas une erreur.
+
+### 9.4 Contrôles
+
+| Contrôle | Échec |
+|----------|-------|
+| C1 — le scénario existe | `404` |
+| C2 — le scénario appartient au site demandé | `400` |
+| C3 — scénario visible OPTIPACC (5 conditions ci-dessous) | `409` `{"detail": "Scenario non disponible"}` |
+| C4 — au moins un des `amas` demandés existe | `404` |
+
+Les 5 conditions de visibilité (C3) : `statut ∈ {VALIDE, EN PRODUCTION}`, `est_fige = 1`,
+`calcul_trafic_en_cours = 0`, `trafic_pdi_calcule = 1`, `trafic_agrebal_calcule = 1`.
+
+> **Écart assumé avec le ticket** : DSR-705 n'autorise que `VALIDE`. On accepte aussi
+> `EN PRODUCTION`, car DSR-707 fait justement passer EN PRODUCTION le scénario
+> qu'OPTIPACC vient de retenir — une lecture stricte rendrait ses propres trafics
+> illisibles juste après la mise en production. Cohérent avec DSR-689 (cf. §3).
+
+Les `agrebal_uuid` inconnus sont **ignorés** : ils sont restitués dans `amas_non_trouves`
+et tracés en WARNING dans les logs. Si aucun UUID valide n'est trouvé, la réponse est un
+`404`.
+
+---
+
+## 10. `POST /trppu-api/optipacc/scenario/mise-en-production` — DSR-707
+
+OPTIPACC déclare qu'un scénario devient la référence opérationnelle du site. C'est le seul
+service OPTIPACC **en écriture**.
+
+### 10.1 Entrée
+
+```json
+{
+  "code_regate": "123456",
+  "scenario_id": 125,
+  "date_mise_en_oeuvre": "2027-04-01"
+}
+```
+
+| Champ | Type | Obligatoire | Règle |
+|-------|------|-------------|-------|
+| `code_regate` | string | oui | exactement 6 caractères alphanumériques |
+| `scenario_id` | int | oui | ≥ 1 |
+| `date_mise_en_oeuvre` | date | oui | format `YYYY-MM-DD` |
+
+> **Un seul champ date.** Le ticket se contredit (l'exemple de body montre
+> `date_mise_en_prod`, la section « Paramètres » et le critère d'acceptation 1 décrivent
+> `date_mise_en_oeuvre`). Le Cas 1 tranche : une seule date alimente les deux colonnes, ce
+> que confirme RG-API-PROD-006. Envoyer `date_mise_en_prod` produit un `422` (champs
+> inconnus refusés) plutôt qu'un silence.
+
+### 10.2 Sortie
+
+```json
+{
+  "scenario_id": 125,
+  "code_regate": "123456",
+  "statut": "EN PRODUCTION",
+  "date_mise_en_oeuvre": "2027-04-01"
+}
+```
+
+### 10.3 Contrôles
+
+| Contrôle | Échec | Message |
+|----------|-------|---------|
+| C1 — le scénario existe | `404` | `Scénario 125 introuvable.` |
+| C2 — il appartient au site demandé | `400` | `Le scénario 125 n'appartient pas au site 123456` |
+| C3 — statut `VALIDE` (seul autorisé) | `409` | `Les paramètres du scénario 125 ne permettent pas la mise en production du scénario` |
+| C4 — trafics complètement calculés | `409` | `Les trafics du scénario 125 ne sont pas complètement calculés` |
+| C5 — aucun autre scénario en production sur le site | `409` | `Un scénario est déjà en production pour ce site` |
+
+C3 refuse `EN COURS`, `SIMULATION`, `ARCHIVE` et `EN PRODUCTION` — ce dernier couvrant le
+cas d'un scénario déjà mis en production.
+
+C4 exige `trafic_pdi_calcule = 1`, `trafic_agrebal_calcule = 1` et
+`calcul_trafic_en_cours = 0`.
+
+C5 est vérifié **dans la transaction d'écriture**, avec `SELECT … FOR UPDATE` : aucune
+contrainte d'unicité n'existe en base, ce verrou est la seule protection contre deux appels
+concurrents qui produiraient deux scénarios en production sur le même site
+(RG-API-PROD-005).
+
+### 10.4 Traitement
+
+Après validation, `trppu_scenario` est mis à jour dans une transaction :
+
+| Colonne | Valeur |
+|---------|--------|
+| `statut` | `EN PRODUCTION` |
+| `est_fige` | `1` |
+| `dt_mise_en_oeuvre` | date transmise |
+| `dt_mise_en_prod` | date transmise |
+| `dt_validation` | `NOW()` si elle était `NULL` |
+| `dt_maj` | automatique (`ON UPDATE CURRENT_TIMESTAMP`) |
+| `version_scenario` | incrémenté |
+
+L'appel est tracé dans `trppu_api_log` (action `TRANSITION_STATUT`, `origine: OPTIPACC`).
+
+Conséquences (RG-API-PROD-002 à 004) : le scénario étant figé, toute modification est
+refusée par `assert_editable`, il ne peut plus être supprimé, et le batch YB05 ne le
+recalcule plus.
+
+### 10.5 Relation avec la route IHM
+
+`POST /trppu-api/scenarios/{id_scenario}/mise-en-prod` reste disponible pour l'IHM TRPPU.
+Elle applique désormais **les mêmes contrôles C4 et C5** (helpers partagés dans
+`app/routes/trppu_scenario/helpers.py`) — sans quoi l'unicité d'un scénario en production
+par site serait contournable depuis l'IHM. Deux différences subsistent :
+
+| | Route IHM | Route OPTIPACC |
+|-|-----------|----------------|
+| Date de mise en prod | `NOW()` | fournie par l'appelant |
+| `dt_mise_en_oeuvre` | inchangée | renseignée |
+| Contrôle du site | non | oui (C2) |
+
+---
+
+## 11. Écarts assumés par rapport aux tickets DSR-705 / DSR-707
+
+| Sujet | Ticket | Implémentation | Raison |
+|-------|--------|----------------|--------|
+| Chemin | `/trafic_amas` | `/trafic-amas` | kebab-case, comme tout le reste de l'API |
+| Corps d'erreur | `{"erreur": "..."}` | `{"detail": "..."}` | convention FastAPI du projet ; les messages sont repris à l'identique |
+| Statut lisible (DSR-705 C3) | `VALIDE` | `VALIDE` + `EN PRODUCTION` | sinon DSR-707 rendrait les trafics illisibles juste après la mise en production |
+| Champ date (DSR-707) | deux noms contradictoires | `date_mise_en_oeuvre` unique | Cas 1 + RG-API-PROD-006 |
+| UUID inconnus (DSR-705 C4) | « tracer dans le retour json » | champ `amas_non_trouves` | le ticket impose la trace, pas le nom du champ |

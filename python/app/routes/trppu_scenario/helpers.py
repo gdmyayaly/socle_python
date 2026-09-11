@@ -24,7 +24,10 @@ SELECT_SCENARIO_SQL = (
     "periode_realise_debut, periode_realise_fin, periode_prev_debut, periode_prev_fin, "
     "nb_jours_semaine, nb_jours_ouvres, nb_jours_ouvrables, nb_jours_scenario, "
     "id_pic_version, version_scenario, est_fige, "
-    "trafic_pdi_calcule, trafic_agrebal_calcule "
+    "trafic_pdi_calcule, trafic_agrebal_calcule, "
+    # Seule colonne capitalisée du schéma (db/db_new.sql) : on l'aliase pour
+    # que les gardes lisent une clé snake_case comme partout ailleurs.
+    "Calcul_trafic_en_cours AS calcul_trafic_en_cours "
     "FROM trppu_scenario"
 )
 
@@ -164,6 +167,79 @@ def assert_editable(scenario: dict[str, Any]) -> None:
     """Lève HTTP 409 si le scénario n'est pas modifiable (archivé ou figé)."""
     assert_not_archive(scenario)
     assert_not_fige(scenario)
+
+
+def assert_trafics_calcules(scenario: dict[str, Any]) -> None:
+    """DSR-707 C4 : refuse la mise en production tant que les trafics ne sont pas prêts.
+
+    Les trois flags sont écrits par le batch YB05 et sont nullables en base, d'où
+    le `or 0`. Ils sont indissociables : un calcul encore en cours peut très bien
+    laisser `trafic_pdi_calcule = 1` d'un run précédent.
+
+    Partagée avec la route OPTIPACC (app/routes/trppu_optipacc) : la mise en
+    production doit obéir aux mêmes règles quel que soit l'appelant.
+    """
+    id_scenario = scenario["id_scenario"]
+    pdi = int(scenario.get("trafic_pdi_calcule") or 0)
+    agrebal = int(scenario.get("trafic_agrebal_calcule") or 0)
+    en_cours = int(scenario.get("calcul_trafic_en_cours") or 0)
+    if pdi != 1 or agrebal != 1 or en_cours != 0:
+        logger.warning(
+            "Rejet mise en production scénario %s",
+            ctx(
+                id_scenario=id_scenario,
+                trafic_pdi_calcule=pdi,
+                trafic_agrebal_calcule=agrebal,
+                calcul_trafic_en_cours=en_cours,
+                http=409,
+                motif="trafics non complètement calculés",
+            ),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Les trafics du scénario {id_scenario} ne sont pas "
+                "complètement calculés"
+            ),
+        )
+
+
+# DSR-707 C5 — `FOR UPDATE` volontaire : le contrôle et l'UPDATE qui le suit
+# doivent tenir dans la même transaction, sinon deux appels concurrents sur le
+# même site peuvent passer le contrôle tous les deux et produire deux scénarios
+# EN PRODUCTION (RG-API-PROD-005). Aucune contrainte d'unicité en base ne rattrape
+# ce cas : le verrou est la seule protection.
+SELECT_AUTRE_SCENARIO_EN_PROD_SQL = (
+    "SELECT id_scenario FROM trppu_scenario "
+    "WHERE co_regate = %s AND statut = 'EN PRODUCTION' AND id_scenario <> %s "
+    "LIMIT 1 FOR UPDATE"
+)
+
+
+async def assert_aucun_scenario_en_production(
+    tx, co_regate: str, id_scenario: int
+) -> None:
+    """DSR-707 C5 : un seul scénario EN PRODUCTION par site, à un instant donné.
+
+    À appeler **dans** la transaction d'écriture (`tx` est le curseur transactionnel
+    de `db_write.transaction()`), avant l'UPDATE de mise en production.
+    """
+    autre = await tx.fetch_one(SELECT_AUTRE_SCENARIO_EN_PROD_SQL, (co_regate, id_scenario))
+    if autre:
+        logger.warning(
+            "Rejet mise en production scénario %s",
+            ctx(
+                id_scenario=id_scenario,
+                co_regate=co_regate,
+                id_scenario_en_prod=autre["id_scenario"],
+                http=409,
+                motif="un scénario est déjà en production pour ce site",
+            ),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Un scénario est déjà en production pour ce site",
+        )
 
 
 # Tables détenant des données opérationnelles rattachées à un scénario.

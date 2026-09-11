@@ -25,14 +25,20 @@ briques transverses (cryptage, jours fériés, migrations).
 | DSR-661 | écriture coefficient PIC | écriture | ✅ | [661](DSR-661_resolution.md) |
 | DSR-689 | volumes bruts par produit (OPTIPACC) | lecture | ✅ | [689](DSR-689_resolution.md) |
 | DSR-690 | liste des scénarios exploitables (OPTIPACC) | lecture | ✅ | [690](DSR-690_resolution.md) |
+| DSR-705 | trafics Agrébal d'un scénario (OPTIPACC) | lecture | ✅ | [705](DSR-705_resolution.md) |
+| DSR-707 | mise en production d'un scénario (OPTIPACC) | écriture | ✅ | [707](DSR-707_resolution.md) |
 
 ## Pré-requis d'exploitation (rappel)
 1. Variable d'environnement **`ID_RH_CRYPTO_KEY`** (cryptage id_rh).
 2. Migrations `db_migrations/001`→`004` appliquées (ordre dans `db_migrations/README.md`).
 3. Dépendance `cryptography` (présente).
-4. **Services OPTIPACC (DSR-689/690)** : `trppu_scenario.trafic_agrebal_calcule` doit être
-   posé à 1 par le batch Agrébal (DSR-702/703, hors de ce dépôt). Tant qu'il vaut 0, la
-   liste des scénarios est vide et la restitution des volumes répond 409.
+4. **Services OPTIPACC (DSR-689/690/705/707)** : `trppu_scenario.trafic_agrebal_calcule`
+   doit être posé à 1 par le batch Agrébal (DSR-702/703, hors de ce dépôt). Tant qu'il vaut
+   0, la liste des scénarios est vide, la restitution des volumes et des trafics Agrébal
+   répond 409, et la mise en production est refusée (409). Même remarque pour
+   `trafic_pdi_calcule` et `Calcul_trafic_en_cours`, contrôlés par DSR-705 et DSR-707.
+5. **`NB_AMAS_PAR_PAGE`** (facultative, défaut 200) : taille de page de
+   `/trppu-api/optipacc/trafic-amas` (DSR-705).
 
 ## Points à valider avec le PO
 Centralisés dans `../README_incomprehensions.md` (notamment : SAISON↔LOCAL, exemples
