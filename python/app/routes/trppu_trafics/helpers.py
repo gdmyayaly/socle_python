@@ -30,9 +30,9 @@ logger = logging.getLogger(__name__)
 # `semaines` reste déclarée uniquement pour `scripts/controle_trafics_679.py`, qui compare
 # encore les mailles entre elles.
 TABLES_PERIODE = {
-    "jours": os.getenv("TRAFIC679_TABLE_JOUR", "g_trppu_trafics_jour_3"),
-    "semaines": os.getenv("TRAFIC679_TABLE_SEMAINE", "g_trppu_trafics_semaine_3"),
-    "mois": os.getenv("TRAFIC679_TABLE_MOIS", "g_trppu_trafics_mois_3"),
+    "jours": os.getenv("TRAFIC679_TABLE_JOUR", "g_trppu_trafics_jour"),
+    "semaines": os.getenv("TRAFIC679_TABLE_SEMAINE", "g_trppu_trafics_semaine"),
+    "mois": os.getenv("TRAFIC679_TABLE_MOIS", "g_trppu_trafics_mois"),
 }
 
 DATE_COLUMN_PERIODE = {
