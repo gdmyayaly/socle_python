@@ -202,8 +202,9 @@ class FigeUpdate(BaseModel):
 class FigementParStatutRequest(BaseModel):
     """Body PATCH /{id}/figement (DSR-669) : statut IHM pilotant le figement.
 
-    Statut libre (libellé IHM, ex. "validé"/"simulation"/"en cours") ; le mapping
-    vers est_fige est résolu serveur (cf. statuts.resolve_fige_from_statut).
+    Statut libre (libellé IHM, ex. "en production"/"validé"/"simulation"/"en
+    cours") ; le mapping vers est_fige est résolu serveur (cf.
+    statuts.resolve_fige_from_statut) : seul "en production" fige.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)

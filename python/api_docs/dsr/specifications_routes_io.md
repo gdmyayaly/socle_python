@@ -127,8 +127,8 @@ Liste paginée. **Entrée** : query `co_regate?`, `co_roc?`, `statut?`, `est_fig
 **Altéré** : `trppu_scenario` **UPDATE** est_fige + version+1.
 
 ## `PATCH /trppu-api/scenarios/{id_scenario}/figement` (DSR-669)
-**Entrée** `FigementParStatutRequest` : `{ "statut": "validé" }` (libellé IHM ; 422 si non mappable).
-**Sortie** : `ScenarioOut`. **Altéré** : `trppu_scenario` **UPDATE** est_fige🧮 (mappé : validé/simulation→1, en cours→0) + version+1. **Le `statut` DB n'est pas modifié.**
+**Entrée** `FigementParStatutRequest` : `{ "statut": "en production" }` (libellé IHM ; 422 si non mappable).
+**Sortie** : `ScenarioOut`. **Altéré** : `trppu_scenario` **UPDATE** est_fige🧮 (mappé : en production→1, validé/simulation/en cours→0) + version+1. **Le `statut` DB n'est pas modifié.**
 
 ## `PATCH /trppu-api/scenarios/{id_scenario}/lb-scenario`
 **Entrée** : `{ "lb_scenario": "Nouveau libellé" }`. **Sortie** : `ScenarioOut`.

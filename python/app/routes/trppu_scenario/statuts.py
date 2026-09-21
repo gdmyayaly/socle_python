@@ -19,17 +19,20 @@ logger = logging.getLogger(__name__)
 STATUTS = ("EN COURS", "SIMULATION", "VALIDE", "EN PRODUCTION", "ARCHIVE")
 
 # Statuts « de travail » : un scénario y est éditable et peut être validé.
-# SIMULATION se comporte exactement comme EN COURS dans la machine à états ;
-# seul le flag est_fige (indépendant, cf. FIGE_PAR_STATUT / assert_editable)
-# les distingue.
+# SIMULATION se comporte exactement comme EN COURS dans la machine à états, et
+# aussi vis-à-vis du figement (cf. FIGE_PAR_STATUT).
 STATUTS_EDITABLES = ("EN COURS", "SIMULATION")
 
 # DSR-669 : mapping d'un statut IHM reçu vers le flag de figement (est_fige).
-# "validé"/"simulation" -> figé (True) ; "en cours" -> défigé (False).
+# Seul EN PRODUCTION fige : un scénario n'est gelé qu'une fois mis en production.
+# La version initiale figeait aussi VALIDE et SIMULATION, ce qui rendait le
+# scénario non modifiable (409 via assert_editable) hors production — anomalie
+# corrigée, cf. api_docs/dsr/resolutions/DSR-669_resolution.md.
 # Clés normalisées (majuscules, sans accent) — cf. _normalize_statut.
 FIGE_PAR_STATUT: dict[str, bool] = {
-    "VALIDE": True,
-    "SIMULATION": True,
+    "EN PRODUCTION": True,
+    "VALIDE": False,
+    "SIMULATION": False,
     "EN COURS": False,
 }
 
@@ -45,8 +48,10 @@ def _normalize_statut(statut: str) -> str:
 def resolve_fige_from_statut(statut: str) -> bool:
     """DSR-669 : déduit le figement (True/False) à partir du statut reçu.
 
-    Insensible à la casse et aux accents. Lève HTTP 422 si le statut n'est pas
-    reconnu (paramètre 'inconnu'), sans réaliser aucune action.
+    Seul « en production » fige (True) ; « validé », « simulation » et
+    « en cours » défigent (False). Insensible à la casse et aux accents. Lève
+    HTTP 422 si le statut n'est pas reconnu (paramètre 'inconnu'), sans réaliser
+    aucune action.
     """
     cle = _normalize_statut(statut)
     if cle not in FIGE_PAR_STATUT:

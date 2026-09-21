@@ -968,9 +968,10 @@ async def update_est_fige(id_scenario: int, payload: FigeUpdate):
 async def update_figement_par_statut(id_scenario: int, payload: FigementParStatutRequest):
     """DSR-669 : fige (1) ou défige (0) le scénario selon le statut reçu de l'IHM.
 
-    "validé"/"simulation" -> est_fige=1 ; "en cours" -> est_fige=0 ;
+    "en production" -> est_fige=1 ; "validé"/"simulation"/"en cours" -> est_fige=0 ;
     tout autre statut -> 422 (paramètre inconnu, aucune action réalisée).
-    Met à jour uniquement le champ est_fige, pas le statut du scénario.
+    Le figement est réservé à la production : hors production un scénario reste
+    modifiable. Met à jour uniquement le champ est_fige, pas le statut du scénario.
     """
     start = time.perf_counter()
     logger.info(

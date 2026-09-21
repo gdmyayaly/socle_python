@@ -335,18 +335,30 @@ visibles par toutes ses instructions.
 
 | Ordre | Fichier | Rôle |
 |---|---|---|
-| 1 | `db/DSR-696-699_migration.sql` | Clés uniques, index d'agrégation et colonne `date_creation` absents du schéma livré. À jouer **une fois**, avant les trois autres. |
-| 2 | `db/DSR-696_site_trafic.sql` | Alimente `trppu_trafic_site` : somme des trafics des PDI actifs par site, pour un référentiel. |
-| 3 | `db/DSR-698_version_cle.sql` | Crée la version de clés d'un site dans `trppu_version_cle` et désactive la précédente. |
-| 4 | `db/DSR-699_cles_calculees.sql` | Calcule les clés — trafic du PDI / total de son site — et alimente `trppu_cles_repartition_calcule`. |
+| 1 | `db/DSR-697_chargement_cles_repartition.sql` | Charge le CSV métier dans `trppu_cles_repartition` : la photographie du référentiel, dont tout le reste découle. |
+| 2 | `db/DSR-696-699_migration.sql` | Clés uniques, index d'agrégation et colonne `date_creation` absents du schéma livré. À jouer **une fois par base**. |
+| 2 bis | `db/fix_error.sql` | Élargit les trois totaux de `trppu_trafic_site`, trop étroits pour la somme qu'ils portent — l'`ERROR 1264` rencontrée sur DSR-696. **Une fois par base**, avant l'étape 3. |
+| 3 | `db/DSR-696_site_trafic.sql` | Alimente `trppu_trafic_site` : somme des trafics des PDI actifs par site, pour un référentiel. |
+| 4 | `db/DSR-698_version_cle.sql` | Crée la version de clés d'un site dans `trppu_version_cle` et désactive la précédente. |
+| 5 | `db/DSR-699_cles_calculees.sql` | Calcule les clés — trafic du PDI / total de son site — et alimente `trppu_cles_repartition_calcule`. |
+| — | `db/suivi.sql` | **Lecture seule.** À jouer dans un second terminal pour voir où en est un traitement long : instruction en cours et lignes déjà lues, transaction et lignes déjà écrites, verrous, volumétrie. |
+
+Les deux premières lignes commutent — elles ne se lisent pas l'une l'autre. L'ordre donné est
+celui qui coûte le moins cher sur une base neuve : charger avant de migrer laisse construire
+`idx_cr_ref_actif` une fois sur la table pleine.
 
 **Le mode d'emploi complet est dans [`db/README.md`](db/README.md)** : ordre d'exécution et
 dépendances, paramètres de chaque script, exemple d'initialisation d'un site, lecture des
 contrôles, rejouabilité, erreurs typiques et contrôles à jouer avant le premier chargement
 réel.
 
-Deux points à connaître avant de les jouer :
+Trois points à connaître avant de les jouer :
 
+- **DSR-697 ne lit pas son fichier tout seul.** Il doit avoir été dédoublonné (RG4), contrôlé
+  sur l'unicité des PDI — le `DISTINCT` du ticket ne l'assure pas — et déposé dans le
+  répertoire `@@secure_file_priv` du **serveur**. Son chemin est le seul paramètre de la
+  chaîne qui ne s'écrit pas dans une variable de session : `LOAD DATA` n'accepte qu'un
+  littéral.
 - **La migration échappe à la détection de DDL.** Ses `ALTER` sont transportés dans une
   chaîne exécutée par `PREPARE`/`EXECUTE` — ce qui la rend rejouable, MySQL ne connaissant
   pas `ADD INDEX IF NOT EXISTS`, mais invisible à `is_ddl`. L'avertissement « DDL en mode
@@ -356,16 +368,18 @@ Deux points à connaître avant de les jouer :
   que de charger une clé fausse. Il durcit pour cela son propre `sql_mode` de session, et
   désigne les sites concernés avant d'écrire quoi que ce soit.
 
-Les tickets sources sont dans `docs/`, et **aucun des trois ne décrit exactement la base** :
+Les tickets sources sont dans `docs/`, et **aucun d'eux ne décrit exactement la base** :
 `docs/DIAGNOSTIC-DSR-696-699.md` reprend écart par écart la formulation fautive, la lecture
-retenue et la correction appliquée. Les trois pièges principaux :
+retenue et la correction appliquée. Les pièges principaux :
 
+- `docs/DSR-697.md` écrit ses contrôles `SELECT COUNT FROM …`, sans parenthèses : `COUNT` y
+  est lu comme un nom de colonne, et l'instruction échoue en `ERROR 1054`.
 - `docs/DSR-696.md` nomme la colonne du site `id_site`, puis `id_site_trafic` après
   amendement. Ni l'une ni l'autre : la colonne est `co_regate_site`, et `id_site_trafic` est
   la PK auto-incrémentée. Le `SELECT` du ticket, lui, la nomme correctement.
 - `docs/DSR-698.md` attend une colonne `date_creation` que le schéma ré-extrait a supprimée.
   Ici c'est le ticket qui a raison : la migration la rétablit, en `DEFAULT CURRENT_TIMESTAMP`.
-- `docs/DSR-699.md` est le mieux écrit des trois, mais sa clé potentiel IP divise deux
+- `docs/DSR-699.md` nomme ses colonnes exactement, mais sa clé potentiel IP divise deux
   entiers : sans `CAST`, MySQL n'en rendrait que quatre décimales.
 
 `tests/test_scripts_dsr.py` verrouille ces points, ainsi que le renommage
@@ -432,8 +446,9 @@ doublures et le code async est lancé via `asyncio.run` (pas de dépendance à p
 
 - `tests/test_sql_script.py` — découpage et exécution des scripts (socle).
 - `tests/test_scripts_dsr.py` — scripts métier de `db/` : découpage, ordre des instructions,
-  et surtout confrontation des colonnes insérées à un extrait du schéma réel, recopié dans le
-  test pour ne pas dépendre de l'arborescence du projet voisin.
+  et surtout confrontation des colonnes insérées — celles du `LOAD DATA` de DSR-697 comprises
+  — à un extrait du schéma réel, recopié dans le test pour ne pas dépendre de l'arborescence
+  du projet voisin.
 - `tests/test_traitements_eligibilite.py` — les douze règles de DSR-701, une par une, et la
   preuve qu'aucune écriture n'a lieu.
 - `tests/test_traitements_trafic_pdi.py` — la formule sur un jeu calculable de tête, l'ordre des

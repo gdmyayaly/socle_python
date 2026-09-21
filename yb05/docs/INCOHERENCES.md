@@ -1,6 +1,6 @@
 # Incohérences relevées — chaîne « clés de répartition » (DSR-696 à DSR-703)
 
-Constats issus de l'implémentation de **DSR-696**, **DSR-698** et **DSR-699** dans `yb05`, obtenus en
+Constats issus de l'implémentation de **DSR-696** à **DSR-699** dans `yb05`, obtenus en
 confrontant les tickets au schéma réellement déployé (`python/db/db_new.sql`), aux volumes
 constatés (`python/db/count.json`) et au code des deux projets.
 
@@ -26,9 +26,9 @@ comptages restent valides, les noms non.
 | 2 | CA2 (unicité site + référentiel) sans contrainte en base | **Bloquant** pour la recette | Corrigé par la migration |
 | 3 | Aucun index ne sert l'agrégation sur 22,4 M lignes — contredit le CA6 | Fort | Corrigé par la migration |
 | 4 | `trppu_version_cle` sans index sur `(co_regate, actif)` | Moyen | **Corrigé en base** — `idx_regate_actif` |
-| 5 | Débordement décimal possible : `decimal(25,19)` sommé dans `decimal(24,18)` | **Fort** | **Ouvert** — contrôle à jouer |
+| 5 | Débordement décimal : `decimal(25,19)` sommé dans `decimal(24,18)` | **Fort** | **Survenu en recette, corrigé** — `db/fix_error.sql` |
 | 6 | `trppu_referentiel` ne permet pas d'exprimer « référentiel actif » | Fort | **Ouvert** — impacte DSR-701 |
-| 7 | `docs/DSR-697.md` est vide (0 octet) | Moyen | **Ouvert** — objet du ticket inconnu |
+| 7 | ~~`docs/DSR-697.md` est vide (0 octet)~~ | Moyen | **Clos** — ticket reçu et implémenté |
 | 8 | YS04 laisse `id_referentiel` / `id_version_cle` à `0` sur les scénarios | Fort | **Ouvert** — hors périmètre 696/698/699 |
 | 9 | `trppu_cles_repartition_calcule` sans unicité ni index | Moyen | Corrigé par la migration |
 | 10 | Nom de table : `TRPPU_CLE_REPARTITION_CALCULE` (docs) vs `trppu_cles_repartition_calcule` (base) | Faible | **Ouvert** — cosmétique |
@@ -114,7 +114,7 @@ Son unique index était `idx_ref (id_referentiel)`, alors que les deux accès r�
 
 ## Points ouverts, à trancher
 
-### 5. Risque de débordement décimal — à vérifier avant la première exécution
+### 5. Débordement décimal — survenu, corrigé
 
 | | Source (`trppu_cles_repartition`) | Cible (`trppu_trafic_site`) |
 | --- | --- | --- |
@@ -134,9 +134,18 @@ SELECT MAX(t) FROM (
    WHERE id_referentiel = 1 AND date_fin_validite IS NULL GROUP BY co_regate_site) x;
 ```
 
-Si le maximum approche `999999`, élargir les trois colonnes (`decimal(34,18)` laisse seize
-chiffres entiers) avant de charger quoi que ce soit. L'élargissement n'a **pas** été inclus par
-défaut : il modifie le schéma sans qu'on sache encore s'il est nécessaire.
+Si le maximum approche `999999`, les colonnes sont trop étroites. L'élargissement n'avait
+d'abord **pas** été inclus : il modifie le schéma, et rien ne disait encore qu'il était
+nécessaire.
+
+Ce contrôle n'est plus à jouer à la main : c'est l'avant-dernier résultat de
+`db/DSR-697_chargement_cles_repartition.sql`, rendu sous forme de verdict `OK` / `ANOMALIE`
+juste après le chargement — donc avant que DSR-696 ne tente l'agrégation.
+
+**Le cas s'est produit** au premier chargement réel : `ERROR 1264 (Out of range value for
+column 'trafic_oo_total')` sur l'`INSERT` de DSR-696. `db/fix_error.sql` porte les trois
+colonnes à `decimal(35,19)` — seize chiffres avant la virgule, et l'échelle de la source, pour
+que la somme ne soit pas arrondie. La question subsidiaire ci-dessous, elle, reste posée.
 
 Question subsidiaire pour l'équipe data : dix-neuf décimales pour un trafic laisse penser que
 ces colonnes portent déjà des ratios plutôt que des volumes — la sémantique mérite d'être
@@ -160,20 +169,23 @@ Or `trppu_referentiel` ne comporte que quatre colonnes — `id_referentiel`, `co
   ne seraient jamais retournés par la requête ci-dessus ;
 - aucune date de fin de validité, alors que les tables filles en portent une.
 
-À arbitrer avant DSR-697/701 : soit on aligne la table (colonne `actif`, index sur
+À arbitrer avant DSR-701 : soit on aligne la table (colonne `actif`, index sur
 `co_regate`), soit on documente que « actif = dernier id du site » est la définition officielle.
 
-### 7. `DSR-697.md` est vide
+### 7. `DSR-697.md` était vide — **clos**
 
-Le fichier existe mais fait **0 octet**, et aucun autre exemplaire n'existe dans le dépôt.
+Le fichier a longtemps fait **0 octet**. Le constat a d'abord été surévalué : on tenait ce
+ticket pour le maillon central de la chaîne, celui qui calcule
+`trppu_cles_repartition_calcule` — c'est DSR-699 qui le spécifie.
 
-Ce constat a d'abord été surévalué : on le tenait pour le maillon central de la chaîne, celui
-qui calcule `trppu_cles_repartition_calcule`. **C'est DSR-699 qui le spécifie**, ticket arrivé
-depuis et implémenté dans `db/DSR-699_cles_calculees.sql`. La chaîne est donc complète sans
-DSR-697 ; ce qui reste inconnu, c'est l'objet même de ce ticket.
+Le ticket est arrivé depuis : il porte le **chargement initial** du fichier CSV métier dans
+`trppu_cles_repartition`, c'est-à-dire l'entrée de la chaîne, en amont de DSR-696. Implémenté
+dans `db/DSR-697_chargement_cles_repartition.sql`, premier de l'ordre d'exécution décrit par
+`db/README.md`. Ses six écarts avec la base sont les constats 21 à 26 de
+`DIAGNOSTIC-DSR-696-699.md`.
 
-Gravité ramenée à moyenne : à ré-exporter depuis Jira pour savoir ce qu'il demande, sans que
-rien n'attende après lui.
+Il ne tranche en revanche **pas** la question renvoyée par le constat 5 du diagnostic (quel
+jeu d'agrégats est le jeu courant) : elle reste ouverte, côté métier.
 
 ### 8. Les scénarios YS04 ne référencent aucun référentiel ni aucune version
 

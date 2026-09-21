@@ -179,8 +179,9 @@ Chaque écriture incrémente `version_scenario`.
 - **UPDATE** `trppu_scenario` : `est_fige`, `version_scenario+1`. Seul moyen de défiger après mise en prod.
 
 ### `PATCH /trppu-api/scenarios/{id_scenario}/figement` (DSR-669)
-- **Entrée** : `{"statut": "validé"|"simulation"|"en cours"}` (libre, insensible casse/accents).
-  Mapping : VALIDE→figé, SIMULATION→figé, EN COURS→défigé ; statut inconnu → 422.
+- **Entrée** : `{"statut": "en production"|"validé"|"simulation"|"en cours"}` (libre, insensible casse/accents).
+  Mapping : EN PRODUCTION→figé ; VALIDE / SIMULATION / EN COURS→défigé ; statut inconnu → 422.
+  Le figement est réservé à la production (correctif de l'anomalie « scénario figé hors prod »).
 - **Sortie 200** : `ScenarioOut`.
 - **UPDATE** `trppu_scenario` : `est_fige` uniquement (le statut du scénario n'est PAS modifié), `version_scenario+1`.
 

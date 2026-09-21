@@ -1,14 +1,19 @@
-# Diagnostic des tickets DSR-696, DSR-698 et DSR-699
+# Diagnostic des tickets DSR-696 à DSR-699
 
-Confrontation ligne à ligne des trois tickets (`docs/DSR-696.md`, `docs/DSR-698.md`,
-`docs/DSR-699.md`) au schéma réellement déployé (`python/db/db_new.sql`, ré-extrait le
-17/08/2026) et aux scripts livrés dans `db/`.
+Confrontation ligne à ligne des quatre tickets (`docs/DSR-696.md`, `docs/DSR-697.md`,
+`docs/DSR-698.md`, `docs/DSR-699.md`) au schéma réellement déployé (`python/db/db_new.sql`,
+ré-extrait le 17/08/2026) et aux scripts livrés dans `db/`.
 
 **Principe retenu** : le ticket exprime l'intention métier, la base fait foi sur les noms.
 Quand les deux divergent, on tranche par l'intention — et l'écart est tracé ici. Une fois sur
 deux, c'est le ticket qui a raison et c'est la base qu'il faut corriger : voir le constat 10.
 
-Vingt constats. Seize sont traités dans les scripts, quatre restent ouverts.
+Vingt-six constats. Trois restent ouverts — les constats 5 et 15, et la question de fond
+soulevée par le 9 ; les autres sont traités dans les scripts.
+
+DSR-697 est arrivé après les trois autres, alors que ses scripts étaient déjà écrits : ses
+constats sont numérotés à la suite (21 à 26) et sa section vient en dernier, pour ne pas
+décaler les renvois existants. Dans la chaîne, c'est pourtant lui qui vient **en premier**.
 
 ## Synthèse
 
@@ -22,7 +27,7 @@ Vingt constats. Seize sont traités dans les scripts, quatre restent ouverts.
 | 6 | 696 | CA1 contredit CA4 | Traité — lecture explicitée |
 | 7 | 696 | L'exemple nomme les sites `SITE_A`, la colonne porte un code régate | Cosmétique |
 | 8 | 696 | `TRPPU_CLE_REPARTITION_CALCULE` au singulier | Hors périmètre |
-| 9 | 696 | Débordement décimal possible sur les totaux | **Ouvert** — contrôle à jouer |
+| 9 | 696 | Débordement décimal sur les totaux | **Survenu, corrigé** — `db/fix_error.sql` |
 | 10 | 698 | `date_creation` attendue par le ticket, absente du schéma | Traité — colonne rétablie |
 | 11 | 698 | `date_fin_validite` ignorée par le ticket | Traité — posée à la désactivation |
 | 12 | 698 | `libelle` ignorée par le ticket | Traité — paramètre à NULL |
@@ -34,6 +39,12 @@ Vingt constats. Seize sont traités dans les scripts, quatre restent ouverts.
 | 18 | 699 | Division entière : la clé potentiel IP perdrait 14 décimales | Traité — `CAST` |
 | 19 | 699 | CA1 suppose que chaque site a une version active | Traité — garde-fous |
 | 20 | 699 | « Alerte dans les logs » impossible en SQL pur | Traité — verdict rendu à l'appelant |
+| 21 | 697 | Les contrôles écrivent `SELECT COUNT FROM …`, sans parenthèses | Traité |
+| 22 | 697 | La déduplication RG4 ne suffit pas à garantir la RG5 | Traité — contrôle amont |
+| 23 | 697 | `id_referentiel` codé en dur dans les deux instructions | Traité — paramètre de session |
+| 24 | 697 | Le chemin du fichier n'est paramétrable par aucun moyen | Traité — documenté |
+| 25 | 697 | Rien n'impose le mode strict : `LOAD DATA` tronque en silence | Traité — `sql_mode` durci |
+| 26 | 697 | Ordre des colonnes, et anciens noms de tables dans les CA | Cosmétique |
 
 ---
 
@@ -120,7 +131,7 @@ incidence, mais l'exemple ne peut pas être rejoué tel quel.
 Le schéma de flux du ticket (l. 216) écrit `TRPPU_CLE_REPARTITION_CALCULE` ; la table réelle
 est `trppu_cles_repartition_calcule`. Hors périmètre de DSR-696, à traiter en DSR-697.
 
-### 9. Débordement décimal — **ouvert**
+### 9. Débordement décimal — **survenu en recette, corrigé**
 
 | | Source (`trppu_cles_repartition`) | Cible (`trppu_trafic_site`) |
 | --- | --- | --- |
@@ -139,7 +150,26 @@ SELECT MAX(t) FROM (
    WHERE id_referentiel = 1 AND date_fin_validite IS NULL GROUP BY co_regate_site) x;
 ```
 
-Si le maximum approche `999999`, élargir les trois colonnes `trafic_*_total` avant de charger.
+Si le maximum approche `999999`, les colonnes sont trop étroites.
+
+**C'est arrivé.** L'`INSERT` de DSR-696 a échoué en `ERROR 1264 (Out of range value for column
+'trafic_oo_total')` au premier chargement réel.
+
+> **Traité** : `db/fix_error.sql` porte les trois totaux à `decimal(35,19)` — seize chiffres
+> avant la virgule, de quoi contenir la somme de la table entière (2,24 × 10¹³, quatorze
+> chiffres), et dix-neuf décimales, l'échelle de la source. Ce second point n'est pas
+> cosmétique : à dix-huit décimales, MySQL arrondit la somme, et le contrôle CA1+CA3 de
+> DSR-696 — qui compare le total stocké à la somme recalculée — afficherait des `ecart_*` non
+> nuls de l'ordre de 10⁻¹⁹. Le correctif est rejouable, gardé par la définition courante des
+> colonnes et non par leur nom.
+>
+> Le script est à jouer avant de relancer DSR-696, qui recalcule tout le référentiel : son
+> `DELETE` ayant été validé avant l'échec de l'`INSERT`, les agrégats sont perdus.
+
+**La question de fond reste ouverte**, et le correctif ne la tranche pas : des colonnes à
+dix-neuf décimales laissent penser que la source porte déjà des ratios plutôt que des volumes.
+Le second constat de `fix_error.sql` affiche, pour les dix plus gros sites, le nombre de
+chiffres entiers réellement atteint — de quoi poser la question à l'équipe data sur pièces.
 
 ---
 
@@ -290,12 +320,103 @@ logs indiquant le site et la clé et la somme obtenue ». Un script SQL ne sait 
 
 ---
 
+## DSR-697
+
+Le ticket de tête de chaîne : le chargement du CSV métier dans `trppu_cles_repartition`, table
+que les trois autres se contentent de lire. Sur les **noms**, il est juste — sa structure cible
+contient bien les dix-neuf colonnes de la table, et son `LOAD DATA` est exécutable presque tel
+quel. Les écarts portent sur ce qu'il ne dit pas, et sur des contrôles qui ne compilent pas.
+
+### 21. Les contrôles ne compilent pas
+
+Les contrôles 1 et 3 s'écrivent `SELECT COUNT FROM trppu_cles_repartition WHERE …`. Sans
+parenthèses, `COUNT` n'est pas la fonction d'agrégat mais un **nom de colonne** — qui n'existe
+pas : `ERROR 1054 (Unknown column 'COUNT')`. Le contrôle 2, lui, écrit correctement `COUNT(*)`.
+
+> **Traité** : `COUNT(*)` dans les six contrôles du script. Un test de non-régression
+> (`test_aucun_script_ne_reprend_le_count_sans_parentheses`) interdit la forme fautive dans
+> tous les scripts de `db/`.
+
+### 22. La déduplication demandée ne garantit pas l'unicité exigée
+
+La RG4 définit le doublon comme une ligne strictement identique — même PDI, même site, mêmes
+trafics, même potentiel IP — et le `SELECT DISTINCT *` de l'étape de préparation l'élimine. La
+RG5, elle, exige l'unicité de `(id_pdi, id_referentiel)`, que la base porte sous
+`uk_pdi_ref`.
+
+Les deux règles ne se recouvrent pas : **deux lignes d'un même PDI aux trafics différents
+survivent au `DISTINCT`** et violent la RG5. Le ticket ne prévoit rien pour ce cas, et son
+contrôle 2 ne le détecte qu'après coup — alors que le chargement aura déjà échoué.
+
+> **Traité** : le chargement échoue franchement (ni `IGNORE`, ni `REPLACE` sur le `LOAD
+> DATA` : `ERROR 1062`), et `db/README.md` ajoute à la préparation du fichier un contrôle
+> d'unicité des PDI à jouer **avant** le dépôt. Quelques secondes de DuckDB contre un
+> chargement complet perdu.
+
+### 23. `id_referentiel` est codé en dur
+
+Le ticket fixe `id_referentiel = 1` dans le `DELETE` comme dans le `SET` du `LOAD DATA`, et
+l'illustre par « Référentiel n°1 ». Recopié tel quel pour un deuxième référentiel, le script
+purgerait le premier puis chargerait par-dessus.
+
+> **Traité** : `@id_referentiel`, en tête de fichier, comme dans les trois autres scripts. Le
+> garde-fou affiche avant toute écriture le nombre de lignes que la purge va supprimer, et
+> vérifie que le référentiel est déclaré dans `trppu_referentiel` — aucune clé étrangère ne
+> l'impose, rien n'empêcherait de charger 22 M de lignes sous un identifiant inexistant.
+
+### 24. Le chemin du fichier, lui, ne peut pas l'être
+
+`LOAD DATA` n'accepte qu'un **littéral** comme chemin : ni variable de session, ni
+concaténation. Le contournement employé par `DSR-696-699_migration.sql` — construire
+l'instruction dans une chaîne et la jouer par `PREPARE`/`EXECUTE` — ne s'applique pas non
+plus, `LOAD DATA` ne figurant pas parmi les instructions préparables.
+
+> **Traité** : le chemin reste un littéral dans le corps du script, signalé en majuscules dans
+> l'en-tête et dans `db/README.md`. C'est le seul paramètre de la chaîne qui ne se règle pas
+> en tête de fichier, et il doit être changé **en même temps** que `@id_referentiel` : charger
+> `…_ref1.csv` sous `@id_referentiel := 2` ne produit aucune erreur, seulement un référentiel
+> faux.
+
+### 25. Rien n'impose le mode strict
+
+Hors mode strict, `LOAD DATA` ne rejette presque rien : une valeur non numérique devient 0,
+une chaîne trop longue est tronquée, une date invalide devient `'0000-00-00'`. Le chargement
+se termine « avec succès », sur un avertissement. Pour une photographie du référentiel dont
+tout le calcul des clés dépend, c'est le pire des comportements : un trafic ramené à zéro ne
+se voit plus nulle part ensuite.
+
+Deux pièges concrets s'y rattachent. Un CSV produit sous Windows se termine par `\r\n` : avec
+le `LINES TERMINATED BY '\n'` du ticket, le `\r` reste collé au dernier champ — `potentielip`,
+dont la conversion numérique échoue alors, ou pas, selon le mode. Et les quatre `NULLIF` de la
+RG3 sont ce qui distingue « champ vide » de « zéro » sur `nb_pre` et `potentielip` : sans eux,
+un potentiel IP inconnu deviendrait un potentiel IP nul, et DSR-699 en ferait une clé.
+
+> **Traité** : `STRICT_ALL_TABLES`, `NO_ZERO_DATE` et `NO_ZERO_IN_DATE` ajoutés au `sql_mode`
+> **de la session** du script, comme le fait DSR-699 pour la division par zéro. Les quatre
+> `NULLIF` sont verrouillés par `test_dsr697_convertit_les_quatre_champs_vides_en_null`, et le
+> cas `\r\n` est documenté dans le script comme dans les erreurs typiques du README.
+
+### 26. Ordre des colonnes, et anciens noms de tables
+
+La structure cible du ticket liste les dix-neuf colonnes de la table — aucune ne manque,
+aucune n'est inventée, ce qui le distingue nettement de DSR-696. Seule la place de
+`potentielip` diffère : le ticket la met après `trafic_3s`, la base après `nb_pre`. Sans
+conséquence, la liste du `LOAD DATA` décrivant l'ordre du **fichier** et non celui de la table.
+
+Le CA7 et le diagramme final, en revanche, reprennent `TRPPU_SITE_TRAFIC` (ancien nom, cf.
+constat 1) et `TRPPU_CLE_REPARTITION` au singulier (cf. constat 8).
+
+> **Cosmétique** : les noms réels sont utilisés dans le script et dans `db/README.md`. Rien à
+> corriger dans le SQL.
+
+---
+
 ## Ce qui reste à décider
 
 | Constat | Question | Pour qui |
 | ------- | -------- | -------- |
-| 5 | La table d'agrégats doit-elle clôturer les jeux des référentiels antérieurs, ou l'appartenance à un référentiel suffit-elle ? | DSR-697 |
-| 9 | Les totaux peuvent-ils dépasser six chiffres entiers ? Et ces `decimal(x,19)` portent-ils des volumes ou déjà des ratios ? | Équipe data |
+| 5 | La table d'agrégats doit-elle clôturer les jeux des référentiels antérieurs, ou l'appartenance à un référentiel suffit-elle ? | Métier — DSR-697 ne tranche pas |
+| 9 | Ces `decimal(x,19)` portent-ils des volumes ou déjà des ratios ? (le débordement, lui, est corrigé) | Équipe data |
 | 13 | Un site peut-il avoir plusieurs versions de clés actives simultanément ? | Métier |
 | 15 | « Référentiel actif » : colonne dédiée, ou convention « dernier id du site » ? | DSR-701 |
 | 17 | Que vaut la clé d'un site dont le total d'une famille de trafic est nul ? | Métier |
