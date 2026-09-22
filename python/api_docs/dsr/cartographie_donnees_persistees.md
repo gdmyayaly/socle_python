@@ -36,7 +36,6 @@ Fichiers : `app/routes/trppu_scenario/{routes,helpers,statuts}.py`.
 | `PATCH /{id}/statut` | — | statut | statut + effets de transition, version_scenario(+1) |
 | `POST /{id}/mise-en-prod` | — | — | statut(='EN PRODUCTION'), est_fige(=1), dt_mise_en_prod🧮(NOW), version_scenario(+1) |
 | `PATCH /{id}/est-fige` | — | est_fige | est_fige, version_scenario(+1) |
-| `PATCH /{id}/figement` | 669 | statut("en production"/"validé"/"simulation"/"en cours") | est_fige🧮(mappé : seul "en production"→1), version_scenario(+1) — **statut DB non modifié** |
 | `PATCH /{id}/lb-scenario` | — | lb_scenario | lb_scenario, version_scenario(+1) |
 | `POST /{id}/archive` | — | — | statut(='ARCHIVE'), version_scenario(+1) |
 | `POST /{id}/duplicate` | — | lb_scenario? | nouveau `trppu_scenario` (périodes, nb_jours_semaine, id_pic_version copiés ; **sous-ressources non copiées**) |

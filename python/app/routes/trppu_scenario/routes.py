@@ -39,7 +39,6 @@ from .helpers import (
 )
 from .schemas import (
     DuplicateRequest,
-    FigementParStatutRequest,
     FigeUpdate,
     LbScenarioUpdate,
     NbJoursUpdate,
@@ -56,7 +55,6 @@ from .statuts import (
     apply_transition_side_effects,
     assert_internal_transition_allowed,
     assert_transition_allowed,
-    resolve_fige_from_statut,
 )
 
 logger = logging.getLogger(__name__)
@@ -957,66 +955,6 @@ async def update_est_fige(id_scenario: int, payload: FigeUpdate):
             id_scenario=id_scenario,
             est_fige_avant=scenario.get("est_fige"),
             est_fige=payload.est_fige,
-            rows_affected=rows_maj,
-            duration_ms=duration_ms,
-        ),
-    )
-    return updated
-
-
-@router.patch("/{id_scenario}/figement", response_model=ScenarioOut)
-async def update_figement_par_statut(id_scenario: int, payload: FigementParStatutRequest):
-    """DSR-669 : fige (1) ou défige (0) le scénario selon le statut reçu de l'IHM.
-
-    "en production" -> est_fige=1 ; "validé"/"simulation"/"en cours" -> est_fige=0 ;
-    tout autre statut -> 422 (paramètre inconnu, aucune action réalisée).
-    Le figement est réservé à la production : hors production un scénario reste
-    modifiable. Met à jour uniquement le champ est_fige, pas le statut du scénario.
-    """
-    start = time.perf_counter()
-    logger.info(
-        "Début figement par statut scénario %s",
-        ctx(id_scenario=id_scenario, statut=payload.statut),
-    )
-
-    scenario = await fetch_scenario_or_404(id_scenario)
-    assert_not_archive(scenario)
-    est_fige = resolve_fige_from_statut(payload.statut)  # lève 422 si statut inconnu
-
-    try:
-        async with db_write.transaction() as tx:
-            rows_maj = await tx.execute(
-                "UPDATE trppu_scenario SET est_fige = %s WHERE id_scenario = %s",
-                (1 if est_fige else 0, id_scenario),
-            )
-            await increment_version(tx, id_scenario)
-    except Exception as e:
-        logger.exception(
-            "Erreur figement par statut scénario %s",
-            ctx(id_scenario=id_scenario, statut=payload.statut),
-        )
-        raise HTTPException(status_code=500, detail="Erreur figement par statut.") from e
-
-    updated = await fetch_scenario_or_404(id_scenario)
-    duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    await enregistrer_appel(
-        api_name=ACTION_MAJ_SCENARIO,
-        id_scenario=id_scenario,
-        regate=scenario.get("co_regate"),
-        params={
-            "cible": "est_fige",
-            "statut_recu": payload.statut,
-            "est_fige_avant": scenario.get("est_fige"),
-            "est_fige_apres": est_fige,
-        },
-    )
-    logger.info(
-        "Fin figement par statut scénario %s",
-        ctx(
-            id_scenario=id_scenario,
-            statut=payload.statut,
-            est_fige_avant=scenario.get("est_fige"),
-            est_fige=est_fige,
             rows_affected=rows_maj,
             duration_ms=duration_ms,
         ),

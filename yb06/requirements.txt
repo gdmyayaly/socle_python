@@ -1,0 +1,7 @@
+aiomysql
+boto3
+python-dotenv
+sqlparse>=0.4,<1
+
+# Tests (dev)
+pytest

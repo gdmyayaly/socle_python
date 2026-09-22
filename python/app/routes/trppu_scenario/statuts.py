@@ -6,7 +6,6 @@ l'incident n'est pas rejouable (cf. api_docs/CONVENTION-LOGS.md).
 """
 
 import logging
-import unicodedata
 from typing import Any
 
 from fastapi import HTTPException
@@ -19,59 +18,14 @@ logger = logging.getLogger(__name__)
 STATUTS = ("EN COURS", "SIMULATION", "VALIDE", "EN PRODUCTION", "ARCHIVE")
 
 # Statuts « de travail » : un scénario y est éditable et peut être validé.
-# SIMULATION se comporte exactement comme EN COURS dans la machine à états, et
-# aussi vis-à-vis du figement (cf. FIGE_PAR_STATUT).
+# SIMULATION se comporte exactement comme EN COURS dans la machine à états.
 STATUTS_EDITABLES = ("EN COURS", "SIMULATION")
 
-# DSR-669 : mapping d'un statut IHM reçu vers le flag de figement (est_fige).
-# Seul EN PRODUCTION fige : un scénario n'est gelé qu'une fois mis en production.
-# La version initiale figeait aussi VALIDE et SIMULATION, ce qui rendait le
-# scénario non modifiable (409 via assert_editable) hors production — anomalie
-# corrigée, cf. api_docs/dsr/resolutions/DSR-669_resolution.md.
-# Clés normalisées (majuscules, sans accent) — cf. _normalize_statut.
-FIGE_PAR_STATUT: dict[str, bool] = {
-    "EN PRODUCTION": True,
-    "VALIDE": False,
-    "SIMULATION": False,
-    "EN COURS": False,
-}
-
-
-def _normalize_statut(statut: str) -> str:
-    """Normalise un libellé de statut : majuscules, sans accent, espaces compactés."""
-    sans_accent = "".join(
-        c for c in unicodedata.normalize("NFD", statut) if unicodedata.category(c) != "Mn"
-    )
-    return " ".join(sans_accent.upper().split())
-
-
-def resolve_fige_from_statut(statut: str) -> bool:
-    """DSR-669 : déduit le figement (True/False) à partir du statut reçu.
-
-    Seul « en production » fige (True) ; « validé », « simulation » et
-    « en cours » défigent (False). Insensible à la casse et aux accents. Lève
-    HTTP 422 si le statut n'est pas reconnu (paramètre 'inconnu'), sans réaliser
-    aucune action.
-    """
-    cle = _normalize_statut(statut)
-    if cle not in FIGE_PAR_STATUT:
-        attendus = ", ".join(sorted(FIGE_PAR_STATUT))
-        logger.warning(
-            "Rejet figement par statut %s",
-            ctx(
-                statut=statut,
-                attendus=sorted(FIGE_PAR_STATUT),
-                http=422,
-                motif="statut inconnu",
-            ),
-        )
-        raise HTTPException(
-            status_code=422,
-            detail=f"Statut '{statut}' inconnu. Valeurs acceptées : {attendus}.",
-        )
-    fige = FIGE_PAR_STATUT[cle]
-    logger.debug("Figement résolu depuis le statut %s", ctx(statut=statut, est_fige=fige))
-    return fige
+# Le figement (est_fige = 1) n'est posé que par la mise en production, qui passe
+# exclusivement par OPTIPACC (DSR-707). L'IHM ne pilote plus le figement : le
+# mapping statut -> est_fige de DSR-669 (PATCH /{id}/figement) a été retiré, il
+# permettait de figer un scénario hors production et le rendait non modifiable.
+# Cf. api_docs/dsr/resolutions/DSR-669_resolution.md.
 
 # Transitions accessibles via PATCH /statut.
 # La transition VALIDE -> EN PRODUCTION est volontairement absente : elle passe

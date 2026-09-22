@@ -178,13 +178,6 @@ Chaque écriture incrémente `version_scenario`.
 - **Entrée** : `{"est_fige": true|false}`. Précondition : non archivé. **Sortie 200** : `ScenarioOut`.
 - **UPDATE** `trppu_scenario` : `est_fige`, `version_scenario+1`. Seul moyen de défiger après mise en prod.
 
-### `PATCH /trppu-api/scenarios/{id_scenario}/figement` (DSR-669)
-- **Entrée** : `{"statut": "en production"|"validé"|"simulation"|"en cours"}` (libre, insensible casse/accents).
-  Mapping : EN PRODUCTION→figé ; VALIDE / SIMULATION / EN COURS→défigé ; statut inconnu → 422.
-  Le figement est réservé à la production (correctif de l'anomalie « scénario figé hors prod »).
-- **Sortie 200** : `ScenarioOut`.
-- **UPDATE** `trppu_scenario` : `est_fige` uniquement (le statut du scénario n'est PAS modifié), `version_scenario+1`.
-
 ### `PATCH /trppu-api/scenarios/{id_scenario}/lb-scenario`
 - **Entrée** : `{"lb_scenario": "..."}` (1–50). **Sortie 200** : `ScenarioOut`.
 - **UPDATE** `trppu_scenario` : `lb_scenario`, `version_scenario+1`.
@@ -621,7 +614,7 @@ Les colonnes trafic sont configurables : `TRAFIC_COL_OBJET`, `TRAFIC_COL_CONSTAT
 | GET /edition | R | R | R | R | R | R | R | | | |
 | POST scenarios | **W** | W | | | | | | W(si absent) | | |
 | PUT scenario | **W** | W | | | R | | | | | |
-| PATCH periodes/nb-jours/statut/lb/est-fige/figement | **W** | | | | | | | | | |
+| PATCH periodes/nb-jours/statut/lb/est-fige | **W** | | | | | | | | | |
 | POST mise-en-prod / archive | **W** | | | | | | | | | |
 | POST duplicate | R+**W** | | | | | | | | | |
 | DELETE scenario | **D** | D | D | D | D | D | (via version) | | | + exclusions, scenario_pic_coeffs, trafic_agrebal, trafic_pdi |
@@ -669,7 +662,7 @@ Références extraites des docstrings du code (`app/routes/**`) et des fiches `j
 | **DSR-661** | Enregistrement de la rétention PIC à chaque modification | `PUT /scenarios/{id}/pic-coefficients` |
 | **DSR-665** | Marquage exclu / ajouté manuellement (`bl_exclu`/`bl_manuel`) | porté par `PUT`/`PATCH /scenarios/{id}/tmh` |
 | **DSR-666** | Trafics Databricks avec date pivot | `GET /trafics/get_trafics_pivot` |
-| **DSR-669** | Activer/désactiver les changements d'un scénario (figement) | `PATCH /scenarios/{id}/figement` |
+| **DSR-669** | Activer/désactiver les changements d’un scénario (figement) | **Retiré** — le figement est posé par la mise en production OPTIPACC (DSR-707), cf. `resolutions/DSR-669_resolution.md` |
 
 ### Routes sans ticket DSR identifié
 
@@ -696,15 +689,14 @@ Références extraites des docstrings du code (`app/routes/**`) et des fiches `j
 | 2 | `POST`, `PUT`, `upload-excel /pic-coefficients` (national) | **Tout le payload** | Module cassé (cf. §14) : les colonnes ciblées (`coef_dense/faible1/faible2`, `dt_fin_effet`) n'existent plus → toute écriture échoue en 500. Données envoyées, jamais persistées, par construction. | 🔴 |
 | 3 | `POST /scenarios` (DSR-634) | `lb_regate`, `type_site` (si le site existe) | Utilisés uniquement pour créer `trppu_site` s'il est absent (`helpers.py:161-184`) ; si le site existe, ignorés **silencieusement** (documenté dans le schéma mais aucune indication dans la réponse : l'appelant ne sait pas si ses libellés divergent de la base). | 🟠 |
 | 4 | `PUT /scenarios/{id}/comptages/{co_produit}` (DSR-644) | `dt_comptage` d'origine | `dt_comptage` optionnel avec défaut serveur `date.today()` (`routes.py:118`) : un PUT qui ne veut modifier que `nb_produit` **écrase la date de comptage réelle** par la date du jour. Le défaut devrait être « conserver la valeur existante ». | 🟠 |
-| 5 | `PATCH /scenarios/{id}/figement` (DSR-669) | `statut` (en tant que statut) | Le statut reçu ne sert qu'à dériver `est_fige` ; le statut du scénario n'est jamais modifié. By design, mais source de confusion probable côté IHM (un PATCH « statut » qui ne change pas le statut). | 🟡 |
-| 6 | Toutes routes scénario | `id_session_ihm` | Uniquement loggé (traçabilité Kibana), jamais stocké — alors que la table `trppu_api_log` existe en base et n'est alimentée par **aucune** route. Soit alimenter `trppu_api_log`, soit supprimer la table. | 🟡 |
+| 5 | Toutes routes scénario | `id_session_ihm` | Uniquement loggé (traçabilité Kibana), jamais stocké — alors que la table `trppu_api_log` existe en base et n'est alimentée par **aucune** route. Soit alimenter `trppu_api_log`, soit supprimer la table. | 🟡 |
 
 ### 20.2 L'inverse : actions NON traçables (id_rh jamais demandé alors que la base le prévoit)
 
 | Route(s) | Problème |
 |---|---|
 | `PATCH /scenarios/{id}/tmh/{co_produit}` (DSR-649) | Pas d'`id_rh` dans `TmhVolumeUpdate` (`trppu_tmh/schemas.py:56-62`) alors que c'est une **modification manuelle** (la ligne passe `bl_manuel=1` sans auteur) et que le PUT batch, lui, l'exige. Incohérent. |
-| `POST /duplicate`, `/archive`, `/mise-en-prod`, `PATCH /statut`, `/periodes`, `/nb-jours-semaine`, `/lb-scenario`, `/est-fige`, `/figement`, `DELETE /scenarios/{id}` | Aucun `id_rh` : tout le cycle de vie scénario est anonyme. `duplicate` crée même un scénario avec `id_rh_creation=NULL`. Incohérent avec les créations DSR-634/645/646 qui sont tracées. |
+| `POST /duplicate`, `/archive`, `/mise-en-prod`, `PATCH /statut`, `/periodes`, `/nb-jours-semaine`, `/lb-scenario`, `/est-fige`, `DELETE /scenarios/{id}` | Aucun `id_rh` : tout le cycle de vie scénario est anonyme. `duplicate` crée même un scénario avec `id_rh_creation=NULL`. Incohérent avec les créations DSR-634/645/646 qui sont tracées. |
 | `DELETE` comptages / variations / neutralisations | Suppressions anonymes — aucune trace de qui a supprimé quoi. |
 | CRUD `/pic-versions` | La table a `id_rh_creation`/`id_rh_maj` mais l'API référentiel ne les accepte jamais → toujours NULL par ce canal. |
 | `PUT variations` (DSR-646) | L'UPDATE écrase `dt_creation = NOW()` : la date de création réelle est perdue à chaque modification. Il faudrait une colonne `dt_maj` distincte (cf. migration `004_add_variations_tracabilite.sql`). |

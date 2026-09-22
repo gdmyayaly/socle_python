@@ -4,10 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Monorepo with four independent sub-projects (part of the La Poste / DSR "TRPPU" ecosystem — TRPPU = average traffic per product for a postal site, computed via parameterizable scenarios). Code comments, docs, and Jira tickets are in French.
+Monorepo with six independent sub-projects (part of the La Poste / DSR "TRPPU" ecosystem — TRPPU = average traffic per product for a postal site, computed via parameterizable scenarios). Code comments, docs, and Jira tickets are in French.
 
 - **`python/`** — the main, active project: FastAPI backend ("trppu API", module YS04) backed by MySQL and Databricks SQL Warehouse.
-- **`yb05/`** — technical base (socle) extracted from `python/` for module YB05: MySQL connection, JSON logging, health routes, and a `.sql` script runner on the `Database` class. No business logic, no Databricks. Has its own `yb05/README.md`.
+- **`yb05/`** — module YB05: a **console batch** (`argparse` + `asyncio` + `aiomysql`, no HTTP server, no port) run as `python -m app.main <subcommand>`. Its technical base — MySQL connection, JSON logging, DB diagnostics (`app/health.py` returns dicts, it is *not* a set of routes), and a `.sql` script runner on the `Database` class — carries the DSR-696→704 traffic-computation logic in `app/traitements/`. Has its own `yb05/README.md`.
+- **`yb06/`** — module YB06: the same socle as `yb05/` with its own business logic — S3 access (`app/services/s3.py`, first `boto3` use in the repo) and `charger-cles-repartition`, which streams a CSV from S3 into `trppu_cles_repartition` (22.4 M rows, batched commits). Commands: `db-info`, `db-check`, `s3-check`, `charger-cles-repartition`. Has its own `yb06/README.md`.
+- **`yb07/`** — module YB07: the **bare socle**, emptied of all business logic — starting point for a new module. MySQL, JSON logging, health functions, `.sql` runner, `db-info` / `db-check`. No boto3, no S3, no `app/traitements/`. Has its own `yb07/README.md`.
+
+In `yb06/` and `yb07/` the log correlation field is the neutral `id_traitement` (not `id_scenario` as in `yb05/`), and `tests/test_log_convention.py` locks the logging convention documented in `docs/CONVENTION-LOGS.md` — read it before adding a log.
 - **`as03/`** — Angular 14 app skeleton. Has its own `as03/CLAUDE.md`; read it when working there.
 - **`trppu/`** — Angular module source extracted from the larger front-end, kept here for reference/study only (no build setup). `trppu/ETUDE-COMPREHENSION.md` explains the front-end module and which backend endpoints it consumes.
 

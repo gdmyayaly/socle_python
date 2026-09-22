@@ -1,0 +1,10 @@
+# Application console : le conteneur exécute une commande puis s'arrête.
+# Usage : docker compose run --rm yb07 db-info
+#         docker compose run --rm yb07 db-check
+services:
+  yb07:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs

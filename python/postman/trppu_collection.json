@@ -1660,40 +1660,6 @@
           }
         },
         {
-          "name": "PATCH /trppu-api/scenarios/{id_scenario}/figement",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/figement",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "trppu-api",
-                "scenarios",
-                "{{id_scenario}}",
-                "figement"
-              ]
-            },
-            "description": "Update Figement Par Statut",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"statut\": \"VALIDE\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          }
-        },
-        {
           "name": "PATCH /trppu-api/scenarios/{id_scenario}/lb-scenario",
           "request": {
             "method": "PATCH",

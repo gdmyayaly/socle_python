@@ -33,7 +33,6 @@ trafic_pdi_calcule, trafic_agrebal_calcule`.
 | `PATCH /{id}/statut` | Transition machine à états | scénario | statut + effets de transition, version+1 |
 | `POST /{id}/mise-en-prod` | Passe VALIDE → EN PRODUCTION | scénario | statut='EN PRODUCTION', est_fige=1, dt_mise_en_prod🧮, version+1 |
 | `PATCH /{id}/est-fige` | Fige/défige (booléen direct) | scénario | est_fige, version+1 |
-| `PATCH /{id}/figement` (669) | Fige selon statut IHM (seul "en production" fige ; "validé"/"simulation"/"en cours" défigent) | scénario | est_fige🧮(mappé), version+1 — **statut DB inchangé** |
 | `PATCH /{id}/lb-scenario` | Renomme | scénario | lb_scenario, version+1 |
 | `POST /{id}/archive` | Archive (soft) | scénario | statut='ARCHIVE', version+1 |
 | `POST /{id}/duplicate` | Copie l'entête (sans sous-ressources) | nouveau scénario | nouveau `trppu_scenario` (périodes, nb_jours_semaine, id_pic_version ; version=1, est_fige=0) |

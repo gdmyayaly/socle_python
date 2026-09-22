@@ -126,10 +126,6 @@ Liste paginée. **Entrée** : query `co_regate?`, `co_roc?`, `statut?`, `est_fig
 **Entrée** : `{ "est_fige": true }`. **Sortie** : `ScenarioOut`.
 **Altéré** : `trppu_scenario` **UPDATE** est_fige + version+1.
 
-## `PATCH /trppu-api/scenarios/{id_scenario}/figement` (DSR-669)
-**Entrée** `FigementParStatutRequest` : `{ "statut": "en production" }` (libellé IHM ; 422 si non mappable).
-**Sortie** : `ScenarioOut`. **Altéré** : `trppu_scenario` **UPDATE** est_fige🧮 (mappé : en production→1, validé/simulation/en cours→0) + version+1. **Le `statut` DB n'est pas modifié.**
-
 ## `PATCH /trppu-api/scenarios/{id_scenario}/lb-scenario`
 **Entrée** : `{ "lb_scenario": "Nouveau libellé" }`. **Sortie** : `ScenarioOut`.
 **Altéré** : `trppu_scenario` **UPDATE** lb_scenario + version+1.
@@ -500,7 +496,6 @@ Autres endpoints (`GET` liste/détail/enums, `PUT`, `DELETE` soft, `upload-excel
 | `POST`/`PUT` pic-versions | `id_rh_creation`/`id_rh_maj` jamais écrits (NULL) ; `id_scenario` non fourni |
 | Tous endpoints `trppu_pic_coefficients` | entrée/sortie définies mais **écritures/lectures impossibles** (colonnes inexistantes) |
 | `ScenarioOut.trafic_pdi_calcule` / `trafic_agrebal_calcule` | **dans la sortie** mais **jamais mis à 1** en base (toujours `false`) |
-| `PATCH /figement` (669) | modifie `est_fige` mais **pas** `statut` (par design) |
 
 Documents liés : `audit_concordance_db_10_09_2026.md` (défauts schéma/migrations),
 `cartographie_donnees_persistees.md` (tables/colonnes jamais écrites),

@@ -1,0 +1,169 @@
+========================================================================
+DSR-729 - CONTROLE D'UNICITE D'EXECUTION DES BATCHS TRPPU
+Rapport d'analyse pour validation PMO
+========================================================================
+
+Objet   : controle d'unicite d'execution des batchs (YB05, YB06, YB07)
+Date    : 21/09/2026
+Statut  : analyse terminee - developpement NON demarre
+
+
+------------------------------------------------------------------------
+AVIS DE SYNTHESE
+------------------------------------------------------------------------
+
+Le besoin est clair et la table TRPPU_SUIVI_BATCH existe deja.
+
+En revanche, le ticket n'est pas developpable en l'etat : il demande un
+statut qui n'existe pas en base, et la procedure decrite ne garantit pas
+le resultat attendu dans le cas precis qu'elle vise.
+
+4 points sont a corriger dans le ticket, 6 decisions sont a arbitrer.
+
+RECOMMANDATION : renvoyer le ticket en affinage sur les points B1 a B4,
+et arbitrer D1 a D6 avant chiffrage ferme.
+
+
+------------------------------------------------------------------------
+1. POINTS BLOQUANTS - A CORRIGER DANS LE TICKET
+------------------------------------------------------------------------
+
+B1 - Le statut ABANDONNE n'existe pas en base
+     Constat : la table n'autorise que EN_COURS, SUCCES, ECHEC et
+     PARTIEL. Le ticket exige ABANDONNE.
+     Consequence : le cas "execution abandonnee" et le critere CA-03
+     sont inapplicables. Une modification du schema de base est un
+     PREREQUIS, pas un detail d'implementation.
+
+B2 - Le controle decrit ne garantit pas l'unicite
+     Constat : la procedure - chercher une execution en cours, puis
+     creer la sienne - laisse passer deux lancements quasi simultanes.
+     Les deux passent le controle et demarrent. C'est exactement le
+     scenario cite par le ticket (CronJob + relance manuelle).
+     Consequence : le ticket serait livre "conforme" tout en laissant
+     passer la double execution qu'il doit empecher. Une garantie
+     technique complementaire est necessaire ; elle n'est pas decrite.
+
+B3 - Une information obligatoire n'est pas alimentee
+     Constat : la table impose d'enregistrer la commande executee. Le
+     ticket ne la mentionne jamais.
+     Consequence : l'enregistrement de demarrage est rejete par la base.
+
+B4 - Deux tickets, deux vocabulaires, une seule table
+     Constat : DSR-729 et DSR-721 designent la meme table avec des noms
+     de champs differents, dont certains n'existent pas.
+     Consequence : deux equipes implementeront deux conventions
+     divergentes sur une table commune.
+
+
+------------------------------------------------------------------------
+2. DECISIONS A ARBITRER (PO / EXPLOITATION)
+------------------------------------------------------------------------
+
+D1 - Sur quoi porte le verrou ?
+     Le ticket se contredit : son message d'erreur parle du batch
+     "YB07" (niveau module), les donnees de reference enregistrent
+     "YB05_TRAFIC_PDI" (niveau traitement).
+     Options : module / traitement / traitement + objet traite
+     A trancher par le metier : au niveau module, deux traitements
+     independants se bloquent mutuellement.
+
+D2 - Que devient le statut PARTIEL ?
+     Il existe en base, le ticket l'ignore.
+     Options : le conserver / le supprimer
+     Recommandation : le conserver. Le chargement YB06 peut reellement
+     s'arreter en cours de route.
+
+D3 - Quel code retour quand le demarrage est refuse ?
+     Non specifie par le ticket.
+     Options : succes / echec / code dedie
+     Impact direct sur la supervision : un "deja en cours" signale
+     comme echec declenchera de fausses alertes.
+
+D4 - Comment le delai d'abandon est-il fourni ?
+     Un conteneur ne peut pas lire son propre delai OpenShift : la
+     valeur sera donc saisie deux fois.
+     A ecrire dans le ticket : ce delai doit toujours etre SUPERIEUR OU
+     EGAL a celui du conteneur. S'il est inferieur, il declarerait
+     abandonnee une execution encore vivante - soit exactement la
+     double execution que le ticket veut eviter.
+
+D5 - Comment mutualiser entre YB05, YB06 et YB07 (critere CA-04) ?
+     Les trois projets sont aujourd'hui independants.
+     Options : composant partage / copie dans chaque projet
+     Decision structurante : en copie, toute correction sera a reporter
+     trois fois, sur un mecanisme de surete.
+     CONDITIONNE LE CHIFFRAGE.
+
+D6 - YB07 est-il concerne a ce stade ?
+     Il ne contient aujourd'hui aucun traitement metier a proteger.
+     Options : inclus / reporte
+     Possibilite : integrer le mecanisme sans le brancher.
+
+
+------------------------------------------------------------------------
+3. AMELIORATIONS A PREVOIR (hors perimetre propose)
+------------------------------------------------------------------------
+
+A1 - Arret brutal du conteneur
+     Mise a jour, eviction, depassement memoire : l'execution reste
+     marquee en cours et TOUTE RELANCE EST REFUSEE jusqu'a expiration
+     du delai. Or la relance d'exploitation est l'un des trois cas
+     d'usage cites par le ticket lui-meme.
+     A prevoir : liberation a l'arret, ou procedure de deblocage
+     manuel.
+
+A2 - Verrous metier existants
+     YB05 pose deja ses propres verrous par scenario. Le ticket
+     nettoie l'execution abandonnee, mais pas ces verrous-la, qui
+     resteraient actifs indefiniment. Un blocage en remplacerait un
+     autre. A cadrer.
+
+A3 - Croissance de la table
+     Une ligne par execution, aucune purge prevue. Definir une duree
+     de retention.
+
+A4 - Restitution exploitation
+     La table contient tout l'historique des executions, mais aucun
+     ecran ni requete de suivi n'est prevu. Candidat a une evolution
+     ulterieure.
+
+
+------------------------------------------------------------------------
+4. DEPENDANCES ET PLANNING
+------------------------------------------------------------------------
+
+- DSR-721 livre le batch de migration de base de donnees. La
+  modification de schema exigee par B1 devra passer par lui ou par un
+  autre vecteur : l'ordonnancement des deux tickets est a arbitrer.
+
+- Le chiffrage ne peut etre ferme qu'apres arbitrage de D1 (perimetre
+  fonctionnel) et D5 (architecture).
+
+
+------------------------------------------------------------------------
+5. DEMANDE AU PMO
+------------------------------------------------------------------------
+
+1. Valider le renvoi en affinage sur B1 a B4.
+2. Planifier l'arbitrage de D1 a D6 avec le PO et l'exploitation.
+3. Arbitrer l'ordonnancement DSR-729 / DSR-721.
+4. Decider si A1 a A4 entrent dans ce ticket ou font l'objet d'une
+   demande distincte.
+
+
+------------------------------------------------------------------------
+POINTS DE VIGILANCE PRIORITAIRES
+------------------------------------------------------------------------
+
+B2 et D4 sont les deux points a defendre en priorite : ce sont les deux
+endroits ou le ticket, applique a la lettre, produirait l'inverse de son
+objectif.
+
+Les autres points sont des clarifications ou des arbitrages de
+perimetre.
+
+Le detail technique justifiant chaque constat (requetes, schema,
+composants reutilisables) est disponible cote equipe de developpement.
+
+========================================================================

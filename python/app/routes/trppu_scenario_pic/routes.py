@@ -11,17 +11,25 @@ from app.security.crypto import encrypt_id_rh
 from app.routes.trppu_scenario.helpers import (
     assert_editable,
     fetch_scenario_or_404,
-    last_insert_id,
 )
 from app.services.api_log import ACTION_ECRITURE_PIC_COEFFICIENT, enregistrer_appel
 
 from .helpers import (
+    dedupliquer_items,
+    ensure_scenario_pic_version,
     fetch_coeffs_for_version,
     fetch_scenario_pic_version,
     merge_coeffs,
     resolve_default_pic_version,
+    upsert_coef,
 )
-from .schemas import PicCoefUpsert, PicCoefUpsertResult, PicScenarioOut
+from .schemas import (
+    PicCoefBatchResult,
+    PicCoefBatchUpsert,
+    PicCoefUpsert,
+    PicCoefUpsertResult,
+    PicScenarioOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +96,9 @@ async def upsert_pic_coefficient(
       densité) absent.
     - Cas 2 : aucune version scénario -> INSERT trppu_pic_version (niveau SCENARIO)
       puis INSERT du coef. Le tout en transaction.
+
+    Écriture cellule par cellule (sauvegarde à la perte de focus côté IHM) ; pour
+    enregistrer un tableau modifié d'un bloc, voir `PUT .../pic-coefficients/batch`.
     """
     start = time.perf_counter()
     logged = params_loggables(payload)
@@ -105,69 +116,15 @@ async def upsert_pic_coefficient(
     assert_editable(scenario)
     id_rh_token = encrypt_id_rh(payload.id_rh)
 
-    # Seule la branche UPDATE connaît une valeur antérieure.
-    coef_avant = None
-
     try:
         async with db_write.transaction() as tx:
-            version = await tx.fetch_one(
-                "SELECT id_pic_version FROM trppu_pic_version "
-                "WHERE id_scenario = %s AND niveau = 'SCENARIO' "
-                "ORDER BY id_pic_version DESC LIMIT 1",
-                (id_scenario,),
+            id_pic_version, version_creee = await ensure_scenario_pic_version(
+                tx, id_scenario, scenario["co_regate"], id_rh_token
             )
-            if version:
-                id_pic_version = int(version["id_pic_version"])
-                existing_coef = await tx.fetch_one(
-                    "SELECT id_pic_coef, coef FROM trppu_pic_coefficients "
-                    "WHERE id_pic_version = %s AND co_produit = %s "
-                    "AND jour_semaine = %s AND densite = %s",
-                    (id_pic_version, payload.co_produit, payload.jour_semaine, payload.densite),
-                )
-                if existing_coef:
-                    id_pic_coef = int(existing_coef["id_pic_coef"])
-                    coef_avant = existing_coef.get("coef")
-                    await tx.execute(
-                        "UPDATE trppu_pic_coefficients "
-                        "SET coef = %s, dt_maj = NOW(), id_rh = %s WHERE id_pic_coef = %s",
-                        (payload.coef, id_rh_token, id_pic_coef),
-                    )
-                    action = "update"
-                else:
-                    await _insert_coef(tx, id_pic_version, payload, id_rh_token)
-                    id_pic_coef = await last_insert_id(tx)
-                    action = "insert_coef"
-                logger.debug(
-                    "Version PIC scénario existante %s",
-                    ctx(id_scenario=id_scenario, id_pic_version=id_pic_version),
-                )
-            else:
-                co_regate = scenario["co_regate"]
-                await tx.execute(
-                    "INSERT INTO trppu_pic_version "
-                    "(lb_pic_version, niveau, co_regate, id_scenario, dt_activation, "
-                    " id_rh_creation, id_rh_maj) "
-                    "VALUES (%s, 'SCENARIO', %s, %s, NOW(), %s, %s)",
-                    (
-                        f"{co_regate}_{id_scenario}",
-                        co_regate,
-                        id_scenario,
-                        id_rh_token,
-                        id_rh_token,
-                    ),
-                )
-                id_pic_version = await last_insert_id(tx)
-                logger.info(
-                    "Version PIC scénario créée %s",
-                    ctx(
-                        id_scenario=id_scenario,
-                        id_pic_version=id_pic_version,
-                        co_regate=co_regate,
-                    ),
-                )
-                await _insert_coef(tx, id_pic_version, payload, id_rh_token)
-                id_pic_coef = await last_insert_id(tx)
-                action = "insert_version_and_coef"
+            # `coef_avant` : seule la branche UPDATE connaît une valeur antérieure.
+            operation, coef_avant, id_pic_coef = await upsert_coef(
+                tx, id_pic_version, payload, id_rh_token
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -176,6 +133,11 @@ async def upsert_pic_coefficient(
             ctx(id_scenario=id_scenario, co_produit=payload.co_produit, params=logged),
         )
         raise HTTPException(status_code=500, detail="Erreur enregistrement coefficient PIC.") from e
+
+    if version_creee:
+        action = "insert_version_and_coef"
+    else:
+        action = "update" if operation == "update" else "insert_coef"
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     await enregistrer_appel(
@@ -206,17 +168,93 @@ async def upsert_pic_coefficient(
     return PicCoefUpsertResult(action=action, id_pic_version=id_pic_version)
 
 
-async def _insert_coef(tx, id_pic_version: int, payload: PicCoefUpsert, id_rh_token: str) -> None:
-    await tx.execute(
-        "INSERT INTO trppu_pic_coefficients "
-        "(id_pic_version, co_produit, jour_semaine, dt_effet, coef, densite, id_rh) "
-        "VALUES (%s, %s, %s, NOW(), %s, %s, %s)",
-        (
-            id_pic_version,
-            payload.co_produit,
-            payload.jour_semaine,
-            payload.coef,
-            payload.densite,
-            id_rh_token,
+@router.put("/{id_scenario}/pic-coefficients/batch", response_model=PicCoefBatchResult)
+async def upsert_pic_coefficients_batch(
+    id_scenario: int,
+    payload: PicCoefBatchUpsert,
+    id_session_ihm: str | None = Query(None, description="Id de session IHM (traçabilité)"),
+):
+    """Enregistrement multiple : toutes les cellules modifiées en une seule transaction.
+
+    Même règle métier que l'écriture unitaire (DSR-661), appliquée cellule par
+    cellule sur la version PIC du scénario, créée à la volée si elle n'existe pas.
+    Le lot est **tout ou rien** : une erreur sur une ligne annule les précédentes et
+    la version éventuellement créée, pour qu'un tableau ne soit jamais à moitié
+    enregistré. Une cellule répétée dans le lot n'est écrite qu'une fois (dernière
+    valeur reçue).
+    """
+    start = time.perf_counter()
+    items = dedupliquer_items(payload.coefficients)
+    nb_doublons = len(payload.coefficients) - len(items)
+    logged = [params_loggables(item) for item in items]
+    logger.info(
+        "Début enregistrement lot coefficients PIC %s",
+        ctx(
+            id_scenario=id_scenario,
+            nb_lignes=len(items),
+            nb_doublons=nb_doublons or None,
+            produits=sorted({item.co_produit for item in items}),
         ),
+    )
+    scenario = await fetch_scenario_or_404(id_scenario)
+    assert_editable(scenario)
+    id_rh_token = encrypt_id_rh(payload.id_rh)
+
+    nb_inserted = 0
+    nb_updated = 0
+    try:
+        async with db_write.transaction() as tx:
+            id_pic_version, version_creee = await ensure_scenario_pic_version(
+                tx, id_scenario, scenario["co_regate"], id_rh_token
+            )
+            for item in items:
+                operation, _coef_avant, _id_pic_coef = await upsert_coef(
+                    tx, id_pic_version, item, id_rh_token
+                )
+                if operation == "update":
+                    nb_updated += 1
+                else:
+                    nb_inserted += 1
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Erreur enregistrement lot coefficients PIC %s",
+            ctx(id_scenario=id_scenario, nb_lignes=len(items), params=logged),
+        )
+        raise HTTPException(
+            status_code=500, detail="Erreur enregistrement des coefficients PIC."
+        ) from e
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    await enregistrer_appel(
+        api_name=ACTION_ECRITURE_PIC_COEFFICIENT,
+        id_scenario=id_scenario,
+        regate=scenario.get("co_regate"),
+        params={
+            "operation": "upsert_batch",
+            "id_pic_version": id_pic_version,
+            "version_creee": version_creee,
+            "inseres": nb_inserted,
+            "modifies": nb_updated,
+            "lignes": logged,
+        },
+    )
+    logger.info(
+        "Fin enregistrement lot coefficients PIC %s",
+        ctx(
+            id_scenario=id_scenario,
+            id_pic_version=id_pic_version,
+            version_creee=version_creee,
+            inseres=nb_inserted,
+            modifies=nb_updated,
+            duration_ms=duration_ms,
+        ),
+    )
+    return PicCoefBatchResult(
+        id_scenario=id_scenario,
+        id_pic_version=id_pic_version,
+        version_creee=version_creee,
+        nb_inserted=nb_inserted,
+        nb_updated=nb_updated,
     )

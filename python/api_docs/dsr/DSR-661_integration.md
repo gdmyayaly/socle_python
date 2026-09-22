@@ -131,3 +131,40 @@ Aucune (toutes les colonnes existent : `trppu_pic_version`,
 `README_incomprehensions.md` : **`coef` absent de la liste des paramètres** ;
 `co_regate` dérivé du scénario ; clé naturelle (jour inclus ?) ; cryptage `id_rh` ;
 provenance id session IHM ; gestion de plusieurs versions scénario.
+
+---
+
+## 10. Enregistrement multiple (hors périmètre DSR-661)
+
+Ajout d'une seconde route d'écriture, **sans toucher au contrat unitaire ci-dessus**
+(l'IHM actuelle enregistre toujours cellule par cellule à la perte de focus) :
+
+```
+PUT /trppu-api/scenarios/{id_scenario}/pic-coefficients/batch?id_session_ihm=...
+
+{
+  "coefficients": [
+    { "co_produit": "OO", "jour_semaine": "LUNDI", "densite": 0, "coef": 12.5 },
+    { "co_produit": "OS", "jour_semaine": "SAMEDI", "densite": 0, "coef": 8 }
+  ],
+  "id_rh": "A123456"
+}
+
+200 -> { "id_scenario": 52, "id_pic_version": 87, "version_creee": false,
+         "nb_inserted": 1, "nb_updated": 1 }
+```
+
+- Même règle métier que l'unitaire (§2), appliquée cellule par cellule sur la
+  version PIC du scénario, créée à la volée si absente.
+- **Tout ou rien** : une seule transaction pour le lot entier — un échec sur une
+  ligne annule les précédentes *et* la version éventuellement créée, pour qu'un
+  tableau ne reste jamais à moitié enregistré.
+- Cellule répétée dans le lot : une seule écriture, dernière valeur reçue.
+- Mêmes gardes (`404` scénario absent, `409` figé/non modifiable, `422` paramètre
+  invalide) et même trace `trppu_api_log` (`ECRITURE_PIC_COEFFICIENT`,
+  `operation = "upsert_batch"`).
+- Lot borné à `MAX_COEFS_BATCH = 500` lignes (tableau IHM actuel : 96 cellules).
+
+La logique d'écriture est factorisée dans `trppu_scenario_pic/helpers.py`
+(`ensure_scenario_pic_version`, `upsert_coef`) : le lot produit exactement les mêmes
+lignes qu'une suite d'appels unitaires.
