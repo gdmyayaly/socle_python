@@ -1,0 +1,279 @@
+========================================================================
+YB06 - DSR-715 ET DSR-717
+Rapport d'analyse : ce qui est fait, ce qui reste, points a arbitrer
+========================================================================
+
+Objet   : socle technique YB06 (DSR-715) et detection des impacts
+          Agrebal (DSR-717)
+Date    : 23/09/2026
+Statut  : DSR-715 fait cote code / DSR-717 non developpe, en attente
+          d'arbitrage
+
+
+------------------------------------------------------------------------
+AVIS DE SYNTHESE
+------------------------------------------------------------------------
+
+DSR-715 (socle technique) est realise pour tout ce qui releve du code :
+environnement Python, connexion base, journalisation, point d'entree.
+En revanche, tout le volet infrastructure - image aux standards DSR et
+configuration OpenShift des quatre environnements - reste entierement a
+produire. Les criteres d'acceptation CA-01 a CA-05 ne sont pas
+verifiables sans deploiement.
+
+DSR-717 (detection des impacts Agrebal) n'est PAS developpe. Ce n'est
+pas un retard : le ticket renvoie a un service qui n'existe pas, et
+quatre points doivent etre tranches avant qu'un developpement ait un
+sens.
+
+RECOMMANDATION : faire acter les points 1 a 4 de la partie B par le PO,
+et le point 5 par l'equipe plateforme, avant planification de DSR-717.
+
+
+========================================================================
+PARTIE A - DSR-715 : SOCLE TECHNIQUE
+========================================================================
+
+------------------------------------------------------------------------
+A.1 CE QUI EST FAIT
+------------------------------------------------------------------------
+
+Environnement d'execution Python et dependances
+  Projet yb06 operationnel, dependances declarees (aiomysql,
+  python-dotenv, sqlparse). Configuration centralisee et lue depuis les
+  variables d'environnement.
+
+Connexion a la base de donnees
+  Les quatre exigences du ticket sont couvertes :
+   - lecture de la configuration de connexion ;
+   - ouverture de la connexion (pools lecture et ecriture separes,
+     creation a la demande, nouvelle tentative avec temporisation
+     progressive) ;
+   - controle de la connectivite ;
+   - fermeture correcte des ressources, garantie en sortie de
+     traitement y compris en cas d'erreur.
+
+Journalisation
+  Journalisation applicative au format JSON attendu par Kibana, avec
+  gestion des niveaux (INFO par defaut, DEBUG via l'option -v). Une
+  convention de log ecrite est fournie, et verrouillee par les tests
+  automatises : un developpement qui s'en ecarte les fait echouer.
+
+Point d'entree minimal
+  Deux commandes couvrent le traitement minimal demande par le ticket :
+  initialisation du contexte, verification de la configuration,
+  verification de l'acces a la base, emission de traces, terminaison
+  propre avec code retour 0 ou 1.
+
+Regles de gestion
+  RG-001 (deploiement independant du metier)  : respectee par
+         construction, le projet ne contient aucun metier.
+  RG-003 (connexion a la base)                : respectee.
+  RG-004 (traces consultables dans Kibana)    : format respecte, voir
+         la reserve en A.2.
+  RG-005 (erreur d'initialisation journalisee avant arret) : respectee.
+
+------------------------------------------------------------------------
+A.2 CE QUI RESTE A FAIRE
+------------------------------------------------------------------------
+
+R1 - Image "compatible avec les standards DSR"
+     L'image actuelle part d'une image Python publique et s'execute en
+     tant que root. OpenShift 4 attribue par defaut un identifiant
+     utilisateur arbitraire : en l'etat, le repertoire de logs
+     appartiendrait a root et les ecritures echoueraient.
+     A fournir : l'image de base d'entreprise a utiliser, et le registre
+     ou la publier.
+
+R2 - Configuration OpenShift des quatre environnements
+     DEV, ASSEMBLAGE, PREPRODUCTION, PRODUCTION : aucun element de
+     deploiement n'existe aujourd'hui (ni descripteur, ni chaine
+     d'integration continue). C'est le principal reste a faire de
+     DSR-715.
+
+R3 - Publication vers Kibana : transport a confirmer
+     Le format des traces est conforme. En revanche, leur acheminement
+     repose entierement sur la collecte de la sortie du conteneur par la
+     plateforme. Point de vigilance : les traces partent sur la sortie
+     d'erreur (la sortie standard etant reservee au rapport
+     d'exploitation). A confirmer avec la plateforme que la collecte
+     couvre bien ce flux.
+
+R4 - Correspondance des environnements
+     Le code manipule les valeurs local, sdev, sacc, sass, prod. Le
+     ticket parle de DEV, ASSEMBLAGE, PREPRODUCTION, PRODUCTION. Aucune
+     correspondance entre les deux n'est documentee. Elle parait
+     evidente, mais elle doit etre confirmee avant d'ecrire les
+     configurations.
+
+R5 - Criteres d'acceptation non verifiables
+     CA-01 a CA-05 supposent tous un deploiement effectif sur DEV puis
+     ASSEMBLAGE. Ils ne pourront etre passes qu'une fois R1 et R2
+     livres.
+
+
+========================================================================
+PARTIE B - DSR-717 : DETECTION DES IMPACTS AGREBAL
+========================================================================
+
+Non developpe. Les points ci-dessous sont a trancher au prealable.
+
+------------------------------------------------------------------------
+B.1 POINT BLOQUANT
+------------------------------------------------------------------------
+
+1 - Le service Optipacc reference par le ticket n'existe pas
+
+    Le ticket demande d'exclure les scenarios "utilises par Optipacc",
+    en precisant : "Utiliser le meme service Optipacc que celui qui
+    verifie dans l'IHM TRPPU si un scenario est utilise par Optipacc
+    avant de le repasser de Valide a En cours ou Simulation."
+
+    Verification faite sur l'ensemble du depot : ce service n'existe
+    nulle part. La transition Valide -> En cours de l'IHM ne realise
+    aucun controle Optipacc ; c'est une simple table de transitions
+    autorisees. Le sens des echanges est meme inverse de ce que suppose
+    le ticket : c'est Optipacc qui appelle TRPPU, et non l'inverse.
+    Aucune donnee ne marque aujourd'hui qu'un scenario est "retenu" par
+    Optipacc.
+
+    PROPOSITION RETENUE : reprendre les regles de visibilite Optipacc
+    definies par DSR-705, seule definition ecrite existante. Cela
+    revient a exclure en plus les scenarios non figes et ceux dont un
+    calcul est en cours.
+
+    A ACTER PAR LE PO. Ce point est a signaler en commentaire du
+    ticket : la reference a un service inexistant doit etre corrigee
+    dans DSR-717.
+
+------------------------------------------------------------------------
+B.2 POINTS A SPECIFIER
+------------------------------------------------------------------------
+
+2 - La fenetre "depuis la derniere execution" n'est pas definie
+
+    Le ticket retient les Agrebals modifies depuis la derniere
+    execution de YB06, mais rien ne memorise cette date aujourd'hui.
+
+    Trois options :
+    a) la deduire du journal des recalculs (date du dernier recalcul
+       demande pour motif Agrebal). Aucun stockage nouveau, et
+       auto-reparant : si une execution echoue, la fenetre reste
+       ouverte et la suivante rattrape.
+    b) s'appuyer sur la table de suivi des batchs. Semantiquement plus
+       juste, mais cree une dependance a DSR-729, dont l'analyse
+       conclut qu'il n'est pas developpable en l'etat.
+    c) passer la date en parametre de la commande, fournie par
+       l'ordonnanceur. Simple, mais reporte la responsabilite sur
+       l'exploitation et complique les relances.
+
+    RECOMMANDATION : option a).
+
+3 - Les criteres de selection different entre DSR-715 et DSR-717
+
+    DSR-715 annonce : scenarios VALIDE, FIGES, CALCULES, NON EN
+    PRODUCTION, NON ARCHIVES.
+    DSR-717 ne retient que : statut VALIDE et les deux indicateurs de
+    calcul a 1. La notion de scenario fige a disparu.
+
+    La proposition du point 1 reconcilie les deux, mais l'ecart doit
+    etre acte plutot que resolu implicitement.
+
+4 - La nature de l'evenement Agrebal n'est pas garantie
+
+    Le ticket filtre sur les valeurs CREATED, UPDATED et DELETED. Or la
+    colonne correspondante est un champ texte libre : rien en base ne
+    contraint ces valeurs. Par ailleurs, le batch YB05 detecte les
+    suppressions par la date de suppression et non par l'evenement.
+
+    A CONFIRMER : les valeurs reellement presentes en base, avant de
+    construire un filtre dessus. Un filtre sur des valeurs absentes
+    produirait un traitement qui ne remonte jamais rien, sans erreur.
+
+5 - Ordonnancement absent
+
+    Le ticket demande une execution quotidienne a 22h00, horaire
+    parametrable. Aucun mecanisme de planification n'existe, ni de
+    parametre d'horaire. C'est une consequence directe du reste a faire
+    R2 de DSR-715.
+
+    A TRAITER PAR L'EQUIPE PLATEFORME, en meme temps que R2.
+
+------------------------------------------------------------------------
+B.3 POINTS D'ATTENTION TECHNIQUES A CONSERVER
+------------------------------------------------------------------------
+
+Ces constats ne demandent pas d'arbitrage, mais ne doivent pas etre
+perdus au moment du developpement.
+
+6 - Risque de concurrence avec YB05
+    Remettre a zero les indicateurs d'un scenario que YB05 est en train
+    de calculer corromprait ce calcul. L'exclusion des scenarios en
+    cours de calcul, proposee au point 1, couvre ce risque. Sans elle,
+    il est reel.
+
+7 - Enchainement YB06 -> YB05 a preserver
+    YB05 ne choisit pas le motif qu'il journalise : il relit la
+    derniere ligne du journal des recalculs pour le scenario concerne.
+    C'est donc precisement l'ecriture du motif AGREBAL par YB06 qui
+    fera journaliser AGREBAL par YB05 ensuite. C'est le mecanisme
+    d'enchainement des deux batchs : il ne doit pas etre contourne.
+
+8 - Dedoublonnage (CA-06) obtenu sans code specifique
+    Une fois les indicateurs remis a zero, le scenario ne satisfait
+    plus les criteres de selection, qui exigent ces memes indicateurs a
+    1. Une seconde execution ne le re-marque donc pas. Le critere CA-06
+    est satisfait par construction, a condition de ne pas relacher les
+    criteres de selection.
+
+9 - Isolation des erreurs
+    Le ticket demande qu'une erreur sur un scenario n'interrompe pas le
+    traitement global. A prevoir des la conception, pas apres.
+
+
+========================================================================
+PARTIE C - ORGANISATION DU DEPOT
+========================================================================
+
+Le projet qui portait jusqu'ici le nom yb06 hebergeait le chargement des
+cles de repartition, c'est-a-dire l'initialisation de la table
+correspondante. Ce traitement ne releve pas du perimetre YB06 tel que
+defini par DSR-715 et DSR-717.
+
+Il a donc ete renomme en YB04, et un projet YB06 neuf a ete cree,
+conforme au socle et porteur des deux tickets.
+
+  yb04  chargement des cles de repartition (S3 -> base)
+  yb05  calcul des trafics PDI et Agrebal
+  yb06  socle, futur batch de detection des impacts Agrebal
+  yb07  socle vierge, point de depart d'un futur module
+
+Aucun code n'a ete perdu : YB04 conserve l'integralite du traitement de
+chargement et de ses tests.
+
+
+========================================================================
+DEMANDE DE VALIDATION
+========================================================================
+
+Au PO
+  1. Acter la proposition du point 1 (regles de visibilite Optipacc en
+     remplacement du service inexistant), et faire corriger le ticket.
+  2. Trancher l'option de memorisation de la derniere execution
+     (point 2).
+  3. Acter l'ecart de criteres entre DSR-715 et DSR-717 (point 3).
+  4. Faire confirmer les valeurs d'evenement Agrebal reellement
+     presentes en base (point 4).
+
+A l'equipe plateforme
+  5. Fournir l'image de base et le registre d'entreprise (reste a faire
+     R1).
+  6. Produire la configuration OpenShift des quatre environnements
+     (R2), l'ordonnancement quotidien (point 5), et confirmer la
+     collecte de la sortie d'erreur vers Kibana (R3) ainsi que la
+     correspondance des environnements (R4).
+
+Sans 1 a 4, DSR-717 ne peut pas etre chiffre de maniere ferme.
+Sans 5 et 6, DSR-715 ne peut pas etre recette.
+
+========================================================================

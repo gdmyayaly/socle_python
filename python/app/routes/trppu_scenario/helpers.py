@@ -120,7 +120,7 @@ def assert_not_fige(scenario: dict[str, Any]) -> None:
 
     Le PATCH /est-fige est la seule manière de défiger ; il n'utilise donc pas ce check.
     Le PATCH /statut a sa propre logique (transitions autorisées) et ne se sert pas non plus
-    de ce check : un scénario EN PRODUCTION reste archivable.
+    de ce check : un scénario VALIDE, donc figé, peut revenir EN COURS / SIMULATION.
     """
     if scenario.get("est_fige"):
         logger.warning(

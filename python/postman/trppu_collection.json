@@ -1518,26 +1518,6 @@
           }
         },
         {
-          "name": "POST /trppu-api/scenarios/{id_scenario}/archive",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/archive",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "trppu-api",
-                "scenarios",
-                "{{id_scenario}}",
-                "archive"
-              ]
-            },
-            "description": "Archive Scenario"
-          }
-        },
-        {
           "name": "PATCH /trppu-api/scenarios/{id_scenario}/nb-jours-semaine",
           "request": {
             "method": "PATCH",
@@ -1603,26 +1583,6 @@
                 }
               }
             }
-          }
-        },
-        {
-          "name": "POST /trppu-api/scenarios/{id_scenario}/mise-en-prod",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/mise-en-prod",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "trppu-api",
-                "scenarios",
-                "{{id_scenario}}",
-                "mise-en-prod"
-              ]
-            },
-            "description": "Mise En Prod"
           }
         },
         {
@@ -2329,6 +2289,49 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"co_produit\": \"{{co_produit}}\",\n  \"jour_semaine\": \"LUNDI\",\n  \"densite\": 0,\n  \"coef\": 0.85,\n  \"id_rh\": \"{{id_rh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PUT /trppu-api/scenarios/{id_scenario}/pic-coefficients/batch",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/scenarios/{{id_scenario}}/pic-coefficients/batch?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "scenarios",
+                "{{id_scenario}}",
+                "pic-coefficients",
+                "batch"
+              ],
+              "query": [
+                {
+                  "key": "id_session_ihm",
+                  "value": "{{id_session_ihm}}",
+                  "disabled": true,
+                  "description": "Id de session IHM (traçabilité)"
+                }
+              ]
+            },
+            "description": "Upsert Pic Coefficients Batch",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"coefficients\": [\n    {\n      \"co_produit\": \"{{co_produit}}\",\n      \"jour_semaine\": \"LUNDI\",\n      \"densite\": 0,\n      \"coef\": 0.85\n    }\n  ],\n  \"id_rh\": \"{{id_rh}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

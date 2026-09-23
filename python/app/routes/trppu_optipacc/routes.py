@@ -228,9 +228,9 @@ async def scenario_mise_en_production(
     verrou : c'est la seule protection contre deux appels concurrents, aucune
     contrainte d'unicité n'existant en base.
 
-    La route IHM `POST /trppu-api/scenarios/{id}/mise-en-prod` reste disponible et
-    applique désormais C4 et C5 ; elle se distingue par sa date (NOW()) et par
-    l'absence de contrôle du site.
+    Côté IHM, `PATCH /trppu-api/scenarios/{id}/statut` vers EN PRODUCTION applique
+    aussi C4 et C5 ; il se distingue par sa date (NOW()) et par l'absence de
+    contrôle du site.
     """
     start = time.perf_counter()
     co_regate = payload.code_regate

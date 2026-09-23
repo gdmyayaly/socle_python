@@ -1,16 +1,13 @@
 """Tests de la mise en production OPTIPACC (DSR-707).
 
-Quatre familles, dans l'esprit de `test_optipacc.py` (pas de TestClient dans ce
+Trois familles, dans l'esprit de `test_optipacc.py` (pas de TestClient dans ce
 projet : on appelle directement les coroutines d'endpoint avec de faux pools) :
 
 1. **Contrôles C1 à C5** — chacun avec son code HTTP et son message de ticket.
 2. **Effet de bord de l'écriture** — c'est le point le plus subtil du ticket : une
    *seule* date envoyée doit alimenter `dt_mise_en_oeuvre` **et** `dt_mise_en_prod`
    (Cas 1 + RG-API-PROD-006). On inspecte les paramètres réellement liés à l'UPDATE.
-3. **Durcissement de la route IHM** — C4 et C5 sont des helpers partagés avec
-   `POST /trppu-api/scenarios/{id}/mise-en-prod`, qui ne les appliquait pas avant ce
-   ticket et constituait donc un contournement de RG-API-PROD-005.
-4. **Non-régression schéma** — les colonnes citées existent dans `db/db_new.sql`.
+3. **Non-régression schéma** — les colonnes citées existent dans `db/db_new.sql`.
 """
 
 import asyncio
@@ -403,83 +400,3 @@ def test_dt_maj_est_bien_automatique_en_base():
     bloc = _bloc_de("trppu_scenario")
     ligne = next(l for l in bloc.splitlines() if "`dt_maj`" in l)
     assert "ON UPDATE CURRENT_TIMESTAMP" in ligne
-
-
-# --- 5. Durcissement de la route IHM --------------------------------------------
-#
-# `POST /trppu-api/scenarios/{id}/mise-en-prod` existait avant DSR-707 et ne
-# contrôlait ni les flags de calcul (C4) ni l'unicité par site (C5) : elle était un
-# contournement direct de RG-API-PROD-005. Elle partage désormais les deux gardes.
-
-
-def _scenario_ihm(**kwargs):
-    """Scénario au format de fetch_scenario_or_404 (SELECT_SCENARIO_SQL)."""
-    base = _scenario(**kwargs)
-    base["lb_scenario"] = "Scénario Avril"
-    return base
-
-
-def _appeler_ihm(scenario, *, monkeypatch, tx=None):
-    from app.routes.trppu_scenario import routes as scenario_routes
-
-    tx = tx or FakeTx()
-
-    async def _fetch(id_scenario):
-        return scenario
-
-    async def _side_effects(tx_, scen, target):
-        await tx_.execute(
-            "UPDATE trppu_scenario SET statut = %s WHERE id_scenario = %s",
-            (target, scen["id_scenario"]),
-        )
-
-    async def _noop(**kwargs):
-        return None
-
-    monkeypatch.setattr(scenario_routes, "fetch_scenario_or_404", _fetch)
-    monkeypatch.setattr(scenario_routes, "apply_transition_side_effects", _side_effects)
-    monkeypatch.setattr(scenario_routes, "enregistrer_appel", _noop)
-    monkeypatch.setattr(scenario_routes, "db_write", FakeWrite(tx))
-    return asyncio.run(scenario_routes.mise_en_prod(125))
-
-
-def test_ihm_c4_refuse_un_scenario_non_calcule(monkeypatch):
-    with pytest.raises(HTTPException) as exc:
-        _appeler_ihm(_scenario_ihm(agrebal=0), monkeypatch=monkeypatch)
-    assert exc.value.status_code == 409
-    assert exc.value.detail == (
-        "Les trafics du scénario 125 ne sont pas complètement calculés"
-    )
-
-
-def test_ihm_c5_refuse_un_second_scenario_en_production(monkeypatch):
-    """Le cœur du durcissement : sans C5 ici, RG-API-PROD-005 reste contournable."""
-    with pytest.raises(HTTPException) as exc:
-        _appeler_ihm(_scenario_ihm(), monkeypatch=monkeypatch, tx=FakeTx(autre_en_prod=130))
-    assert exc.value.status_code == 409
-    assert exc.value.detail == "Un scénario est déjà en production pour ce site"
-
-
-def test_ihm_cas_nominal_reste_fonctionnel(monkeypatch):
-    """Le durcissement ne doit pas casser le chemin normal de l'IHM."""
-    tx = FakeTx()
-    _appeler_ihm(_scenario_ihm(), monkeypatch=monkeypatch, tx=tx)
-    assert any("UPDATE trppu_scenario" in s for s, _ in tx.executed)
-
-
-def test_ihm_c5_est_verifie_avant_lecriture(monkeypatch):
-    tx = FakeTx()
-    _appeler_ihm(_scenario_ihm(), monkeypatch=monkeypatch, tx=tx)
-    assert "FOR UPDATE" in tx.executed[0][0]
-
-
-def test_le_scenario_lu_par_lihm_porte_les_flags_necessaires():
-    """fetch_scenario_or_404 doit remonter les trois flags, sinon C4 lirait 0 partout
-    et refuserait tous les scénarios."""
-    sql = scenario_helpers.SELECT_SCENARIO_SQL
-    for colonne in (
-        "trafic_pdi_calcule",
-        "trafic_agrebal_calcule",
-        "calcul_trafic_en_cours",
-    ):
-        assert colonne in sql

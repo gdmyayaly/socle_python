@@ -10,7 +10,6 @@ from app.db.mysql import db_read, db_write
 from app.log_utils import ctx, diff_champs, params_loggables
 from app.security.crypto import encrypt_id_rh
 from app.services.api_log import (
-    ACTION_ARCHIVAGE_SCENARIO,
     ACTION_CREATION_SCENARIO,
     ACTION_DUPLICATION_SCENARIO,
     ACTION_MAJ_SCENARIO,
@@ -53,7 +52,6 @@ from .statuts import (
     STATUTS,
     STATUTS_EDITABLES,
     apply_transition_side_effects,
-    assert_internal_transition_allowed,
     assert_transition_allowed,
 )
 
@@ -546,8 +544,6 @@ async def delete_scenario(id_scenario: int):
     """Suppression DÉFINITIVE du scénario et de toutes ses données rattachées.
 
     Hard-delete (les tables enfants sont nettoyées explicitement, faute de FK).
-    Pour un retrait réversible/conservant l'historique, utiliser plutôt
-    POST /{id_scenario}/archive.
     """
     start = time.perf_counter()
     logger.info("Début suppression scénario %s", ctx(id_scenario=id_scenario))
@@ -597,55 +593,6 @@ async def delete_scenario(id_scenario: int):
         ),
     )
     return None
-
-
-@router.post("/{id_scenario}/archive", response_model=ScenarioOut)
-async def archive_scenario(id_scenario: int):
-    """Archive le scénario : transition de statut vers ARCHIVE (retrait réversible).
-
-    Conserve le scénario et ses données ; le scénario archivé devient non modifiable.
-    Pour une suppression définitive, utiliser DELETE /{id_scenario}.
-    """
-    start = time.perf_counter()
-    logger.info("Début archivage scénario %s", ctx(id_scenario=id_scenario))
-
-    scenario = await fetch_scenario_or_404(id_scenario)
-    assert_transition_allowed(scenario["statut"], "ARCHIVE")
-    logger.debug(
-        "Transition autorisée %s", ctx(depuis=scenario["statut"], vers="ARCHIVE")
-    )
-
-    try:
-        async with db_write.transaction() as tx:
-            await apply_transition_side_effects(tx, scenario, "ARCHIVE")
-            await increment_version(tx, id_scenario)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(
-            "Erreur archivage scénario %s",
-            ctx(id_scenario=id_scenario, statut_courant=scenario.get("statut")),
-        )
-        raise HTTPException(status_code=500, detail="Erreur archivage scenario.") from e
-
-    archived = await fetch_scenario_or_404(id_scenario)
-    duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    await enregistrer_appel(
-        api_name=ACTION_ARCHIVAGE_SCENARIO,
-        id_scenario=id_scenario,
-        regate=scenario.get("co_regate"),
-        params={"statut_avant": scenario.get("statut"), "statut_apres": "ARCHIVE"},
-    )
-    logger.info(
-        "Fin archivage scénario %s",
-        ctx(
-            id_scenario=id_scenario,
-            statut_avant=scenario.get("statut"),
-            statut="ARCHIVE",
-            duration_ms=duration_ms,
-        ),
-    )
-    return archived
 
 
 @router.patch("/{id_scenario}/periodes", response_model=ScenarioOut)
@@ -792,8 +739,11 @@ async def update_nb_jours_semaine(id_scenario: int, payload: NbJoursUpdate):
 async def update_statut(id_scenario: int, payload: StatutUpdate):
     """Change le statut via la machine à états + effets de bord automatiques.
 
-    La transition VALIDE -> EN PRODUCTION n'est pas accessible ici : passer par
-    POST /{id_scenario}/mise-en-prod.
+    VALIDE fige le scénario (est_fige = 1), EN COURS et SIMULATION le défigent
+    (est_fige = 0). EN PRODUCTION n'est accessible que depuis VALIDE, avec les
+    contrôles DSR-707 C4 (trafics calculés) et C5 (un seul scénario en production
+    par site), et pose dt_mise_en_prod = NOW() + est_fige = 1. L'archivage n'est
+    pas possible ici.
     """
     start = time.perf_counter()
     logger.info(
@@ -803,6 +753,11 @@ async def update_statut(id_scenario: int, payload: StatutUpdate):
 
     scenario = await fetch_scenario_or_404(id_scenario)
     assert_transition_allowed(scenario["statut"], payload.statut)
+    mise_en_prod = payload.statut == "EN PRODUCTION"
+    if mise_en_prod:
+        # DSR-707 C4 : mêmes garde-fous que la route OPTIPACC, sinon l'IHM
+        # pourrait produire un scénario en production aux trafics non calculés.
+        assert_trafics_calcules(scenario)
     logger.debug(
         "Transition autorisée %s",
         ctx(depuis=scenario["statut"], vers=payload.statut),
@@ -810,6 +765,11 @@ async def update_statut(id_scenario: int, payload: StatutUpdate):
 
     try:
         async with db_write.transaction() as tx:
+            if mise_en_prod:
+                # DSR-707 C5, dans la transaction (verrou) : RG-API-PROD-005.
+                await assert_aucun_scenario_en_production(
+                    tx, scenario["co_regate"], id_scenario
+                )
             await apply_transition_side_effects(tx, scenario, payload.statut)
             await increment_version(tx, id_scenario)
     except HTTPException:
@@ -843,68 +803,6 @@ async def update_statut(id_scenario: int, payload: StatutUpdate):
             id_scenario=id_scenario,
             statut_avant=scenario.get("statut"),
             statut=payload.statut,
-            duration_ms=duration_ms,
-        ),
-    )
-    return updated
-
-
-@router.post("/{id_scenario}/mise-en-prod", response_model=ScenarioOut)
-async def mise_en_prod(id_scenario: int):
-    """Notifie la mise en production : statut EN PRODUCTION + dt_mise_en_prod = NOW() + est_fige = 1.
-
-    Seule manière d'atteindre le statut EN PRODUCTION. Transition autorisée uniquement
-    depuis VALIDE.
-    """
-    start = time.perf_counter()
-    logger.info("Début mise en production scénario %s", ctx(id_scenario=id_scenario))
-
-    scenario = await fetch_scenario_or_404(id_scenario)
-    assert_internal_transition_allowed(scenario["statut"], "EN PRODUCTION")
-    # DSR-707 C4/C5 : mêmes garde-fous que la route OPTIPACC. Sans eux, l'IHM
-    # resterait un chemin de contournement de RG-API-PROD-005 (un seul scénario
-    # en production par site) et pourrait produire un scénario en production dont
-    # les trafics ne sont pas calculés.
-    assert_trafics_calcules(scenario)
-    logger.debug(
-        "Transition autorisée %s",
-        ctx(depuis=scenario["statut"], vers="EN PRODUCTION"),
-    )
-
-    try:
-        async with db_write.transaction() as tx:
-            await assert_aucun_scenario_en_production(
-                tx, scenario["co_regate"], id_scenario
-            )
-            await apply_transition_side_effects(tx, scenario, "EN PRODUCTION")
-            await increment_version(tx, id_scenario)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(
-            "Erreur mise en production scénario %s",
-            ctx(id_scenario=id_scenario, statut_courant=scenario.get("statut")),
-        )
-        raise HTTPException(status_code=500, detail="Erreur mise en production.") from e
-
-    updated = await fetch_scenario_or_404(id_scenario)
-    duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    await enregistrer_appel(
-        api_name=ACTION_TRANSITION_STATUT,
-        id_scenario=id_scenario,
-        regate=scenario.get("co_regate"),
-        params={
-            "statut_avant": scenario.get("statut"),
-            "statut_apres": "EN PRODUCTION",
-            "delta": diff_champs(scenario, updated),
-        },
-    )
-    logger.info(
-        "Fin mise en production scénario %s",
-        ctx(
-            id_scenario=id_scenario,
-            statut_avant=scenario.get("statut"),
-            statut="EN PRODUCTION",
             duration_ms=duration_ms,
         ),
     )
