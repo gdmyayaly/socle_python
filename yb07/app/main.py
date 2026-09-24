@@ -10,6 +10,9 @@ Traitements métier :
 
     python -m app.main charger-cles-repartition 1
     python -m app.main charger-cles-repartition 1 --fichier autre.csv --json
+    python -m app.main init 1 --dry-run            # chaîne DSR-696→699, marche à blanc
+    python -m app.main init 1 --etape agregats     # une seule étape
+    python -m app.main init 1 --depuis versions    # reprise, puis les étapes suivantes
 
 Les traitements métier s'ajoutent en sous-commandes, sur le modèle de `db-info` :
 une coroutine `cmd_<nom>(args) -> int` enregistrée dans `build_parser()` avec
@@ -38,7 +41,7 @@ from app.erreurs import TraitementImpossible
 from app.json_formatter import setup_logging
 from app.log_utils import ctx, reset_id_traitement, set_id_traitement
 from app.services import s3
-from app.traitements import charger_cles_repartition
+from app.traitements import ETAPES, charger_cles_repartition, initialiser_cles_repartition
 from app.traitements.rapport import ECHEC, Rapport
 
 log = logging.getLogger("yb07")
@@ -237,6 +240,23 @@ async def cmd_charger_cles_repartition(args: argparse.Namespace) -> int:
     )
 
 
+async def cmd_init(args: argparse.Namespace) -> int:
+    """Enchaîne la chaîne d'initialisation des clés de répartition (DSR-696 à DSR-699)."""
+    return await _executer_traitement(
+        lambda a: initialiser_cles_repartition(
+            a.id_traitement,
+            fichier=a.fichier,
+            depuis=a.depuis,
+            etape=a.etape,
+            commentaire=a.commentaire,
+            libelle=a.libelle,
+            dry_run=a.dry_run,
+            controles_longs=not a.sans_controles_longs,
+        ),
+        args,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m app.main",
@@ -317,6 +337,66 @@ def build_parser() -> argparse.ArgumentParser:
         help="Nom du fichier dans le bucket, à défaut de CSV_CLES_REPARTITION.",
     )
     chargement.set_defaults(handler=cmd_charger_cles_repartition)
+
+    init = sous_commandes.add_parser(
+        "init",
+        parents=[commun],
+        help="Initialise les clés de répartition : chargement S3, migration, agrégats, "
+        "versions, clés.",
+    )
+    # Même nom que pour le chargement, et pour la même raison : `main()` le reprend dans ses
+    # logs `Début`/`Fin commande` et `_executer_traitement` le pose comme corrélation.
+    init.add_argument(
+        "id_traitement",
+        type=int,
+        metavar="id_referentiel",
+        help="Référentiel à initialiser. Le fichier CSV doit porter le même.",
+    )
+    init.add_argument(
+        "--fichier",
+        default=None,
+        help="Nom du fichier dans le bucket, à défaut de CSV_CLES_REPARTITION.",
+    )
+    # `choices` fait rejeter un nom d'étape inconnu par argparse, avant toute connexion, et
+    # documente la chaîne dans `--help` sans qu'on ait à la recopier.
+    reprise = init.add_mutually_exclusive_group()
+    reprise.add_argument(
+        "--depuis",
+        choices=ETAPES,
+        metavar="etape",
+        default=None,
+        help=f"Reprend à cette étape et enchaîne les suivantes : {', '.join(ETAPES)}.",
+    )
+    reprise.add_argument(
+        "--etape",
+        choices=ETAPES,
+        metavar="etape",
+        default=None,
+        help="Ne joue que cette étape.",
+    )
+    init.add_argument(
+        "--commentaire",
+        default=None,
+        help="Motif métier porté par les versions de clés créées (DSR-698).",
+    )
+    init.add_argument(
+        "--libelle",
+        default=None,
+        help="Libellé porté par les versions de clés créées (DSR-698).",
+    )
+    init.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Lit et découpe les scripts sans rien écrire. L'étape « chargement » est alors "
+        "sautée : elle n'a pas de mode à blanc.",
+    )
+    init.add_argument(
+        "--sans-controles-longs",
+        action="store_true",
+        help="Saute les contrôles qui balaient les 24 M de lignes (somme des clés, CA3 de "
+        "DSR-699). Une clé fausse ne serait alors pas détectée.",
+    )
+    init.set_defaults(handler=cmd_init)
 
     return parser
 

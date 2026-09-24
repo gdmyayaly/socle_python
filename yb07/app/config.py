@@ -74,3 +74,15 @@ CSV_ENCODAGE = os.getenv("CSV_ENCODAGE", "utf-8-sig")
 # Chargements de masse.
 CHARGEMENT_TAILLE_LOT = _entier_positif("CHARGEMENT_TAILLE_LOT", 5000)
 CHARGEMENT_LOG_TOUTES_LES = _entier_positif("CHARGEMENT_LOG_TOUTES_LES", 100_000)
+
+# Initialisation des clés de répartition (commande `init`).
+#
+# La boucle de création des versions traite un site par itération : journaliser chacun
+# noierait le journal sous plusieurs milliers de lignes INFO, ne rien journaliser laisserait
+# l'étape muette. D'où une ligne d'avancement toutes les N itérations, cadencée sur le
+# volume comme celle du chargement.
+INIT_LOG_TOUS_LES_SITES = _entier_positif("INIT_LOG_TOUS_LES_SITES", 50)
+# Plafond des anomalies de somme de clés journalisées une à une : sur un référentiel
+# intégralement faux, des milliers d'avertissements identiques ne servent personne. Le
+# compte total, lui, est toujours rendu.
+INIT_MAX_ANOMALIES_LOGUEES = _entier_positif("INIT_MAX_ANOMALIES_LOGUEES", 50)

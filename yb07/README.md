@@ -1,44 +1,65 @@
 # yb07
 
-Module **YB07** : une **application console** (pas de serveur HTTP, pas de port) chargée
-de l'**initialisation de la table `trppu_cles_repartition`** — le référentiel des PDI et de
-leurs clés de répartition — à partir d'un fichier CSV déposé sur un stockage S3.
+Module **YB07** : une **application console** (pas de serveur HTTP, pas de port) qui
+**initialise les clés de répartition des PDI** d'un référentiel TRPPU — du fichier CSV livré
+par le métier sur S3 jusqu'aux clés calculées que consomment les traitements de trafic (YB05).
 
-Le module repose sur un socle technique commun aux batchs TRPPU (connexion MySQL,
-journalisation JSON, vérifications de ressources, exécution de scripts `.sql`), auquel il
-ajoute l'accès S3 et le traitement de chargement.
+```
+CSV (S3) ──chargement──▶ trppu_cles_repartition          trafic de chaque PDI (≈ 22-24 M lignes)
+                                │ migration + correctif   le schéma que la suite exige
+                                │ agregats   (DSR-696)
+                                ▼
+                         trppu_trafic_site                le DÉNOMINATEUR : trafic total par site
+                                │ versions   (DSR-698)    un site à la fois
+                                ▼
+                         trppu_version_cle                le CONTENEUR des clés, une version active par site
+                                │ cles       (DSR-699)
+                                ▼
+                         trppu_cles_repartition_calcule   les CLÉS : part de chaque PDI dans son site
+```
 
 | Commande | Rôle |
 |---|---|
 | `db-info` / `db-check` | Diagnostic de la base MySQL |
 | `s3-check` | Diagnostic du stockage S3 et exploration du bucket |
-| `charger-cles-repartition` | Chargement de `trppu_cles_repartition` (≈ 22,4 M de lignes, purge puis commits par lots) |
+| `charger-cles-repartition` | Première étape seule : charge `trppu_cles_repartition` depuis le CSV (purge puis lots commités) |
+| `init` | Chaîne complète en six étapes, ou reprise à partir d'une étape |
 
-> **Historique.** Ce projet s'appelait d'abord `yb06/`, puis `yb04/` : le périmètre YB06
-> défini par DSR-715 / DSR-717 étant autre chose (voir `DSR-715-717_analyse_yb06.txt` à la
-> racine du dépôt). Il a été renommé `yb07/` le 24/09/2026, en remplacement de l'ancien
-> socle vierge `yb07/`, qui ne portait aucun code métier et a été supprimé. Aucun code n'a
-> été perdu.
+Le module repose sur le socle technique commun aux batchs TRPPU (connexion MySQL,
+journalisation JSON, vérifications de ressources, exécution de scripts `.sql`), auquel il
+ajoute l'accès S3, l'injection de paramètres dans les scripts et les traitements métier.
+
+**Point d'attention majeur : l'étape `cles` est irréversible.** Le CA4 de DSR-699 interdit de
+recalculer les clés d'une version existante ; un calcul partiel fige donc les sites restants.
+Toute la conception de `init` (prérequis avant écriture, arrêt net à la première étape en
+échec, refus de rejouer `cles`) découle de cette contrainte — voir
+[`init`](#init--initialiser-les-clés-de-répartition) et [`db/README.md`](db/README.md).
+
+> **Historique.** Ce projet s'est appelé `yb06/`, puis `yb04/` (le périmètre YB06 défini par
+> DSR-715 / DSR-717 étant autre chose, cf. `DSR-715-717_analyse_yb06.txt` à la racine du
+> dépôt). Il a été renommé `yb07/` le 24/09/2026, en remplacement de l'ancien socle vierge
+> `yb07/`, qui ne portait aucun code métier et a été supprimé.
 
 ## Sommaire
 
 - [Démarrage rapide](#démarrage-rapide) · [Aide-mémoire des commandes](#aide-mémoire-des-commandes) · [Prérequis](#prérequis) · [Arborescence](#arborescence)
 - [Configuration](#configuration) — [MySQL](#mysql) · [Logging](#application--logging) · [S3](#s3) · [CSV et chargements](#fichiers-csv-et-chargements)
-- [Commandes](#commandes) — [`db-info`](#db-info--état-de-la-connexion-mysql) · [`db-check`](#db-check--disponibilité-des-instances) · [`s3-check`](#s3-check--explorer-le-bucket-s3) · [`charger-cles-repartition`](#charger-cles-repartition--charger-le-référentiel-des-pdi) · [Ajouter une commande](#ajouter-une-commande-métier)
-- [Procédure de chargement](#procédure-de-chargement)
+- [Commandes](#commandes) — [`db-info`](#db-info--état-de-la-connexion-mysql) · [`db-check`](#db-check--disponibilité-des-instances) · [`s3-check`](#s3-check--explorer-le-bucket-s3) · [`charger-cles-repartition`](#charger-cles-repartition--charger-le-référentiel-des-pdi) · [`init`](#init--initialiser-les-clés-de-répartition) · [Ajouter une commande](#ajouter-une-commande-métier)
+- [Procédure d'initialisation d'un référentiel](#procédure-dinitialisation-dun-référentiel)
 - [Docker](#docker)
 - [Classe utilitaire Database](#classe-utilitaire-database) · [Exécution de scripts SQL](#exécution-de-scripts-sql)
 - [Logging](#logging) · [Tests](#tests) · [Utilisation comme bibliothèque](#utilisation-comme-bibliothèque)
+- Scripts SQL de la chaîne : [`db/README.md`](db/README.md) · Convention de log : [`docs/CONVENTION-LOGS.md`](docs/CONVENTION-LOGS.md)
 
 ## Démarrage rapide
 
 ```bash
 cd yb07
 pip install -r requirements.txt
-cp .env.example .env            # renseigner les SGBD_* puis les S3_*
-python -m app.main db-check     # la base répond ?
-python -m app.main s3-check     # le bucket est accessible ? que contient-il ?
-python -m app.main charger-cles-repartition 1
+cp .env.example .env              # renseigner les SGBD_* puis les S3_*
+python -m app.main db-check       # la base répond ?
+python -m app.main s3-check       # le bucket est accessible ? que contient-il ?
+python -m app.main init 1 --dry-run   # découpe les scripts de la chaîne, n'écrit rien
 ```
 
 Sous Windows (PowerShell), remplacer `cp` par `Copy-Item .env.example .env`. Un
@@ -46,18 +67,19 @@ environnement virtuel est recommandé :
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate       # Windows : .venv\Scripts\Activate.ps1
+source .venv/bin/activate         # Windows : .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
 ## Aide-mémoire des commandes
 
-Toutes les commandes se lancent depuis `yb07/`.
+Toutes les commandes se lancent depuis `yb07/`. Code de retour : `0` si la commande aboutit,
+`1` sinon.
 
 ```bash
 # Aide
 python -m app.main --help
-python -m app.main charger-cles-repartition --help
+python -m app.main init --help                         # liste aussi les noms d'étapes
 
 # Diagnostic MySQL
 python -m app.main db-info
@@ -70,48 +92,74 @@ python -m app.main s3-check --prefixe ""               # racine du bucket
 python -m app.main s3-check --prefixe referentiels/    # un dossier précis
 python -m app.main s3-check --recursif --limite 1000   # toute l'arborescence
 
-# Chargement des clés de répartition
-python -m app.main charger-cles-repartition 1                          # fichier de CSV_CLES_REPARTITION
-python -m app.main charger-cles-repartition 1 --fichier autre.csv      # autre fichier, sans toucher au .env
-python -m app.main charger-cles-repartition 1 --json                   # rapport JSON
-python -m app.main -v charger-cles-repartition 1                       # logs DEBUG
-python -m app.main charger-cles-repartition 1 2>/dev/null              # rapport seul, sans les logs
+# Chargement seul (étape 1 de la chaîne)
+python -m app.main charger-cles-repartition 1
+python -m app.main charger-cles-repartition 1 --fichier autre.csv --json
+
+# Chaîne d'initialisation
+# étapes : chargement, migration, correctif, agregats, versions, cles
+python -m app.main init 1 --dry-run                    # marche à blanc, n'écrit rien
+python -m app.main init 1 --etape migration            # une seule étape
+python -m app.main init 1 --depuis versions            # reprend ici et enchaîne
+python -m app.main init 1 --fichier autre.csv          # autre CSV que CSV_CLES_REPARTITION
+python -m app.main init 1 --depuis versions --commentaire "Livraison 2026-09" --libelle "Réf. 1"
+python -m app.main init 1 --etape cles --sans-controles-longs   # saute le CA3 (sommes de clés)
+python -m app.main init 1                              # la chaîne entière d'un bloc
+
+# Options communes
+python -m app.main -v init 1 --etape agregats          # logs DEBUG
+python -m app.main init 1 --json                       # rapport JSON
+python -m app.main init 1 2>/dev/null                  # rapport seul, sans les logs
 
 # Docker
 docker compose build
 docker compose run --rm yb07 db-check
-docker compose run --rm yb07 charger-cles-repartition 1
+docker compose run --rm yb07 init 1 --etape agregats
 
 # Tests
 python -m pytest tests/
-python -m pytest tests/test_chargement_cles_repartition.py
+python -m pytest tests/test_initialisation.py
 python -m pytest tests/ -k rg3
 ```
-
-Code de retour : `0` si la commande aboutit, `1` sinon.
 
 ## Prérequis
 
 - Python >= 3.12
-- MySQL (une instance en lecture, une en écriture — ou la même pour les deux)
-- Un stockage objet S3 (AWS ou compatible : MinIO, Ceph…) pour les commandes de chargement
+- MySQL (une instance en lecture, une en écriture — ou la même pour les deux). La base doit
+  déjà porter le schéma TRPPU : ce module ne crée aucune table (le déploiement de structure
+  relève de DSR-721 / MD01), il n'ajoute que des index et une colonne (étape `migration`) et
+  élargit trois colonnes (étape `correctif`).
+- Un stockage objet S3 (AWS ou compatible : MinIO, Ceph…) pour l'étape de chargement
+- Le référentiel à initialiser doit être déclaré dans `trppu_referentiel`
 
 ## Arborescence
 
 ```
 yb07/
 ├── app/
-│   ├── config.py           toutes les variables d'environnement, source de vérité
-│   ├── erreurs.py          TraitementImpossible — l'erreur commune
-│   ├── health.py           diagnostics MySQL (fonctions, pas des routes)
-│   ├── json_formatter.py   format de log JSON + setup_logging
-│   ├── log_utils.py        ctx() et l'identifiant de corrélation
-│   ├── main.py             point d'entrée console, une sous-commande par action
-│   ├── db/                 Database : pools, transactions, runner de scripts .sql
-│   ├── services/s3.py      client S3, listing, lecture en streaming
-│   └── traitements/        traitements métier — rendent un Rapport, ne lèvent pas
-├── db/                     scripts .sql du module (cf. db/README.md)
-├── docs/CONVENTION-LOGS.md la convention de log, verrouillée par les tests
+│   ├── config.py               toutes les variables d'environnement, source de vérité
+│   ├── erreurs.py              TraitementImpossible — l'erreur commune
+│   ├── health.py               diagnostics MySQL (fonctions, pas des routes)
+│   ├── json_formatter.py       format de log JSON + setup_logging
+│   ├── log_utils.py            ctx() et l'identifiant de corrélation
+│   ├── main.py                 point d'entrée console, une sous-commande par action
+│   ├── db/
+│   │   ├── mysql.py            Database : pools, transactions, runner de scripts .sql
+│   │   ├── sql_script.py       découpage des scripts (sqlparse, DELIMITER)
+│   │   └── sql_parametres.py   substitue les SET @… d'un script sans le réécrire
+│   ├── services/s3.py          client S3, listing, lecture en streaming
+│   └── traitements/            traitements métier — rendent un Rapport, ne lèvent pas
+│       ├── rapport.py          Rapport, Controle : sortie texte / JSON
+│       ├── cles_repartition.py chargement du CSV (commande charger-cles-repartition)
+│       ├── initialisation.py   orchestration des six étapes (commande init)
+│       └── controles_init.py   prérequis et critères d'acceptation, rejoués en Python
+├── db/                         scripts .sql de la chaîne DSR-696→699 (cf. db/README.md)
+│   ├── DSR-696-699_migration.sql   étape migration
+│   ├── fix_error.sql               étape correctif
+│   ├── DSR-696_site_trafic.sql     étape agregats
+│   ├── DSR-698_version_cle.sql     étape versions
+│   └── DSR-699_cles_calculees.sql  étape cles
+├── docs/CONVENTION-LOGS.md     la convention de log, verrouillée par les tests
 └── tests/
 ```
 
@@ -167,6 +215,8 @@ de vérité en cas de doute.
 | `CSV_ENCODAGE` | `utf-8-sig` | Décode aussi l'UTF-8 nu et absorbe le BOM |
 | `CHARGEMENT_TAILLE_LOT` | `5000` | Nombre de lignes par lot inséré — chaque lot est commité séparément |
 | `CHARGEMENT_LOG_TOUTES_LES` | `100000` | Fréquence des lignes de log d'avancement, en lignes chargées |
+| `INIT_LOG_TOUS_LES_SITES` | `50` | `init`, étape `versions` : fréquence des lignes d'avancement, en sites traités |
+| `INIT_MAX_ANOMALIES_LOGUEES` | `50` | `init`, étape `cles` : plafond des sommes de clés hors tolérance journalisées une à une. Le compte total est toujours rendu. |
 
 > Ne pas mettre de commentaire en fin de ligne dans `.env` : `python-dotenv` ne le retire
 > pas d'une valeur non quotée, il finirait **dans** la valeur.
@@ -187,6 +237,7 @@ python -m app.main <commande> --help   # options d'une commande
 | `db-check` | Disponibilité réelle des instances MySQL lecture et écriture | — |
 | `s3-check` | Configuration S3, test d'accès, et contenu du bucket | `--prefixe`, `--recursif`, `--limite` |
 | `charger-cles-repartition` | Charge `trppu_cles_repartition` depuis un CSV déposé sur S3 | `id_referentiel` (obligatoire), `--fichier` |
+| `init` | Enchaîne toute la chaîne d'initialisation des clés de répartition (DSR-696 à DSR-699) | `id_referentiel` (obligatoire), `--depuis`/`--etape`, `--fichier`, `--commentaire`, `--libelle`, `--dry-run`, `--sans-controles-longs` |
 
 Options communes à toutes les commandes :
 
@@ -383,6 +434,57 @@ En cas d'échec, `RESULTAT : ECHEC`, les lignes fautives passent en `[KO]` et la
 `Motifs :` les reprend. `--json` rend la même chose sous forme structurée
 (`reussi`, `controles`, `etats`, `motifs`, `erreur`).
 
+### `init` — initialiser les clés de répartition
+
+Enchaîne les six étapes qui produisent les clés de répartition des PDI à partir du CSV
+métier : chargement S3, migration de schéma, correctif de colonnes, agrégats par site,
+versions de clés, calcul des clés. L'ordre et les paramètres de chaque script sont décrits
+dans [`db/README.md`](db/README.md).
+
+```bash
+python -m app.main init 1                       # la chaîne entière
+python -m app.main init 1 --dry-run             # découpe les scripts, n'écrit rien
+python -m app.main init 1 --etape agregats      # une seule étape
+python -m app.main init 1 --depuis versions     # reprend ici et enchaîne
+```
+
+| Option | Effet |
+|---|---|
+| `id_referentiel` | Référentiel à initialiser. Le fichier CSV doit porter le même. |
+| `--fichier` | Nom du fichier dans le bucket, à défaut de `CSV_CLES_REPARTITION`. |
+| `--depuis <etape>` | Reprend à cette étape et enchaîne les suivantes. |
+| `--etape <etape>` | Ne joue que cette étape. S'exclut avec `--depuis`. |
+| `--commentaire`, `--libelle` | Portés par les versions de clés créées (DSR-698). |
+| `--dry-run` | Lit et découpe les scripts sans rien écrire. L'étape `chargement` est sautée : elle n'a pas de mode à blanc. |
+| `--sans-controles-longs` | Saute les contrôles qui balaient les 24 M de lignes. Une clé fausse ne serait alors pas détectée. |
+
+Étapes, dans l'ordre : `chargement`, `migration`, `correctif`, `agregats`, `versions`, `cles`.
+
+**Ne pas lancer `init` d'un bloc au premier passage sur un référentiel réel.** Deux étapes se
+comptent en heures (`migration` construit un index sur 24 M de lignes, `cles` en écrit autant)
+et n'émettent aucun avancement : ce sont des `INSERT … SELECT` monolithiques, le socle ne rend
+la main qu'à la fin. Dérouler `--etape` par `--etape`, en relevant le `duration_ms` de chaque
+ligne `Fin étape`, dit si la chaîne entière tiendra dans la fenêtre d'exploitation. Pendant ce
+temps, `yb05/db/suivi.sql` joué depuis un second terminal donne la seule visibilité disponible.
+
+En cas d'échec, le rapport nomme l'étape à reprendre :
+
+```
+[OK] Étape 4/6 agregats — 3412 site(s) agrégé(s)
+[KO] Étape 5/6 versions — 2 site(s) en échec sur 3412 (premiers : 372920, 833280). Le calcul
+     des clés n'est pas joué — le CA4 de DSR-699 figerait définitivement les sites restants.
+
+SITES_TRAITES = 3412
+VERSIONS_CREEES = 3410
+SITES_VERSIONS_KO = 2
+REPRENDRE_A = versions
+```
+
+Relancer `--depuis versions` est sans dommage : DSR-698 ne fait rien pour un site qui a déjà
+sa version active. En revanche, **une fois l'étape `cles` passée, le référentiel est figé** —
+le CA4 de DSR-699 interdit de recalculer les clés d'une version existante, et `init` refuse de
+rejouer l'étape plutôt que de rendre un `[OK]` sur un script qui n'aurait rien écrit.
+
 ### Ajouter une commande métier
 
 Une commande de diagnostic se résume à une coroutine et à son enregistrement :
@@ -413,34 +515,36 @@ async def cmd_mon_traitement(args: argparse.Namespace) -> int:
 Dans les deux cas le parent `commun` apporte `-v` et `--json`, et `_run` ferme les pools
 dans un `finally`. Le code métier ne va jamais dans `main.py`.
 
-## Procédure de chargement
+## Procédure d'initialisation d'un référentiel
 
-Enchaînement type pour charger (ou recharger) un référentiel, chaque étape n'étant lancée
-que si la précédente rend `0` :
+Déroulé recommandé pour un **premier passage sur un référentiel réel** : étape par étape, en
+ne passant à la suivante que si la précédente rend `0` et `RESULTAT : SUCCES`. Chaque
+commande vérifie elle-même ses prérequis avant d'écrire.
 
-1. **Configurer** `.env` : `SGBD_*` (identifiants en écriture), `S3_*`, et
-   `CSV_CLES_REPARTITION` avec le nom du fichier livré par le métier.
-2. **Vérifier la base** — les deux instances doivent être `connected` :
-   ```bash
-   python -m app.main db-check
-   ```
-3. **Localiser le fichier** — ajuster `S3_PREFIXE` jusqu'à voir le CSV dans le listing :
-   ```bash
-   python -m app.main s3-check --prefixe ""
-   python -m app.main s3-check --prefixe referentiels/
-   ```
-4. **Charger** le référentiel voulu (il doit exister dans `trppu_referentiel`) :
-   ```bash
-   python -m app.main charger-cles-repartition 1
-   ```
-   La progression se suit dans les logs (`Avancement chargement clés de répartition …`).
-5. **Contrôler** le rapport : `RESULTAT : SUCCES`, et `LIGNES_CHARGEES` cohérent avec le
-   nombre de lignes du fichier (hors en-tête).
-6. **En cas d'échec** : lire la section `Motifs :`, corriger la cause (fichier, doublons,
-   configuration), puis **relancer la même commande** — la purge initiale la rend
-   rejouable, un chargement partiel n'est pas à nettoyer à la main.
-7. **Après un rechargement**, rejouer les traitements qui dépendent du référentiel (voir
-   l'avertissement de la section [`charger-cles-repartition`](#charger-cles-repartition--charger-le-référentiel-des-pdi)).
+| # | Commande | Durée indicative | Rejouable ? | À contrôler dans le rapport |
+|---|---|---|---|---|
+| 0 | `db-check`, puis `s3-check --prefixe …` | secondes | oui | les deux instances `connected` ; le CSV visible dans le listing |
+| 1 | `init 1 --dry-run` | secondes | oui | les cinq scripts découpés, aucune écriture |
+| 2 | `init 1 --etape chargement` | long (streaming 22 M lignes) | **oui** — purge du référentiel | `LIGNES_CHARGEES`, `LIGNES_ACTIVES` |
+| 3 | `init 1 --etape migration` | **heures** (index sur 24 M lignes) | oui — chaque `ALTER` testé | 4 index et `date_creation` en place |
+| 4 | `init 1 --etape correctif` | variable | oui | totaux en `decimal(35+,19)` |
+| 5 | `init 1 --etape agregats` | long (agrégation 24 M lignes) | **oui** — `DELETE` ciblé puis `INSERT` | nombre de sites, CA2, CA5 (autres référentiels intacts) |
+| 6 | `init 1 --etape versions` | ≈ un script par site | **oui** — un site déjà versionné est sauté | `SITES_TRAITES`, `VERSIONS_CREEES`, `SITES_VERSIONS_KO = 0` |
+| 7 | `init 1 --etape cles` | **heures** (écrit 24 M lignes) | **NON — irréversible** | CA1 (une clé par PDI actif), CA2, CA3 (sommes à 1 ± 10⁻⁴) |
+
+Points de vigilance :
+
+- **Avant l'étape 7**, relire le rapport de l'étape 6 : aucun site en échec, et autant de
+  versions actives que de sites agrégés. `init` le vérifie et refuse de démarrer sinon, mais
+  c'est la dernière occasion de corriger sans créer une nouvelle série de versions.
+- Les étapes `migration` et `cles` **n'émettent aucun avancement** (des `INSERT … SELECT` /
+  `ALTER` monolithiques) : relever le `duration_ms` de chaque ligne `Fin étape` donne la
+  mesure pour les passages suivants. `yb05/db/suivi.sql`, joué depuis une seconde session,
+  est la seule visibilité en cours d'exécution.
+- En cas d'échec, le rapport indique `REPRENDRE_A = <étape>` : corriger la cause, puis
+  `init 1 --depuis <étape>`.
+- Une fois les durées connues et la fenêtre d'exploitation validée, les passages suivants
+  peuvent se faire d'un bloc (`init <id>`), sur un **nouveau** référentiel.
 
 ## Docker
 
@@ -451,14 +555,17 @@ docker compose run --rm yb07 db-info
 docker compose run --rm yb07 db-check
 docker compose run --rm yb07 s3-check --prefixe ""
 docker compose run --rm yb07 charger-cles-repartition 1
-docker compose run --rm yb07 charger-cles-repartition 1 --fichier autre.csv --json
-docker compose run --rm -e CHARGEMENT_TAILLE_LOT=10000 yb07 charger-cles-repartition 1
+docker compose run --rm yb07 init 1 --dry-run
+docker compose run --rm yb07 init 1 --etape agregats
+docker compose run --rm -e INIT_LOG_TOUS_LES_SITES=200 yb07 init 1 --depuis versions
 ```
 
 Le conteneur exécute une commande puis s'arrête : aucun port n'est exposé. La sous-commande
 est passée à l'exécution (`ENTRYPOINT` = `python -m app.main`, `CMD` = `db-check`) : lancé
 sans argument, il fait donc un `db-check`. La configuration vient du `.env` via `env_file`
-(une variable passée par `-e` la surcharge), et `./logs` est monté sur `/app/logs`.
+(une variable passée par `-e` la surcharge), et `./logs` est monté sur `/app/logs`. Les
+scripts de `db/` sont copiés dans l'image (`.dockerignore` n'exclut que `*.md`, `docs/`,
+`tests/`) : `init` y trouve donc ses fichiers.
 
 ## Classe utilitaire Database
 
@@ -611,6 +718,11 @@ métier vit donc dans `app_message`, sous la grammaire
 - L'exécution des scripts SQL (début, fin, avertissements DDL, échecs) — l'aperçu des
   instructions est tronqué à 120 caractères et **jamais** le SQL complet, les scripts de
   données pouvant contenir des informations personnelles.
+- `init` : début et fin de chaque étape (`Début|Fin étape initialisation`, avec `etape`,
+  `rang`, `verdict`, `duration_ms`), les prérequis refusés (`Rejet prérequis
+  initialisation`), chaque site en échec à l'étape `versions` (`Rejet création de version`),
+  et chaque site dont la somme des clés sort de la tolérance (`Rejet contrôle somme des clés`,
+  plafonné à `INIT_MAX_ANOMALIES_LOGUEES` lignes, le compte total restant au rapport).
 
 ### Suivre un chargement en cours
 
@@ -625,11 +737,18 @@ Avancement chargement clés de répartition (id_referentiel=1, lignes=400000, lo
 Le total n'est pas annoncé : le fichier est lu en streaming, il n'est jamais compté
 d'avance. On journalise un volume et un débit, pas un pourcentage inventé.
 
+L'étape `versions` de `init`, elle, connaît son total (la liste des sites est lue d'avance) :
+elle journalise un pourcentage toutes les `INIT_LOG_TOUS_LES_SITES` itérations.
+
+```
+Avancement création des versions (id_referentiel=1, sites=1500, sites_total=3412, pct=44.0, versions_creees=1500, sites_ko=0, debit_sites_s=8.3, duration_ms=180000.0)
+```
+
 ## Tests
 
 ```bash
 python -m pytest tests/                                # tous les tests
-python -m pytest tests/test_s3.py                      # un fichier
+python -m pytest tests/test_initialisation.py          # un fichier
 python -m pytest tests/ -k rg3                         # un sous-ensemble
 python -m pytest tests/ -q                             # sortie compacte
 ```
@@ -649,6 +768,15 @@ remplacés par des doublures, et le code async est lancé via `asyncio.run` (pas
 - `tests/test_s3.py` — résolution de la configuration S3 (identifiants du `.env` ou chaîne
   boto3, adressage path-style), masquage de la clé, listing dossiers/objets, décompression
   `.gz`, fermeture du flux, traduction des erreurs.
+- `tests/test_sql_parametres.py` — injection des paramètres `SET @…` : rendu des littéraux
+  SQL (échappement, `NULL`, dates), refus d'un paramètre absent du script, `SET SESSION` et
+  variables de travail intacts — joué aussi sur le texte réel des scripts de `db/`.
+- `tests/test_scripts_dsr.py` — les scripts de `db/` sans base : nombre d'instructions figé
+  (garde-fou contre une divergence avec `yb05/db/`), ordre des instructions qui porte la
+  rejouabilité, et **périmètre** : aucun DDL de schéma, aucun `LOAD DATA`.
+- `tests/test_initialisation.py` — orchestration de `init` : ordre des étapes, mode
+  d'exécution de chaque script, `--depuis` / `--etape` / `--dry-run`, refus de démarrer sur un
+  état incohérent, et refus de franchir l'étape `cles` quand ce qui précède est incomplet.
 
 `tests/conftest.py` porte `FausseBase`, un substitut de `Database` qui rend des réponses
 indexées par fragment de requête et journalise les écritures dans l'ordre — c'est ce qui
@@ -693,4 +821,5 @@ if __name__ == "__main__":
 
 Socle repris de `yb05/`, dont il partage la structure et les choix techniques ; il est
 dupliqué (et non partagé) avec `yb05/` et `yb06/` : un correctif de `app/db/mysql.py` ou de
-`app/json_formatter.py` est à reporter à la main dans les autres modules.
+`app/json_formatter.py` est à reporter à la main dans les autres modules. Il en va de même
+pour les cinq scripts de `db/`, copies de `yb05/db/`.

@@ -12,12 +12,24 @@ Deux partis pris :
   données » et fait passer le test pour la mauvaise raison ;
 * `FausseBase(lecture_seule=True)` lève sur toute écriture : c'est ainsi qu'on prouve qu'un
   traitement de contrôle n'a rien modifié, plutôt que de le relire.
+
+Les scripts SQL sont **réellement découpés** par la doublure, avec le découpeur du socle, et non
+bouchonnés : un test d'orchestration valide donc au passage ce que l'injection de paramètres a
+produit, et un script corrompu ne peut pas passer pour joué.
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import Any
+
+from app.db.sql_script import (
+    ScriptResult,
+    StatementResult,
+    is_ddl,
+    split_sql_script,
+    statement_preview,
+)
 
 
 def _normaliser(sql: str) -> str:
@@ -59,11 +71,19 @@ class FausseBase:
         *,
         rowcounts: dict[str, int] | None = None,
         lecture_seule: bool = False,
+        rowcounts_scripts: dict[str, int] | None = None,
+        echecs_scripts: dict[str, Exception] | None = None,
     ) -> None:
         self.reponses = {_normaliser(k): v for k, v in (reponses or {}).items()}
         self.rowcounts = {_normaliser(k): v for k, v in (rowcounts or {}).items()}
         self.lecture_seule = lecture_seule
+        # Indexés par début d'aperçu d'instruction, ex. "INSERT INTO trppu_trafic_site" : c'est
+        # ainsi qu'un test fait dire à une instruction combien de lignes elle a écrites.
+        self.rowcounts_scripts = {k.upper(): v for k, v in (rowcounts_scripts or {}).items()}
+        # Indexés par fragment de label, ex. "DSR-698_version_cle.sql@000003".
+        self.echecs_scripts = dict(echecs_scripts or {})
         self.journal: list[tuple[str, str, Any]] = []
+        self.scripts: list[dict[str, Any]] = []
         self.transactions_commitees = 0
         self.transactions_annulees = 0
 
@@ -98,6 +118,77 @@ class FausseBase:
     async def disconnect(self) -> None:  # pragma: no cover - symétrie avec Database
         return None
 
+    # -- scripts SQL ------------------------------------------------------
+
+    async def execute_sql_script(
+        self,
+        script: str,
+        *,
+        label: str = "<script>",
+        transactional: bool = True,
+        continue_on_error: bool = False,
+        dry_run: bool = False,
+        database: str | None = "",
+        disable_foreign_keys: bool = False,
+    ) -> ScriptResult:
+        """Découpe le script pour de vrai, puis rend un `ScriptResult` crédible.
+
+        Le découpage réel est le point : un test d'orchestration prouve ainsi que le texte
+        produit par l'injection de paramètres est toujours un script valide, et le nombre
+        d'instructions attendu est vérifiable sans base.
+        """
+        if self.lecture_seule and not dry_run:
+            raise EcritureInterdite(f"écriture interdite : script {label}")
+
+        for fragment, erreur in self.echecs_scripts.items():
+            if fragment in label:
+                self.scripts.append(
+                    {"label": label, "texte": script, "transactional": transactional,
+                     "dry_run": dry_run, "erreur": erreur}
+                )
+                raise erreur
+
+        instructions = split_sql_script(script)
+        resultat = ScriptResult(
+            sources=[label], transactional=transactional, dry_run=dry_run
+        )
+        for index, sql in enumerate(instructions, start=1):
+            apercu = statement_preview(sql)
+            resultat.statements.append(
+                StatementResult(
+                    source=label,
+                    index=index,
+                    preview=apercu,
+                    is_ddl=is_ddl(sql),
+                    rowcount=-1 if dry_run else self._rowcount_script(apercu),
+                    skipped=dry_run,
+                )
+            )
+        resultat.committed = transactional and not dry_run
+
+        self.scripts.append(
+            {"label": label, "texte": script, "transactional": transactional,
+             "dry_run": dry_run, "resultat": resultat}
+        )
+        return resultat
+
+    async def execute_sql_file(self, path, **options) -> ScriptResult:
+        from pathlib import Path
+
+        chemin = Path(path)
+        return await self.execute_sql_script(
+            chemin.read_text(encoding=options.pop("encoding", "utf-8-sig")),
+            label=str(chemin),
+            **options,
+        )
+
+    def _rowcount_script(self, apercu: str) -> int:
+        normalise = " ".join(apercu.split()).upper()
+        for debut, lignes in self.rowcounts_scripts.items():
+            if normalise.startswith(" ".join(debut.split())):
+                return lignes
+        return 1
+
     # -- utilitaires de test ---------------------------------------------
 
     def _enregistrer(self, genre: str, query: str, params: Any) -> int:
@@ -123,6 +214,24 @@ class FausseBase:
 
     def a_ecrit(self, fragment: str) -> bool:
         return any(_normaliser(fragment) in sql for sql in self.ecritures())
+
+    def scripts_joues(self) -> list[str]:
+        """Labels des scripts exécutés, dans l'ordre."""
+        return [script["label"] for script in self.scripts]
+
+    def texte_du_script(self, fragment_label: str) -> str:
+        """Texte réellement envoyé pour le premier script dont le label contient `fragment`."""
+        for script in self.scripts:
+            if fragment_label in script["label"]:
+                return script["texte"]
+        raise AssertionError(f"aucun script joué ne porte le label : {fragment_label}")
+
+    def script_joue(self, fragment_label: str) -> dict[str, Any]:
+        """Enregistrement complet (label, texte, transactional, dry_run) du premier script."""
+        for script in self.scripts:
+            if fragment_label in script["label"]:
+                return script
+        raise AssertionError(f"aucun script joué ne porte le label : {fragment_label}")
 
     def parametres_de(self, fragment: str) -> list[Any]:
         """Paramètres passés à la première écriture contenant `fragment`."""

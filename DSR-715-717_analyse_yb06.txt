@@ -246,7 +246,8 @@ ete cree, conforme au socle et porteur des deux tickets.
 
   yb05  calcul des trafics PDI et Agrebal
   yb06  socle, futur batch de detection des impacts Agrebal
-  yb07  chargement des cles de repartition (S3 -> base)
+  yb07  initialisation des cles de repartition (S3 -> base,
+        chaine DSR-696 a DSR-699)
 
 Aucun code n'a ete perdu : YB07 conserve l'integralite du traitement de
 chargement et de ses tests.

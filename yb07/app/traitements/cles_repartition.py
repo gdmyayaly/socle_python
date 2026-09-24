@@ -485,4 +485,7 @@ async def _controles_finaux(
         f"{nb_lignes - nb_pdi} ligne(s) en doublon de PDI dans le référentiel.",
     )
     rapport.ok(f"Lignes actives (date_fin_validite NULL) : {nb_actives}")
+    # Conservé, et pas seulement affiché : c'est le nombre de clés que DSR-699 devra produire.
+    # La commande `init` s'en sert pour vérifier son CA1 sans recompter 24 M de lignes.
+    rapport.etats["LIGNES_ACTIVES"] = nb_actives
     rapport.etats["DATE_DEBUT_VALIDITE_MIN"] = controle["debut_validite_min"]
