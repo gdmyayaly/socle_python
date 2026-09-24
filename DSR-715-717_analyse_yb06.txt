@@ -240,15 +240,15 @@ cles de repartition, c'est-a-dire l'initialisation de la table
 correspondante. Ce traitement ne releve pas du perimetre YB06 tel que
 defini par DSR-715 et DSR-717.
 
-Il a donc ete renomme en YB04, et un projet YB06 neuf a ete cree,
-conforme au socle et porteur des deux tickets.
+Il a donc ete renomme en YB04, puis en YB07 (l'ancien socle vierge
+YB07, sans aucun code metier, a ete supprime). Un projet YB06 neuf a
+ete cree, conforme au socle et porteur des deux tickets.
 
-  yb04  chargement des cles de repartition (S3 -> base)
   yb05  calcul des trafics PDI et Agrebal
   yb06  socle, futur batch de detection des impacts Agrebal
-  yb07  socle vierge, point de depart d'un futur module
+  yb07  chargement des cles de repartition (S3 -> base)
 
-Aucun code n'a ete perdu : YB04 conserve l'integralite du traitement de
+Aucun code n'a ete perdu : YB07 conserve l'integralite du traitement de
 chargement et de ses tests.
 
 

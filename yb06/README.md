@@ -426,7 +426,7 @@ zéro `trafic_pdi_calcule` et `trafic_agrebal_calcule`. Il ne calcule **aucun** 
 le recalcul reste réalisé par YB05.
 
 Il s'ajoutera comme une sous-commande, sur le modèle décrit plus haut, avec un package
-`app/traitements/` rendant un `Rapport` — le module `yb04/` en porte une implémentation
+`app/traitements/` rendant un `Rapport` — le module `yb07/` en porte une implémentation
 directement reprenable.
 
 **Avant tout développement**, quatre points du ticket doivent être tranchés : le service
@@ -438,5 +438,5 @@ pas spécifiée, les critères de sélection diffèrent de ceux de DSR-715, et l
 ---
 
 Socle repris de `yb05/`, dont il partage la structure et les choix techniques. Le module
-`yb04/` en montre une mise en œuvre complète : accès S3, traitement métier et rapport
+`yb07/` en montre une mise en œuvre complète : accès S3, traitement métier et rapport
 d'exploitation.
