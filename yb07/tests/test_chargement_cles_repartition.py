@@ -312,3 +312,67 @@ def test_le_traitement_ne_leve_jamais(monkeypatch, s3_bouchonne, brancher_base):
 
     assert rapport.statut == ECHEC
     assert "boom" in (rapport.erreur or "")
+
+
+# --- Source locale ----------------------------------------------------------
+
+
+def test_chargement_depuis_un_fichier_local(monkeypatch, tmp_path, brancher_base):
+    """Fichier réel sur disque : S3 ne doit jamais être sollicité."""
+
+    def interdit(*args, **kwargs):
+        raise AssertionError("S3 sollicité pour un chargement local")
+
+    monkeypatch.setattr(module.s3, "verifier_presence", interdit)
+    monkeypatch.setattr(module.s3, "ouvrir_objet", interdit)
+    fichier = tmp_path / "cles.csv"
+    fichier.write_text(csv_de(LIGNE_PLEINE), encoding="utf-8")
+    base = brancher_base(base_nominale())
+
+    rapport = charger(id_referentiel=1, chemin_local=str(fichier))
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    assert rapport.etats["LIGNES_CHARGEES"] == 1
+    assert any("présent en local" in c.libelle for c in rapport.controles)
+    ecritures = base.ecritures()
+    assert "DELETE FROM trppu_cles_repartition" in ecritures[0]
+    assert "INSERT INTO trppu_cles_repartition" in ecritures[1]
+
+
+def test_fichier_local_absent_rejette_avant_la_purge(tmp_path, brancher_base):
+    base = brancher_base(base_nominale())
+
+    rapport = charger(id_referentiel=1, chemin_local=str(tmp_path / "absent.csv"))
+
+    assert rapport.statut == ECHEC
+    assert "introuvable" in " ".join(rapport.motifs)
+    assert base.ecritures() == []
+
+
+def test_commande_locale_analyse_ses_arguments():
+    from app.main import build_parser, cmd_charger_cles_repartition_local
+
+    args = build_parser().parse_args(
+        ["charger-cles-repartition-local", "3", "data/cles.csv"]
+    )
+
+    assert args.id_traitement == 3
+    assert args.chemin == "data/cles.csv"
+    assert args.handler is cmd_charger_cles_repartition_local
+
+
+def test_commande_locale_transmet_le_chemin(monkeypatch):
+    import app.main as main
+
+    recu = {}
+
+    async def _faux(id_referentiel, fichier=None, *, chemin_local=None):
+        recu.update(id_referentiel=id_referentiel, chemin_local=chemin_local)
+        return module.Rapport(titre="T", id_traitement=id_referentiel)
+
+    monkeypatch.setattr(main, "charger_cles_repartition", _faux)
+    args = main.build_parser().parse_args(["charger-cles-repartition-local", "2", "x.csv"])
+
+    asyncio.run(main.cmd_charger_cles_repartition_local(args))
+
+    assert recu == {"id_referentiel": 2, "chemin_local": "x.csv"}

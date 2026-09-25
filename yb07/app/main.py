@@ -10,6 +10,7 @@ Traitements métier :
 
     python -m app.main charger-cles-repartition 1
     python -m app.main charger-cles-repartition 1 --fichier autre.csv --json
+    python -m app.main charger-cles-repartition-local 1 data/cles.csv
     python -m app.main init 1 --dry-run            # chaîne DSR-696→699, marche à blanc
     python -m app.main init 1 --etape agregats     # une seule étape
     python -m app.main init 1 --depuis versions    # reprise, puis les étapes suivantes
@@ -239,6 +240,13 @@ async def cmd_charger_cles_repartition(args: argparse.Namespace) -> int:
     )
 
 
+async def cmd_charger_cles_repartition_local(args: argparse.Namespace) -> int:
+    """Charge `trppu_cles_repartition` depuis un CSV du disque local."""
+    return await _executer_traitement(
+        lambda a: charger_cles_repartition(a.id_traitement, chemin_local=a.chemin), args
+    )
+
+
 async def cmd_init(args: argparse.Namespace) -> int:
     """Enchaîne la chaîne d'initialisation des clés de répartition (DSR-696 à DSR-699)."""
     return await _executer_traitement(
@@ -336,6 +344,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Nom du fichier dans le bucket, à défaut de CSV_CLES_REPARTITION.",
     )
     chargement.set_defaults(handler=cmd_charger_cles_repartition)
+
+    chargement_local = sous_commandes.add_parser(
+        "charger-cles-repartition-local",
+        parents=[commun],
+        help="Charge trppu_cles_repartition depuis un CSV du disque local (S3 non sollicité).",
+    )
+    # Même nom que pour le chargement S3 : `main()` et `_executer_traitement` le reprennent.
+    chargement_local.add_argument(
+        "id_traitement",
+        type=int,
+        metavar="id_referentiel",
+        help="Référentiel à charger. Le fichier doit porter le même.",
+    )
+    chargement_local.add_argument(
+        "chemin",
+        help="Chemin du fichier CSV (ou .csv.gz), absolu ou relatif au dossier courant.",
+    )
+    chargement_local.set_defaults(handler=cmd_charger_cles_repartition_local)
 
     init = sous_commandes.add_parser(
         "init",

@@ -3,6 +3,7 @@
 | Traitement | Commande | Description |
 | --- | --- | --- |
 | `charger_cles_repartition` | `charger-cles-repartition` | Charge `trppu_cles_repartition` depuis un CSV déposé sur S3 |
+| `charger_cles_repartition(..., chemin_local=...)` | `charger-cles-repartition-local` | Idem, depuis un CSV du disque local |
 | `initialiser_cles_repartition` | `init` | Enchaîne la chaîne DSR-696→699 : chargement, migration, agrégats, versions, clés |
 
 Chaque traitement retourne un `Rapport`. **Aucun ne lève ni n'écrit sur la sortie

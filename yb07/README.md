@@ -23,6 +23,7 @@ CSV (S3) ──chargement──▶ trppu_cles_repartition          trafic de cha
 | `db-info` / `db-check` | Diagnostic de la base MySQL |
 | `s3-check` | Diagnostic du stockage S3 et exploration du bucket |
 | `charger-cles-repartition` | Première étape seule : charge `trppu_cles_repartition` depuis le CSV (purge puis lots commités) |
+| `charger-cles-repartition-local` | Idem, depuis un CSV du disque local au lieu de S3 |
 | `init` | Chaîne complète en six étapes, ou reprise à partir d'une étape |
 
 Le module repose sur le socle technique commun aux batchs TRPPU (connexion MySQL,
@@ -44,7 +45,7 @@ Toute la conception de `init` (prérequis avant écriture, arrêt net à la prem
 
 - [Démarrage rapide](#démarrage-rapide) · [Aide-mémoire des commandes](#aide-mémoire-des-commandes) · [Prérequis](#prérequis) · [Arborescence](#arborescence)
 - [Configuration](#configuration) — [MySQL](#mysql) · [Logging](#application--logging) · [S3](#s3) · [CSV et chargements](#fichiers-csv-et-chargements)
-- [Commandes](#commandes) — [`db-info`](#db-info--état-de-la-connexion-mysql) · [`db-check`](#db-check--disponibilité-des-instances) · [`s3-check`](#s3-check--explorer-le-bucket-s3) · [`charger-cles-repartition`](#charger-cles-repartition--charger-le-référentiel-des-pdi) · [`init`](#init--initialiser-les-clés-de-répartition) · [Ajouter une commande](#ajouter-une-commande-métier)
+- [Commandes](#commandes) — [`db-info`](#db-info--état-de-la-connexion-mysql) · [`db-check`](#db-check--disponibilité-des-instances) · [`s3-check`](#s3-check--explorer-le-bucket-s3) · [`charger-cles-repartition`](#charger-cles-repartition--charger-le-référentiel-des-pdi) · [`charger-cles-repartition-local`](#charger-cles-repartition-local--charger-depuis-un-fichier-local) · [`init`](#init--initialiser-les-clés-de-répartition) · [Ajouter une commande](#ajouter-une-commande-métier)
 - [Procédure d'initialisation d'un référentiel](#procédure-dinitialisation-dun-référentiel)
 - [Docker](#docker)
 - [Classe utilitaire Database](#classe-utilitaire-database) · [Exécution de scripts SQL](#exécution-de-scripts-sql)
@@ -95,6 +96,7 @@ python -m app.main s3-check --recursif --limite 1000   # toute l'arborescence
 # Chargement seul (étape 1 de la chaîne)
 python -m app.main charger-cles-repartition 1
 python -m app.main charger-cles-repartition 1 --fichier autre.csv --json
+python -m app.main charger-cles-repartition-local 1 data/cles.csv
 
 # Chaîne d'initialisation
 # étapes : chargement, migration, correctif, agregats, versions, cles
@@ -148,6 +150,7 @@ yb07/
 │   │   ├── sql_script.py       découpage des scripts (sqlparse, DELIMITER)
 │   │   └── sql_parametres.py   substitue les SET @… d'un script sans le réécrire
 │   ├── services/s3.py          client S3, listing, lecture en streaming
+│   ├── services/fichier_local.py  même lecture en streaming, depuis le disque local
 │   └── traitements/            traitements métier — rendent un Rapport, ne lèvent pas
 │       ├── rapport.py          Rapport, Controle : sortie texte / JSON
 │       ├── cles_repartition.py chargement du CSV (commande charger-cles-repartition)
@@ -239,6 +242,7 @@ python -m app.main <commande> --help   # options d'une commande
 | `db-check` | Disponibilité réelle des instances MySQL lecture et écriture | — |
 | `s3-check` | Configuration S3, test d'accès, et contenu du bucket | `--prefixe`, `--recursif`, `--limite` |
 | `charger-cles-repartition` | Charge `trppu_cles_repartition` depuis un CSV déposé sur S3 | `id_referentiel` (obligatoire), `--fichier` |
+| `charger-cles-repartition-local` | Même chargement, depuis un CSV du disque local | `id_referentiel`, `chemin` (obligatoires) |
 | `init` | Enchaîne toute la chaîne d'initialisation des clés de répartition (DSR-696 à DSR-699) | `id_referentiel` (obligatoire), `--depuis`/`--etape`, `--fichier`, `--commentaire`, `--libelle`, `--dry-run`, `--sans-controles-longs` |
 
 Options communes à toutes les commandes :
@@ -434,6 +438,30 @@ RESULTAT : SUCCES
 En cas d'échec, `RESULTAT : ECHEC`, les lignes fautives passent en `[KO]` et la section
 `Motifs :` les reprend. `--json` rend la même chose sous forme structurée
 (`reussi`, `controles`, `etats`, `motifs`, `erreur`).
+
+### `charger-cles-repartition-local` — charger depuis un fichier local
+
+```bash
+python -m app.main charger-cles-repartition-local 1 data/cles.csv
+python -m app.main charger-cles-repartition-local 1 "C:/depot/cles_repartitions.csv.gz" --json
+```
+
+Même traitement que `charger-cles-repartition` — mêmes garde-fous, même purge, mêmes
+règles, même rapport — mais le CSV est lu sur le disque. **S3 n'est pas sollicité** : les
+variables `S3_*` et `AWS_*` peuvent rester vides. Utile en développement, en recette, ou
+pour un fichier transmis hors bucket.
+
+| Argument | Effet |
+|---|---|
+| `id_referentiel` | **Obligatoire.** Comme pour le chargement S3. |
+| `chemin` | **Obligatoire.** Chemin du fichier, absolu ou relatif au dossier courant. Un `.gz` est décompressé à la volée. |
+
+Le fichier est localisé (existence, lisibilité) **avant** la purge. `CSV_CLES_REPARTITION`
+n'est pas utilisé ; `CSV_DELIMITEUR` et `CSV_ENCODAGE` s'appliquent. Dans le rapport, la
+ligne de localisation devient `Fichier '…' présent en local (… octets)`.
+
+En Docker, le fichier doit être visible dans le conteneur : monter son dossier en volume
+(`-v /chemin/hote:/data`) et passer `/data/cles.csv`.
 
 ### `init` — initialiser les clés de répartition
 

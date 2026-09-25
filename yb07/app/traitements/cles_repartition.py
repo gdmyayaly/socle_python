@@ -1,6 +1,10 @@
-"""Chargement du référentiel des clés de répartition des PDI, depuis un CSV sur S3.
+"""Chargement du référentiel des clés de répartition des PDI, depuis un CSV.
 
-    fichier CSV (S3)  →  trppu_cles_repartition
+    fichier CSV (S3 ou disque local)  →  trppu_cles_repartition
+
+La source nominale est le bucket S3. Un fichier du disque local peut la remplacer
+(`chemin_local`) : seul l'accès au fichier change, les règles ci-dessous s'appliquent à
+l'identique.
 
 Les règles de gestion viennent du chargement historique, écrit en SQL pur dans le projet
 voisin (`yb05/db/DSR-697_chargement_cles_repartition.sql`) :
@@ -48,7 +52,7 @@ from app.config import (
 from app.db.mysql import db_read, db_write
 from app.erreurs import TraitementImpossible
 from app.log_utils import ctx
-from app.services import s3
+from app.services import fichier_local, s3
 from app.traitements.rapport import ECHEC, SUCCES, Rapport
 
 logger = logging.getLogger(__name__)
@@ -257,14 +261,19 @@ def _lire_lot(lecteur: Iterator[dict[str, str]], taille: int) -> list[dict[str, 
 
 
 async def charger_cles_repartition(
-    id_referentiel: int, fichier: str | None = None
+    id_referentiel: int,
+    fichier: str | None = None,
+    *,
+    chemin_local: str | None = None,
 ) -> Rapport:
-    """Charge `trppu_cles_repartition` depuis le CSV du bucket S3.
+    """Charge `trppu_cles_repartition` depuis le CSV du bucket S3, ou d'un fichier local.
 
-    `fichier` surcharge `CSV_CLES_REPARTITION` pour un rechargement ponctuel.
+    `fichier` surcharge `CSV_CLES_REPARTITION` pour un rechargement ponctuel depuis S3.
+    `chemin_local`, s'il est renseigné, désigne un fichier du disque : S3 n'est alors pas
+    sollicité et `fichier` est ignoré.
     """
     debut = time.perf_counter()
-    nom_fichier = fichier or CSV_CLES_REPARTITION
+    nom_fichier = chemin_local or fichier or CSV_CLES_REPARTITION
     rapport = Rapport(
         titre=TITRE,
         id_traitement=id_referentiel,
@@ -273,7 +282,12 @@ async def charger_cles_repartition(
 
     logger.info(
         "Début chargement clés de répartition %s",
-        ctx(id_referentiel=id_referentiel, fichier=nom_fichier, bucket=S3_BUCKET),
+        ctx(
+            id_referentiel=id_referentiel,
+            fichier=nom_fichier,
+            source="local" if chemin_local else "s3",
+            bucket=None if chemin_local else S3_BUCKET,
+        ),
     )
 
     if not nom_fichier:
@@ -283,7 +297,16 @@ async def charger_cles_repartition(
         rapport.statut = ECHEC
         return rapport
 
-    cle = s3.chemin_objet(nom_fichier)
+    if chemin_local:
+        cle = chemin_local
+        localiser = fichier_local.verifier_presence
+        ouvrir = fichier_local.ouvrir
+        libelle_source = "en local"
+    else:
+        cle = s3.chemin_objet(nom_fichier)
+        localiser = s3.verifier_presence
+        ouvrir = s3.ouvrir_objet
+        libelle_source = "sur S3"
     lignes_inserees = 0
     lots = 0
 
@@ -312,8 +335,8 @@ async def charger_cles_repartition(
 
         # Localiser le fichier avant de purger : découvrir son absence après avoir
         # supprimé 22 M de lignes coûterait un rechargement complet.
-        taille = await asyncio.to_thread(s3.verifier_presence, cle)
-        rapport.ok(f"Fichier '{cle}' présent sur S3 ({taille} octets)")
+        taille = await asyncio.to_thread(localiser, cle)
+        rapport.ok(f"Fichier '{cle}' présent {libelle_source} ({taille} octets)")
 
         # --- RG6 : purge du référentiel cible ------------------------------
         supprimees = await db_write.execute(PURGE_SQL, (id_referentiel,))
@@ -324,7 +347,7 @@ async def charger_cles_repartition(
         rapport.ok(f"Purge du référentiel : {supprimees} ligne(s) supprimée(s)")
 
         # --- Lecture en streaming et insertion par lots ---------------------
-        lignes_inserees, lots = await _charger(cle, id_referentiel, debut)
+        lignes_inserees, lots = await _charger(ouvrir, cle, id_referentiel, debut)
 
     except TraitementImpossible as erreur:
         logger.warning(
@@ -372,13 +395,19 @@ async def charger_cles_repartition(
     return rapport
 
 
-async def _charger(cle: str, id_referentiel: int, debut: float) -> tuple[int, int]:
-    """Lit le CSV en streaming et insère par lots. Retourne (lignes, lots)."""
+async def _charger(
+    ouvrir, cle: str, id_referentiel: int, debut: float
+) -> tuple[int, int]:
+    """Lit le CSV en streaming et insère par lots. Retourne (lignes, lots).
+
+    `ouvrir` est `s3.ouvrir_objet` ou `fichier_local.ouvrir` : même signature, un
+    gestionnaire de contexte qui rend un flux texte.
+    """
     lignes_inserees = 0
     lots = 0
     prochain_jalon = CHARGEMENT_LOG_TOUTES_LES
 
-    with s3.ouvrir_objet(cle, encodage=CSV_ENCODAGE) as flux:
+    with ouvrir(cle, encodage=CSV_ENCODAGE) as flux:
         lecteur = csv.DictReader(flux, delimiter=CSV_DELIMITEUR)
         verifier_entete(lecteur.fieldnames)
 
