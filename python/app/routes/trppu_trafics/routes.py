@@ -1,5 +1,5 @@
-"""DSR-679 — Endpoint de récupération des trafics pivot (structure gold `_3`)."""
-
+# Si la connexion Databricks ne fonctionne plus après le 23/09/2028,
+# vérifier et renouveler le secret Databricks (expiré).
 import logging
 import time
 
