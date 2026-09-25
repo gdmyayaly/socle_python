@@ -114,7 +114,7 @@ Fichiers : `app/routes/trppu_pic_coefficients/`. **⚠️ Module cassé** (écri
 | Trafics (613/666) | `GET /trafics/get_trafics`, `/get_trafics_pivot` | 🔎 lecture **Databricks** (aucune écriture MySQL) |
 | Calcul jours (613) | `GET /calcl_nbr_jours/get_nb_jours` | 🔎 API jours-fermes, aucune écriture |
 | Audit id_rh | `POST /audit/actions-id-rh` | 🔎 SELECT multi-tables + déchiffrement |
-| Health / Databricks / MySQL-debug / Logs | ~15 endpoints | 🔎 introspection / fichiers (`POST /mysql/import` écrit en dynamique, hors métier) |
+| Health / Databricks / Logs | ~6 endpoints | 🔎 introspection / fichiers |
 
 ---
 

@@ -197,11 +197,13 @@ de vérité en cas de doute.
 
 ### S3
 
+Aucune région n'est configurée : boto3 retombe sur `us-east-1`, valeur que les S3 internes
+acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
+
 | Variable | Par défaut | Description |
 |---|---|---|
 | `S3_ENDPOINT_URL` | `""` | Endpoint du stockage. Renseigné, il désigne un S3 interne (MinIO, Ceph…) et l'adressage passe en *path-style*. Vide = AWS. |
-| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `""` | Identifiants. **Vides, boto3 résout seul** (rôle de la machine, profil `~/.aws`, variables `AWS_*`). Renseignés, ils priment. Il faut les deux : une clé sans secret est ignorée. |
-| `S3_REGION` | `us-east-1` | Région ; une valeur est exigée par la signature même sur un S3 interne |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `""` | Identifiants (noms standard AWS). **Vides, boto3 résout seul** (rôle de la machine, profil `~/.aws`). Renseignés, ils priment. Il faut les deux : une clé sans secret est ignorée. |
 | `S3_BUCKET` | `""` | Bucket source |
 | `S3_PREFIXE` | `""` | Dossier dans le bucket, sans slash de début ni de fin ; vide = racine |
 | `S3_TIMEOUT` | `60` | Délai d'attente réseau, en secondes |
@@ -315,11 +317,10 @@ python -m app.main s3-check --recursif --limite 1000 # toute l'arborescence
 ```
 Configuration S3
   endpoint     : https://s3.interne.example
-  region       : us-east-1
   bucket       : trppu
   prefixe      : referentiels/
   adressage    : path
-  identifiants : explicites (S3_ACCESS_KEY=AK**********90)
+  identifiants : explicites (AWS_ACCESS_KEY_ID=AK**********90)
 Accès : ok
   buckets visibles : trppu, archives
 

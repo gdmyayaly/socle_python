@@ -77,7 +77,7 @@ documents transverses (incompréhensions, améliorations).
 Modules `app/routes/` suivant le patron `routes.py` / `helpers.py` / `schemas.py` :
 `trppu_scenario`, `trppu_site`, `trppu_produit`, `trppu_pic_version`,
 `trppu_pic_coefficients`, plus `trafics.py`, `calcl_nbr_jours.py`, `logs.py`,
-`databricks.py`, `health.py`, `mysql_debug.py`.
+`databricks.py`, `health.py`.
 
 Briques réutilisables :
 - `app/db/mysql.py` : `db_read`, `db_write`, `db_write.transaction()` (commit/rollback auto).

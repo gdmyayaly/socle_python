@@ -147,13 +147,12 @@ async def cmd_s3_check(args: argparse.Namespace) -> int:
     else:
         print("Configuration S3")
         print(f"  endpoint     : {config['endpoint']}")
-        print(f"  region       : {config['region']}")
         print(f"  bucket       : {config['bucket']}")
         print(f"  prefixe      : {config['prefixe']}")
         print(f"  adressage    : {config['adressage']}")
         identifiants = config["identifiants"]
         if config["access_key"]:
-            identifiants += f" (S3_ACCESS_KEY={config['access_key']})"
+            identifiants += f" (AWS_ACCESS_KEY_ID={config['access_key']})"
         print(f"  identifiants : {identifiants}")
         if config["avertissement"]:
             print(f"  ATTENTION    : {config['avertissement']}")

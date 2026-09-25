@@ -481,8 +481,6 @@ Autres endpoints (`GET` liste/détail/enums, `PUT`, `DELETE` soft, `upload-excel
 | --- | --- | --- | --- | --- |
 | `GET /`, `/health`, `/health/resources` | — | état/diagnostic | config + ping MySQL/Databricks | — |
 | `GET /databricks/test` | — | résultat test | Databricks | — |
-| `GET /mysql/test\|tables\|columns\|indexes\|sample\|schema\|dump\|export` | query selon cas | introspection | information_schema / tables | — |
-| `POST /mysql/import` | `{table, rows[], columns?, truncate}` | bilan | schéma table | **INSERT dynamique** (+ TRUNCATE) — outil hors métier |
 | `GET /logs/latest` | — | fichier log | — | — |
 | `DELETE /logs` | query `keep_today` | bilan | — | **fichiers** (pas la base) |
 

@@ -196,8 +196,6 @@ sur la table réelle (`coef, densite, dt_fin, id_rh`, enum `LUNDI…SAMEDI`). **
 | --- | --- | --- | --- |
 | Health | `GET /`, `/health`, `/health/resources` | état config + connectivité MySQL/Databricks | 🔎 |
 | Databricks | `GET /databricks/test` | test de requête | 🔎 |
-| MySQL debug | `GET /mysql/test|tables|columns|indexes|sample|schema|dump|export` | introspection schéma/données | 🔎 |
-| MySQL debug | `POST /mysql/import` | import générique (outil) | INSERT dynamique table arbitraire (hors métier) |
 | Logs | `GET /logs/latest`, `DELETE /logs` | fichiers de log | écrit/truncate **fichiers** (pas la base) |
 
 ---

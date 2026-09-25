@@ -116,8 +116,8 @@ def erreur_client(code: str) -> ClientError:
 def test_identifiants_du_env_utilises_quand_ils_sont_renseignes(
     monkeypatch, bouchonner_boto3
 ):
-    monkeypatch.setattr(s3, "S3_ACCESS_KEY", "utilisateur")
-    monkeypatch.setattr(s3, "S3_SECRET_KEY", "motdepasse")
+    monkeypatch.setattr(s3, "AWS_ACCESS_KEY_ID", "utilisateur")
+    monkeypatch.setattr(s3, "AWS_SECRET_ACCESS_KEY", "motdepasse")
     options = bouchonner_boto3(FauxClient())
 
     s3.construire_client()
@@ -127,9 +127,9 @@ def test_identifiants_du_env_utilises_quand_ils_sont_renseignes(
 
 
 def test_sans_identifiants_on_laisse_boto3_resoudre(monkeypatch, bouchonner_boto3):
-    """Rôle IAM, profil ~/.aws, variables AWS_* : boto3 s'en charge seul."""
-    monkeypatch.setattr(s3, "S3_ACCESS_KEY", "")
-    monkeypatch.setattr(s3, "S3_SECRET_KEY", "")
+    """Rôle IAM, profil ~/.aws : boto3 s'en charge seul."""
+    monkeypatch.setattr(s3, "AWS_ACCESS_KEY_ID", "")
+    monkeypatch.setattr(s3, "AWS_SECRET_ACCESS_KEY", "")
     options = bouchonner_boto3(FauxClient())
 
     s3.construire_client()
@@ -140,13 +140,23 @@ def test_sans_identifiants_on_laisse_boto3_resoudre(monkeypatch, bouchonner_boto
 
 def test_identifiants_incomplets_ignores(monkeypatch, bouchonner_boto3):
     """Une clé sans secret ne doit pas produire une configuration à moitié posée."""
-    monkeypatch.setattr(s3, "S3_ACCESS_KEY", "utilisateur")
-    monkeypatch.setattr(s3, "S3_SECRET_KEY", "")
+    monkeypatch.setattr(s3, "AWS_ACCESS_KEY_ID", "utilisateur")
+    monkeypatch.setattr(s3, "AWS_SECRET_ACCESS_KEY", "")
     options = bouchonner_boto3(FauxClient())
 
     s3.construire_client()
 
     assert "aws_access_key_id" not in options[0]
+
+
+def test_aucune_region_imposee(bouchonner_boto3):
+    """La région est laissée à boto3 : us-east-1 par défaut, accepté par les S3 internes."""
+    options = bouchonner_boto3(FauxClient())
+
+    s3.construire_client()
+
+    assert "region_name" not in options[0]
+    assert "region" not in s3.decrire_configuration()
 
 
 def test_endpoint_force_l_adressage_path_style(monkeypatch, bouchonner_boto3):
@@ -261,8 +271,8 @@ def test_bucket_non_configure_refuse_avant_tout_appel(monkeypatch):
 
 
 def test_la_cle_est_masquee_et_le_secret_jamais_restitue(monkeypatch):
-    monkeypatch.setattr(s3, "S3_ACCESS_KEY", "AKIA1234567890")
-    monkeypatch.setattr(s3, "S3_SECRET_KEY", "secret-tres-confidentiel")
+    monkeypatch.setattr(s3, "AWS_ACCESS_KEY_ID", "AKIA1234567890")
+    monkeypatch.setattr(s3, "AWS_SECRET_ACCESS_KEY", "secret-tres-confidentiel")
 
     config = s3.decrire_configuration()
 
@@ -272,8 +282,8 @@ def test_la_cle_est_masquee_et_le_secret_jamais_restitue(monkeypatch):
 
 def test_identifiants_incomplets_signales(monkeypatch):
     """Sans cet avertissement, on cherche longtemps pourquoi la clé n'est pas utilisée."""
-    monkeypatch.setattr(s3, "S3_ACCESS_KEY", "AKIA123")
-    monkeypatch.setattr(s3, "S3_SECRET_KEY", "")
+    monkeypatch.setattr(s3, "AWS_ACCESS_KEY_ID", "AKIA123")
+    monkeypatch.setattr(s3, "AWS_SECRET_ACCESS_KEY", "")
 
     config = s3.decrire_configuration()
 

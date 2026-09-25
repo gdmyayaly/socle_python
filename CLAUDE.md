@@ -31,6 +31,8 @@ python -m pytest tests/test_crypto.py         # one file
 python -m pytest tests/test_crypto.py -k name # one test
 ```
 
+**Tests are mandatory.** Every change to `python/app/` ships with tests in `python/tests/`: the new behaviour, its error cases (4xx), and its branches. The project must eventually pass a Sonar quality gate; the global Sonar compliance work (coverage config, `sonar-project.properties`, back-filling tests on existing code) is planned for later — don't start it unless asked. Tests run without MySQL or Databricks: fake `db_read`/`db_write` with `monkeypatch`, as the existing tests do.
+
 Configuration comes from `python/.env` (loaded by `app/config.py`). Note: `app/config.py` is the source of truth for env var names (`SGBD_SERVER_WRITE`, `SGBD_APP_USER_READ`, `SGBD_APP_PWD_WRITE`, `SGBD_DB_NAME`, `DATABRICKS_*`, `JOURS_FERMES_API_*`…) — the table in `python/README.md` is partially outdated. `SKIP_MYSQL=true` skips MySQL connection.
 
 Swagger UI is at `/docs` and is served from local static assets (`app/static/swagger-ui/`) so it works offline — don't reintroduce CDN URLs.
@@ -46,7 +48,7 @@ Swagger UI is at `/docs` and is served from local static assets (`app/static/swa
 - `schemas.py` — Pydantic v2 request/response models
 - `helpers.py` — SQL constants and business logic (e.g. `fetch_scenario_or_404`, `assert_editable`, cascade deletes)
 
-Follow this structure when adding a new domain. Flat modules in `app/routes/` (`health.py`, `databricks.py`, `mysql_debug.py`, `calcl_nbr_jours.py`) are older/utility routes.
+Follow this structure when adding a new domain. Flat modules in `app/routes/` (`health.py`, `databricks.py`, `calcl_nbr_jours.py`) are older/utility routes. The former `/mysql/*` debug routes (`mysql_debug.py`, incl. the unauthenticated `POST /mysql/import`) were removed on 24/09/2026 — don't reintroduce them.
 
 **Cross-cutting pieces:**
 - `app/services/jours_fermes_client.py` — external "jours fermés" (closed days) API client with TTL cache; its `JoursFermesAPIError` is mapped to a 503 by a global exception handler in `main.py`. `app/services/jours_service.py` computes working-day counts (`compute_nb_jours`), used when scenario periods change.

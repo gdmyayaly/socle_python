@@ -52,7 +52,6 @@
 |---|---|---|
 | `/` , `/health` | health | Santé |
 | `/databricks` | databricks | Debug Databricks |
-| `/mysql` | mysql_debug | Debug/admin MySQL |
 | `/trppu-api/trafics` | trafics | Trafics Databricks |
 | `/trppu-api/calcl_nbr_jours` | calcl_nbr_jours | Calcul jours |
 | `/logs` | logs | Gestion fichiers logs |
@@ -520,19 +519,8 @@ La gestion **fonctionnelle** des coefficients passe par les routes scénario (§
 | `GET /health` | — | `{"status", "mysql_config", "databricks_config"}` | env vars | — |
 | `GET /health/resources` | — | `{"status", "mysql_read", "mysql_write", "databricks"}` | `SELECT 1` sur les 3 pools | — |
 | `GET /databricks/test` | — | `{"test": "ok", "execution_time_s", "result"}` | Databricks `SELECT 1` | — |
-| `GET /mysql/test` | — | idem | MySQL `SELECT 1` | — |
-| `GET /mysql/tables` | — | liste tables + types + nb lignes | `information_schema.tables` | — |
-| `GET /mysql/columns` | `table` | colonnes (type, nullable, clé, défaut) | `information_schema.columns` | — |
-| `GET /mysql/indexes` | `table` | index | `SHOW INDEX` | — |
-| `GET /mysql/sample` | `table`, `limit=10` (≤100) | lignes brutes | `SELECT * LIMIT` | — |
-| `GET /mysql/schema` | — | schéma complet (tables + colonnes) | `information_schema` | — |
-| `GET /mysql/dump` | `fmt=sql\|json`, `drop=true`, `data=false`, `limit_per_table`, `rows_per_insert=200`, `download` | DDL complet (+ INSERT si `data=true`), **streamé** | `SHOW CREATE TABLE/VIEW`, `SELECT *` par curseur serveur | — |
-| `GET /mysql/export` | `table`, `fmt=json\|sql`, `schema=false`, `data=true`, `drop`, `truncate`, `limit`, `after`, `offset`, `rows_per_insert=200`, `download` | structure et/ou données, **streamé** (lots via `limit`+`after`) | `SHOW CREATE TABLE`, `SELECT *` par curseur serveur | — |
-| `POST /mysql/import` ⚠️ | `{table, rows[], columns?, truncate=true}` | `{inserted, truncated, ...}` | `information_schema.columns` | **TRUNCATE + INSERT par lots de 500** sur table arbitraire, `FOREIGN_KEY_CHECKS=0` |
 | `GET /logs/latest` | — | fichier .log (download) | FS local | — |
 | `DELETE /logs` | `keep_today=false` | `{deleted[], truncated[], errors[]}` | FS local | suppression fichiers logs |
-
-⚠️ Les routes `/mysql/*` (surtout `import`, `dump`, `export`) sont des routes de **debug/admin sans authentification** — à ne pas exposer en production.
 
 ---
 
@@ -673,7 +661,7 @@ Références extraites des docstrings du code (`app/routes/**`) et des fiches `j
 | `POST /scenarios/{id}/mise-en-prod`, `/archive`, `/duplicate`, `DELETE /scenarios/{id}` | — |
 | `POST /audit/actions-id-rh` | — (transverse traçabilité/RGPD) |
 | CRUD `/sites`, `/produits`, `/pic-versions`, `/pic-coefficients` (+ upload-excel) | — (socle référentiels) |
-| `/health*`, `/databricks/test`, `/mysql/*`, `/logs*` | — (technique) |
+| `/health*`, `/databricks/test`, `/logs*` | — (technique) |
 
 ---
 
@@ -705,7 +693,7 @@ Références extraites des docstrings du code (`app/routes/**`) et des fiches `j
 
 1. **Unicité comptages non garantie en base** : pas de contrainte UNIQUE sur `(id_scenario, co_produit)` — seulement un SELECT-puis-INSERT applicatif → doublon possible en cas d'appels concurrents. Ajouter la contrainte UNIQUE (comme variations/neutralisations l'ont déjà).
 2. **Écarts de longueurs base/API** : `trppu_scenario.lb_scenario` varchar(20) vs 50 accepté par l'API ; `trppu_site.lb_regate` varchar(40) vs 120 → un libellé valide côté Pydantic casse en SQL strict mode. Aligner (élargir les colonnes ou resserrer les schémas).
-3. **`/mysql/*` et `/logs` sans authentification**, avec écriture destructive (`POST /mysql/import` = TRUNCATE + INSERT avec `FOREIGN_KEY_CHECKS=0` sur table arbitraire). À désactiver/protéger hors dev.
+3. **`/logs` sans authentification**, avec écriture destructive (`DELETE /logs` supprime les fichiers de log). À désactiver/protéger hors dev. *(Les routes de debug `/mysql/*`, dont `POST /mysql/import`, ont été retirées le 24/09/2026.)*
 4. **Aucune authentification** sur l'API ; `id_rh` transite en clair dans les payloads (chiffré uniquement au repos).
 5. **DELETE scénario** : cascade applicative manuelle sur 9 tables enfants — toute nouvelle table enfant devra y être ajoutée à la main (risque d'oubli ; envisager des FK `ON DELETE CASCADE`).
 6. **`trppu_pic_version`** : l'API référentiel ignore le niveau `SCENARIO` et la colonne `id_scenario` (gérés uniquement par les routes scénario §7) — les listes référentiel peuvent donc remonter des versions scénario sans contexte.

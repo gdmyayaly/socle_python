@@ -22,12 +22,11 @@ from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import (
-    S3_ACCESS_KEY,
+    AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY,
     S3_BUCKET,
     S3_ENDPOINT_URL,
     S3_PREFIXE,
-    S3_REGION,
-    S3_SECRET_KEY,
     S3_TIMEOUT,
 )
 from app.erreurs import TraitementImpossible
@@ -73,14 +72,13 @@ def construire_client():
 
     Les identifiants du `.env` priment s'ils sont renseignés ; sinon ils sont omis et boto3
     applique sa chaîne de résolution habituelle (rôle de la machine, profil `~/.aws`,
-    variables `AWS_*`). Les deux configurations sont donc valides, et c'est le `.env` qui
+    variables d'environnement). Les deux configurations sont donc valides, et c'est le `.env` qui
     tranche.
 
     Un endpoint explicite désigne un S3 interne (MinIO, Ceph…) : l'adressage est forcé en
     *path-style*, ces serveurs ne servant pas le style « bucket dans le nom d'hôte ».
     """
     options = {
-        "region_name": S3_REGION,
         "config": Config(
             signature_version="s3v4",
             s3={"addressing_style": "path" if S3_ENDPOINT_URL else "auto"},
@@ -90,17 +88,16 @@ def construire_client():
     }
     if S3_ENDPOINT_URL:
         options["endpoint_url"] = S3_ENDPOINT_URL
-    if S3_ACCESS_KEY and S3_SECRET_KEY:
-        options["aws_access_key_id"] = S3_ACCESS_KEY
-        options["aws_secret_access_key"] = S3_SECRET_KEY
+    if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+        options["aws_access_key_id"] = AWS_ACCESS_KEY_ID
+        options["aws_secret_access_key"] = AWS_SECRET_ACCESS_KEY
 
     logger.debug(
         "Client S3 construit %s",
         ctx(
             endpoint=S3_ENDPOINT_URL or "par défaut",
-            region=S3_REGION,
             bucket=S3_BUCKET,
-            identifiants="explicites" if (S3_ACCESS_KEY and S3_SECRET_KEY) else "chaîne boto3",
+            identifiants="explicites" if (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY) else "chaîne boto3",
         ),
     )
     return boto3.client("s3", **options)
@@ -118,7 +115,7 @@ def _traduire(erreur: Exception, cle: str) -> TraitementImpossible:
             return TraitementImpossible(f"Bucket '{S3_BUCKET}' introuvable.")
         if code in ("AccessDenied", "403", "InvalidAccessKeyId", "SignatureDoesNotMatch"):
             return TraitementImpossible(
-                f"Accès refusé à '{cle}' — vérifier S3_ACCESS_KEY / S3_SECRET_KEY."
+                f"Accès refusé à '{cle}' — vérifier AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY."
             )
         return TraitementImpossible(f"Erreur S3 sur '{cle}' : {code or erreur}.")
     return TraitementImpossible(
@@ -141,22 +138,22 @@ def _masquer(valeur: str) -> str:
 
 def decrire_configuration() -> dict:
     """Configuration S3 telle qu'elle sera utilisée. Le secret n'est jamais restitué."""
-    explicites = bool(S3_ACCESS_KEY and S3_SECRET_KEY)
+    explicites = bool(AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY)
     return {
         "endpoint": S3_ENDPOINT_URL or "(par défaut AWS)",
-        "region": S3_REGION,
         "bucket": S3_BUCKET or "(non renseigné)",
         "prefixe": S3_PREFIXE or "(racine)",
         "adressage": "path" if S3_ENDPOINT_URL else "auto",
         "timeout_s": S3_TIMEOUT,
         "identifiants": "explicites" if explicites else "chaîne boto3 par défaut",
-        "access_key": _masquer(S3_ACCESS_KEY) if explicites else "",
+        "access_key": _masquer(AWS_ACCESS_KEY_ID) if explicites else "",
         # Une clé sans secret est ignorée par `construire_client` : le signaler évite de
         # chercher longtemps pourquoi ce sont les identifiants de la machine qui servent.
         "avertissement": (
-            "S3_ACCESS_KEY renseignée sans S3_SECRET_KEY (ou l'inverse) : les deux sont "
+            "AWS_ACCESS_KEY_ID renseignée sans AWS_SECRET_ACCESS_KEY (ou l'inverse) : les "
+            "deux sont "
             "ignorées."
-            if bool(S3_ACCESS_KEY) != bool(S3_SECRET_KEY)
+            if bool(AWS_ACCESS_KEY_ID) != bool(AWS_SECRET_ACCESS_KEY)
             else ""
         ),
     }

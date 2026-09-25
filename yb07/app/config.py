@@ -53,13 +53,13 @@ SQL_SCRIPT_WARN_SIZE = _entier_positif("SQL_SCRIPT_WARN_SIZE", 10 * 1024 * 1024)
 
 # S3 — source des fichiers à charger.
 #
-# Les identifiants sont facultatifs : renseignés, ils priment ; absents, boto3 résout seul
-# via sa chaîne habituelle (rôle de la machine, profil ~/.aws, variables AWS_*). Les deux
-# chemins sont documentés dans le README.
+# Les identifiants portent les noms standard AWS. Ils sont facultatifs : renseignés, ils
+# priment ; absents, boto3 résout seul via sa chaîne habituelle (rôle de la machine, profil
+# ~/.aws). Pas de région : boto3 retombe sur us-east-1, que les S3 internes acceptent pour
+# la signature. Les deux chemins sont documentés dans le README.
 S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "")
-S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "")
-S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "")
-S3_REGION = os.getenv("S3_REGION", "us-east-1")
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
 S3_BUCKET = os.getenv("S3_BUCKET", "")
 S3_PREFIXE = os.getenv("S3_PREFIXE", "")
 S3_TIMEOUT = _entier_positif("S3_TIMEOUT", 60)
