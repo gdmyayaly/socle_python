@@ -97,9 +97,6 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 # remettrait l'auto-incrément à zéro et, étant du DDL, interdirait tout retour arrière.
 PURGE_SQL = "DELETE FROM trppu_cles_repartition WHERE id_referentiel = %s"
 
-REFERENTIEL_DECLARE_SQL = (
-    "SELECT COUNT(*) AS nb FROM trppu_referentiel WHERE id_referentiel = %s"
-)
 LIGNES_PRESENTES_SQL = (
     "SELECT COUNT(*) AS nb FROM trppu_cles_repartition WHERE id_referentiel = %s"
 )
@@ -313,23 +310,8 @@ async def charger_cles_repartition(
     try:
         # --- Garde-fous, avant toute écriture -----------------------------
         #
-        # Aucune clé étrangère ne relie `trppu_cles_repartition` à `trppu_referentiel` :
-        # sans ce contrôle, on charge 22 M de lignes sous un référentiel qui n'existe pas
-        # et rien ne le signale. C'est ici, et seulement ici, que l'écart se voit.
-        declare = await db_read.fetch_one(REFERENTIEL_DECLARE_SQL, (id_referentiel,))
-        if not (declare and declare["nb"]):
-            motif = (
-                f"Le référentiel {id_referentiel} n'est pas déclaré dans trppu_referentiel."
-            )
-            logger.warning(
-                "Rejet chargement clés de répartition %s",
-                ctx(id_referentiel=id_referentiel, motif=motif),
-            )
-            rapport.ko(motif)
-            rapport.statut = ECHEC
-            return rapport
-        rapport.ok(f"Référentiel {id_referentiel} déclaré")
-
+        # Pas de contrôle sur `trppu_referentiel` : la table est vouée à disparaître. Le seul
+        # garde-fou sur le référentiel est la concordance ligne à ligne avec le fichier (RG1).
         presentes = await db_read.fetch_one(LIGNES_PRESENTES_SQL, (id_referentiel,))
         nb_presentes = int(presentes["nb"]) if presentes else 0
 

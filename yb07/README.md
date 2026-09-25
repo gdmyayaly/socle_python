@@ -132,7 +132,6 @@ python -m pytest tests/ -k rg3
   relève de DSR-721 / MD01), il n'ajoute que des index et une colonne (étape `migration`) et
   élargit trois colonnes (étape `correctif`).
 - Un stockage objet S3 (AWS ou compatible : MinIO, Ceph…) pour l'étape de chargement
-- Le référentiel à initialiser doit être déclaré dans `trppu_referentiel`
 
 ## Arborescence
 
@@ -389,12 +388,11 @@ table étant auto-incrémentée. Un en-tête différent fait échouer la command
   chargement qu'un trafic silencieusement ramené à zéro ;
 - le fichier fait foi pour `id_referentiel`, `date_debut_validite` et `date_fin_validite`,
   mais une ligne portant un autre référentiel que celui demandé est refusée — c'est le seul
-  garde-fou contre un fichier chargé sous un référentiel qui n'est pas le sien ;
-- le référentiel doit exister dans `trppu_referentiel`. Aucune clé étrangère ne l'impose :
-  sans ce contrôle, on charge 22 M de lignes sous un identifiant inexistant sans que rien
-  ne le signale.
+  garde-fou contre un fichier chargé sous un référentiel qui n'est pas le sien. La table
+  `trppu_referentiel`, vouée à disparaître, n'est **pas** consultée : le chargement ne
+  vérifie pas que le référentiel y est déclaré.
 
-**Déroulé** — garde-fous (référentiel déclaré, fichier présent sur S3), purge, puis lecture
+**Déroulé** — garde-fou (fichier présent sur S3), purge, puis lecture
 en streaming et insertion par lots de `CHARGEMENT_TAILLE_LOT` lignes. Le fichier n'est ni
 téléchargé sur disque ni chargé en mémoire.
 
@@ -420,7 +418,6 @@ CHARGEMENT DES CLES DE REPARTITION
 Référentiel : 1
 --------------------------------------------------
 
-[OK] Référentiel 1 déclaré
 [OK] Fichier 'referentiels/cles.csv' présent sur S3 (1288490188 octets)
 [OK] Purge du référentiel : 22395341 ligne(s) supprimée(s)
 [OK] 22395341 ligne(s) insérée(s) en 4480 lot(s)
@@ -792,8 +789,9 @@ remplacés par des doublures, et le code async est lancé via `asyncio.run` (pas
   Ces tests **verrouillent la convention de log** : un nouveau code qui s'en écarte les
   fait échouer.
 - `tests/test_chargement_cles_repartition.py` — règles de gestion du chargement : purge
-  avant insertion, conversions vide → `NULL`, refus d'un référentiel discordant ou non
-  déclaré, découpage en lots, numéro de ligne exact dans les messages d'erreur.
+  avant insertion, conversions vide → `NULL`, refus d'un référentiel discordant,
+  aucune dépendance à `trppu_referentiel`, découpage en lots, numéro de ligne exact dans
+  les messages d'erreur.
 - `tests/test_s3.py` — résolution de la configuration S3 (identifiants du `.env` ou chaîne
   boto3, adressage path-style), masquage de la clé, listing dossiers/objets, décompression
   `.gz`, fermeture du flux, traduction des erreurs.

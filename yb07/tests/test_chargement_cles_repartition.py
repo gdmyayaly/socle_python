@@ -43,7 +43,6 @@ def csv_de(*lignes: str) -> str:
 def base_nominale(**surcharges) -> FausseBase:
     """`FausseBase` répondant à toutes les requêtes du traitement."""
     reponses = {
-        "FROM trppu_referentiel": {"nb": 1},
         "SELECT COUNT(*) AS nb FROM trppu_cles_repartition": {"nb": 0},
         "nb_pdi_distincts": {
             "nb_lignes": 1,
@@ -191,18 +190,19 @@ def test_purge_avant_insertion(s3_bouchonne, brancher_base):
     assert "INSERT INTO trppu_cles_repartition" in ecritures[1]
 
 
-def test_referentiel_non_declare_rejette_sans_ecrire(s3_bouchonne, brancher_base):
-    """Aucune clé étrangère ne protège la table : c'est le seul garde-fou."""
+def test_trppu_referentiel_jamais_interrogee(s3_bouchonne, brancher_base):
+    """La table est vouée à disparaître : le chargement ne doit pas en dépendre.
+
+    `FausseBase` lève sur toute requête sans réponse déclarée ; la vérification explicite
+    ci-dessous garde la trace de l'intention.
+    """
     s3_bouchonne(csv_de(LIGNE_PLEINE))
-    base = brancher_base(
-        FausseBase({"FROM trppu_referentiel": {"nb": 0}}, lecture_seule=True)
-    )
+    base = brancher_base(base_nominale())
 
-    rapport = charger(id_referentiel=7, fichier="f.csv")
+    rapport = charger(id_referentiel=1, fichier="f.csv")
 
-    assert rapport.statut == ECHEC
-    assert "n'est pas déclaré" in " ".join(rapport.motifs)
-    assert base.ecritures() == []
+    assert rapport.statut == SUCCES, rapport.motifs
+    assert all("trppu_referentiel" not in sql for _, sql, _ in base.journal)
 
 
 def test_fichier_absent_rejette_avant_la_purge(monkeypatch, s3_bouchonne, brancher_base):
