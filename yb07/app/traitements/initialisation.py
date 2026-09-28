@@ -366,7 +366,9 @@ async def _etape_chargement(etat: _Etat, rang: int, total: int) -> bool:
         return True
 
     sous_rapport = await charger_cles_repartition(
-        etat.id_referentiel, etat.fichier, ignorer_erreurs=etat.ignorer_erreurs
+        etat.id_referentiel,
+        etat.fichier,
+        ignorer_erreurs=etat.ignorer_erreurs,
     )
 
     etat.rapport.ajouter(

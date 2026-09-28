@@ -102,7 +102,9 @@ class FausseBase:
 
     # -- écritures --------------------------------------------------------
 
-    async def execute(self, query: str, params: tuple | None = None) -> int:
+    async def execute(
+        self, query: str, params: tuple | None = None, retries: int | None = None
+    ) -> int:
         return self._enregistrer("execute", query, params)
 
     @asynccontextmanager

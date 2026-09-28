@@ -367,6 +367,19 @@ demandé.
 | `--fichier` | Nom du fichier dans le bucket, à défaut de `CSV_CLES_REPARTITION`. Pour un rechargement ponctuel sans toucher au `.env`. |
 | `--skip-errors` | Écarte les lignes non conformes au lieu d'arrêter le chargement (voir ci-dessous). |
 
+**Purge par `TRUNCATE TABLE`** — la table est vidée par `TRUNCATE`, quasi instantané là où
+un `DELETE` de 22 M de lignes prend longtemps. Trois contreparties :
+
+- il vide **toute** la table. Il n'est donc joué que si elle ne contient aucun autre
+  référentiel que celui chargé — vérifié **avant toute écriture**, sinon la commande est
+  refusée et rien n'est touché. Conséquence : la table ne peut porter **qu'un seul
+  référentiel** ;
+- c'est du DDL : commit implicite, aucun retour arrière. Si le chargement échoue ensuite, la
+  table reste vide jusqu'à la relance ;
+- il exige le droit `DROP` sur `trppu_cles_repartition` (message explicite s'il manque) et
+  attend que plus aucune session ne lise la table (verrou de métadonnées) : ne pas le lancer
+  pendant que l'API ou un autre batch la lit.
+
 **`--skip-errors`** — sans l'option, la première ligne non conforme arrête le chargement.
 Avec, elle est écartée et le chargement continue :
 
@@ -413,9 +426,8 @@ table étant auto-incrémentée. Un en-tête différent fait échouer la command
 **Règles appliquées**, reprises du chargement historique en SQL pur du module voisin
 (`yb05/db/DSR-697_chargement_cles_repartition.sql`) :
 
-- le référentiel cible est **purgé** avant chargement (`DELETE`, jamais `TRUNCATE` qui
-  viderait tous les référentiels et interdirait le retour arrière) — c'est ce qui rend la
-  commande rejouable ;
+- la table est **purgée** avant chargement (`TRUNCATE`, voir plus haut) — c'est ce qui rend
+  la commande rejouable ;
 - les quatre champs facultatifs vides deviennent `NULL` et non `0` ni `''` :
   `regate_etab`, `libelle_etab`, `nb_pre`, `potentielip`. « 0 » et « inconnu » ne se
   confondent pas pour un potentiel IP ;
@@ -455,7 +467,8 @@ Référentiel : 1
 --------------------------------------------------
 
 [OK] Fichier 'referentiels/cles.csv' présent sur S3 (1288490188 octets)
-[OK] Purge du référentiel : 22395341 ligne(s) supprimée(s)
+[OK] Aucun autre référentiel que 1 dans la table
+[OK] Purge (TRUNCATE) : 22395341 ligne(s) supprimée(s)
 [OK] 22395341 ligne(s) insérée(s) en 4480 lot(s)
 [OK] Volumétrie en base : 22395341 ligne(s)
 [OK] PDI distincts : 22395341
@@ -589,7 +602,7 @@ commande vérifie elle-même ses prérequis avant d'écrire.
 |---|---|---|---|---|
 | 0 | `db-check`, puis `s3-check --prefixe …` | secondes | oui | les deux instances `connected` ; le CSV visible dans le listing |
 | 1 | `init 1 --dry-run` | secondes | oui | les cinq scripts découpés, aucune écriture |
-| 2 | `init 1 --etape chargement` | long (streaming 22 M lignes) | **oui** — purge du référentiel | `LIGNES_CHARGEES`, `LIGNES_ACTIVES` |
+| 2 | `init 1 --etape chargement` | long (streaming 22 M lignes) | **oui** — purge (`TRUNCATE`) puis rechargement | `LIGNES_CHARGEES`, `LIGNES_ACTIVES` |
 | 3 | `init 1 --etape migration` | **heures** (index sur 24 M lignes) | oui — chaque `ALTER` testé | 4 index et `date_creation` en place |
 | 4 | `init 1 --etape correctif` | variable | oui | totaux en `decimal(35+,19)` |
 | 5 | `init 1 --etape agregats` | long (agrégation 24 M lignes) | **oui** — `DELETE` ciblé puis `INSERT` | nombre de sites, CA2, CA5 (autres référentiels intacts) |
@@ -609,6 +622,33 @@ Points de vigilance :
   `init 1 --depuis <étape>`.
 - Une fois les durées connues et la fenêtre d'exploitation validée, les passages suivants
   peuvent se faire d'un bloc (`init <id>`), sur un **nouveau** référentiel.
+
+## Nettoyer un CSV avant chargement
+
+`scripts/nettoyer_csv_cles.py` est un outil autonome (ni base, ni S3) qui trie un CSV local
+avant de le charger :
+
+```bash
+python -m scripts.nettoyer_csv_cles data/cles.csv
+python -m scripts.nettoyer_csv_cles data/cles.csv --referentiel 1 --sortie data/propre
+```
+
+Il produit, à côté du fichier (ou dans `--sortie`) :
+
+| Fichier | Contenu |
+|---|---|
+| `<nom>_propre.csv` | lignes valides, doublons retirés — à passer à `charger-cles-repartition-local` |
+| `<nom>_erreurs.csv` | lignes non conformes : `numero_ligne`, `motif`, puis les 18 colonnes |
+| `<nom>_doublons.csv` | doublons de PDI écartés : `numero_ligne`, `ligne_conservee`, `type_doublon` (`IDENTIQUE` / `CONFLIT`), puis les 18 colonnes |
+| `<nom>_rapport.txt` | synthèse, erreurs par type, premiers exemples (texte brut, 72 colonnes, sans accents) |
+
+- **Mêmes règles que le chargement** : `convertir` et `verifier_entete` sont importés, pas
+  recopiés. S'y ajoutent les contraintes que seul MySQL vérifie (longueurs des textes, bornes
+  des nombres, d'après `yb05/db/database.sql`) — le fichier propre se charge sans rejet.
+- **Doublons** : clé `(id_pdi, id_referentiel)`, la **première** occurrence est conservée. Un
+  `CONFLIT` (même PDI, données différentes) est à faire valider par le métier.
+- Les numéros de ligne sont ceux du fichier **source** (en-tête = ligne 1).
+- Mémoire : compter 2 à 3 Go pour 22 M de lignes (index des PDI conservés).
 
 ## Docker
 

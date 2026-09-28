@@ -13,7 +13,7 @@ voisin (`yb05/db/DSR-697_chargement_cles_repartition.sql`) :
     RG3  champs vides convertis en NULL — co_regate_etablissement, lb_etablissement,
          nb_pre, potentielip
     RG5  unicité (id_pdi, id_referentiel) — garantie en base par `uk_pdi_ref`
-    RG6  purge du référentiel cible avant chargement
+    RG6  purge avant chargement — par `TRUNCATE TABLE` (cf. plus bas)
 
 Deux écarts assumés avec ce script, tous deux dus au format de fichier, qui a évolué :
 
@@ -26,6 +26,11 @@ Deux écarts assumés avec ce script, tous deux dus au format de fichier, qui a 
   lignes, le journal d'annulation, la durée de connexion et le coût du ROLLBACK sont le
   vrai risque. Un échec laisse donc un chargement partiel : c'est la purge (RG6) qui rend
   la commande rejouable, et le rapport dit combien de lignes étaient passées.
+
+La purge RG6 est un `TRUNCATE TABLE`, quasi instantané là où un `DELETE` de 22 M de lignes
+prend longtemps. Il vide **toute** la table et ne s'annule pas (DDL, commit implicite) : il
+n'est donc joué que si la table ne contient aucun autre référentiel que celui chargé —
+vérifié avant toute écriture — et il exige le droit `DROP` sur la table.
 
 Avec `ignorer_erreurs` (option `--skip-errors`), une ligne non conforme — champ obligatoire
 vide, valeur mal formée, autre référentiel, doublon ou valeur refusée par MySQL — est écartée
@@ -101,9 +106,13 @@ INSERT INTO trppu_cles_repartition
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
-# RG6. `DELETE` et non `TRUNCATE` : `TRUNCATE` viderait **tous** les référentiels,
-# remettrait l'auto-incrément à zéro et, étant du DDL, interdirait tout retour arrière.
-PURGE_SQL = "DELETE FROM trppu_cles_repartition WHERE id_referentiel = %s"
+# RG6. `TRUNCATE` vide **tous** les référentiels, remet l'auto-incrément à zéro et, étant
+# du DDL, interdit tout retour arrière : il n'est joué que derrière `AUTRE_REFERENTIEL_SQL`.
+PURGE_SQL = "TRUNCATE TABLE trppu_cles_repartition"
+# Garde-fou du TRUNCATE. Servi par `idx_cr_ref_actif` (id_referentiel en tête) : un parcours d'index, pas de table.
+AUTRE_REFERENTIEL_SQL = """
+SELECT id_referentiel FROM trppu_cles_repartition WHERE id_referentiel <> %s LIMIT 1
+"""
 
 LIGNES_PRESENTES_SQL = (
     "SELECT COUNT(*) AS nb FROM trppu_cles_repartition WHERE id_referentiel = %s"
@@ -381,18 +390,31 @@ async def charger_cles_repartition(
         presentes = await db_read.fetch_one(LIGNES_PRESENTES_SQL, (id_referentiel,))
         nb_presentes = int(presentes["nb"]) if presentes else 0
 
+        # Avant la localisation du fichier et toute écriture : la purge est un TRUNCATE,
+        # qui ne se rattrape pas et ne doit jamais emporter un autre référentiel.
+        autre = await db_read.fetch_one(AUTRE_REFERENTIEL_SQL, (id_referentiel,))
+        if autre:
+            raise TraitementImpossible(
+                f"Chargement refusé : la table porte aussi le référentiel "
+                f"{autre['id_referentiel']}, que la purge (TRUNCATE) effacerait."
+            )
+        rapport.ok(f"Aucun autre référentiel que {id_referentiel} dans la table")
+
         # Localiser le fichier avant de purger : découvrir son absence après avoir
         # supprimé 22 M de lignes coûterait un rechargement complet.
         taille = await asyncio.to_thread(localiser, cle)
         rapport.ok(f"Fichier '{cle}' présent {libelle_source} ({taille} octets)")
 
-        # --- RG6 : purge du référentiel cible ------------------------------
-        supprimees = await db_write.execute(PURGE_SQL, (id_referentiel,))
+        # --- RG6 : purge -------------------------------------------------
+        await _tronquer()
+        # TRUNCATE ne rend pas de nombre de lignes : c'est le comptage fait juste avant, que
+        # le garde-fou garantit être le contenu entier de la table.
+        supprimees = nb_presentes
         logger.info(
             "Purge du référentiel effectuée %s",
             ctx(id_referentiel=id_referentiel, lignes=supprimees),
         )
-        rapport.ok(f"Purge du référentiel : {supprimees} ligne(s) supprimée(s)")
+        rapport.ok(f"Purge (TRUNCATE) : {supprimees} ligne(s) supprimée(s)")
 
         # --- Lecture en streaming et insertion par lots ---------------------
         lignes_inserees, lots = await _charger(ouvrir, cle, id_referentiel, debut, rejets)
@@ -454,6 +476,20 @@ async def charger_cles_repartition(
         ),
     )
     return rapport
+
+
+async def _tronquer() -> None:
+    """`TRUNCATE TABLE`, avec un message actionnable si le compte n'en a pas le droit."""
+    try:
+        # Une seule tentative : un droit manquant ne se corrige pas en réessayant.
+        await db_write.execute(PURGE_SQL, retries=1)
+    except Exception as erreur:  # noqa: BLE001 - retraduit ou relancé
+        if _code_mysql(erreur) == 1142:
+            raise TraitementImpossible(
+                "TRUNCATE refusé par MySQL : le compte d'écriture n'a pas le droit DROP sur "
+                "trppu_cles_repartition — l'accorder au compte SGBD_APP_USER_WRITE."
+            ) from erreur
+        raise
 
 
 def _reporter_rejets(rapport: Rapport, rejets: _Rejets | None) -> None:

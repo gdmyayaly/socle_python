@@ -134,7 +134,7 @@ A verifier : les scripts sont lus et decoupes, aucune ecriture.
 
 
 ETAPE 2 - Chargement du CSV                   duree : longue (22 M l.)
-Rejouable : oui (purge du referentiel puis rechargement)
+Rejouable : oui (TRUNCATE puis rechargement)
 
 Mode strict (la premiere ligne non conforme arrete tout) :
 
@@ -164,6 +164,11 @@ A verifier : LIGNES_CHARGEES, LIGNES_ACTIVES, et en mode tolerant
 LIGNES_IGNOREES et la section "Avertissements :".
 ATTENTION : un PDI ecarte n'aura PAS de cle calculee a l'etape 7.
 Faire valider la liste des lignes ecartees avant de continuer.
+
+Purge : la table est videe par TRUNCATE (quasi instantane). Refuse si
+la table contient un autre referentiel. Irreversible, exige le droit
+DROP, et attend que plus personne ne lise la table (API, autres
+batchs) : ne pas lancer pendant que l'API l'utilise.
 
 Fichier different de CSV_CLES_REPARTITION : ajouter a la liste
 "- '--fichier'" puis "- <nom_du_fichier.csv>".
@@ -292,6 +297,12 @@ lancee d'un bloc sur un NOUVEAU referentiel :
         - '2'
 
 Ajouter "- '--skip-errors'" pour le mode tolerant au chargement.
+
+ATTENTION : la purge est un TRUNCATE, et le chargement refuse de
+tourner si trppu_cles_repartition contient un autre referentiel. Tant
+que le referentiel 1 y est charge, "init 2" est refuse des l'etape
+chargement, sans rien ecrire. Vider la table (TRUNCATE manuel, apres
+accord) avant de charger un nouveau referentiel.
 
 
 ------------------------------------------------------------------------

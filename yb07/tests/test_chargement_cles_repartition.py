@@ -45,6 +45,8 @@ def base_nominale(**surcharges) -> FausseBase:
     """`FausseBase` répondant à toutes les requêtes du traitement."""
     reponses = {
         "SELECT COUNT(*) AS nb FROM trppu_cles_repartition": {"nb": 0},
+        # Garde-fou du TRUNCATE : aucun autre référentiel dans la table.
+        "WHERE id_referentiel <> %s LIMIT 1": None,
         "nb_pdi_distincts": {
             "nb_lignes": 1,
             "nb_pdi_distincts": 1,
@@ -179,7 +181,7 @@ def test_entete_conforme_accepte():
 
 
 def test_purge_avant_insertion(s3_bouchonne, brancher_base):
-    """RG6 : la purge du référentiel précède toute insertion."""
+    """RG6 : la purge (TRUNCATE) précède toute insertion."""
     s3_bouchonne(csv_de(LIGNE_PLEINE))
     base = brancher_base(base_nominale())
 
@@ -187,7 +189,7 @@ def test_purge_avant_insertion(s3_bouchonne, brancher_base):
 
     assert rapport.statut == SUCCES, rapport.motifs
     ecritures = base.ecritures()
-    assert "DELETE FROM trppu_cles_repartition" in ecritures[0]
+    assert ecritures[0] == "TRUNCATE TABLE trppu_cles_repartition"
     assert "INSERT INTO trppu_cles_repartition" in ecritures[1]
 
 
@@ -336,7 +338,7 @@ def test_chargement_depuis_un_fichier_local(monkeypatch, tmp_path, brancher_base
     assert rapport.etats["LIGNES_CHARGEES"] == 1
     assert any("présent en local" in c.libelle for c in rapport.controles)
     ecritures = base.ecritures()
-    assert "DELETE FROM trppu_cles_repartition" in ecritures[0]
+    assert ecritures[0] == "TRUNCATE TABLE trppu_cles_repartition"
     assert "INSERT INTO trppu_cles_repartition" in ecritures[1]
 
 
@@ -511,3 +513,53 @@ def test_option_skip_errors_sur_les_trois_commandes(arguments):
 
     assert build_parser().parse_args(arguments).ignorer_erreurs is True
     assert build_parser().parse_args(arguments[:-1]).ignorer_erreurs is False
+
+
+# --- Purge par TRUNCATE -----------------------------------------------------
+
+
+def test_purge_refusee_si_un_autre_referentiel_est_present(s3_bouchonne, brancher_base):
+    """Un TRUNCATE ne se rattrape pas : il ne doit jamais emporter un autre référentiel."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = base_nominale()
+    base.reponses["WHERE id_referentiel <> %s LIMIT 1"] = {"id_referentiel": 2}
+    base.lecture_seule = True
+    brancher_base(base)
+
+    rapport = charger(id_referentiel=1, fichier="f.csv")
+
+    assert rapport.statut == ECHEC
+    assert "référentiel 2" in " ".join(rapport.motifs)
+    assert base.ecritures() == []
+
+
+def test_purge_sans_droit_drop_message_actionnable(s3_bouchonne, brancher_base):
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = brancher_base(base_nominale())
+
+    async def refuse(query, params=None, retries=None):
+        raise pymysql.err.OperationalError(1142, "DROP command denied")
+
+    base.execute = refuse
+
+    rapport = charger(id_referentiel=1, fichier="f.csv")
+
+    assert rapport.statut == ECHEC
+    assert "droit DROP" in " ".join(rapport.motifs)
+
+
+def test_plus_aucun_delete(s3_bouchonne, brancher_base):
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = brancher_base(base_nominale())
+
+    rapport = charger(id_referentiel=1, fichier="f.csv")
+
+    assert not base.a_ecrit("DELETE FROM trppu_cles_repartition")
+    assert any("Purge (TRUNCATE)" in c.libelle for c in rapport.controles)
+
+
+def test_option_truncate_retiree():
+    from app.main import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["init", "1", "--truncate"])

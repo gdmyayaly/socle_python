@@ -238,7 +238,9 @@ async def cmd_charger_cles_repartition(args: argparse.Namespace) -> int:
     """Charge `trppu_cles_repartition` depuis le CSV déposé sur S3."""
     return await _executer_traitement(
         lambda a: charger_cles_repartition(
-            a.id_traitement, a.fichier, ignorer_erreurs=a.ignorer_erreurs
+            a.id_traitement,
+            a.fichier,
+            ignorer_erreurs=a.ignorer_erreurs,
         ),
         args,
     )
@@ -248,7 +250,9 @@ async def cmd_charger_cles_repartition_local(args: argparse.Namespace) -> int:
     """Charge `trppu_cles_repartition` depuis un CSV du disque local."""
     return await _executer_traitement(
         lambda a: charger_cles_repartition(
-            a.id_traitement, chemin_local=a.chemin, ignorer_erreurs=a.ignorer_erreurs
+            a.id_traitement,
+            chemin_local=a.chemin,
+            ignorer_erreurs=a.ignorer_erreurs,
         ),
         args,
     )
