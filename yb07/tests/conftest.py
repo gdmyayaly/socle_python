@@ -23,6 +23,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
+import aiomysql
+import pytest
+
 from app.db.sql_script import (
     ScriptResult,
     StatementResult,
@@ -35,6 +38,22 @@ from app.db.sql_script import (
 def _normaliser(sql: str) -> str:
     """Requête sur une seule ligne, espaces multiples réduits — pour la comparaison."""
     return " ".join(sql.split())
+
+
+@pytest.fixture(autouse=True)
+def _aucune_connexion_reelle(monkeypatch):
+    """Filet de sécurité : aucun test ne doit joindre une vraie base.
+
+    Un module qui importe `db_write` sous son propre nom échappe au remplacement fait par un
+    test ; sans ce filet, il se connecterait au MySQL du poste. Un test qui a besoin de
+    simuler `create_pool` ou `connect` le remplace lui-même, après ce filet.
+    """
+
+    async def interdit(*args, **kwargs):
+        raise AssertionError("connexion MySQL réelle tentée pendant un test")
+
+    monkeypatch.setattr(aiomysql, "create_pool", interdit)
+    monkeypatch.setattr(aiomysql, "connect", interdit)
 
 
 class EcritureInterdite(AssertionError):

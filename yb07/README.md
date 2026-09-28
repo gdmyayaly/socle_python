@@ -184,6 +184,7 @@ de vérité en cas de doute.
 | `SGBD_DB_NAME` | `yb07` | Nom de la base |
 | `SGBD_MAX_RETRIES` | `3` | Nombre de tentatives de connexion |
 | `SGBD_RETRY_DELAY` | `1.0` | Délai de base entre tentatives (backoff linéaire : `délai × tentative`) |
+| `MYSQL_POOL_RECYCLE` | `600` | Âge maximal (s) d'une connexion inactive du pool avant renouvellement. À garder sous le `wait_timeout` du serveur : pendant une étape longue, la connexion de lecture reste inactive, et MySQL la couperait. |
 | `MYSQL_POOL_SIZE` | `10` | Taille maximale de chaque pool. Toute valeur inexploitable est ramenée au défaut : un batch d'exploitation ne refuse pas de démarrer pour une variable mal saisie. |
 | `SQL_SCRIPT_WARN_SIZE` | `10485760` | Taille (octets) au-delà de laquelle un script `.sql` déclenche un avertissement |
 
@@ -221,6 +222,7 @@ acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
 | `CSV_ENCODAGE` | `utf-8-sig` | Décode aussi l'UTF-8 nu et absorbe le BOM |
 | `CHARGEMENT_TAILLE_LOT` | `5000` | Nombre de lignes par lot inséré — chaque lot est commité séparément |
 | `CHARGEMENT_LOG_TOUTES_LES` | `100000` | Fréquence des lignes de log d'avancement, en lignes chargées |
+| `CHARGEMENT_LOCK_WAIT_TIMEOUT` | `60` | Attente maximale (s) d'un verrou pour le `TRUNCATE` et les `ALTER` d'index du chargement. Au-delà, échec lisible plutôt que de bloquer les requêtes de l'API derrière lui. |
 | `CHARGEMENT_MAX_REJETS_DETAILLES` | `100` | Avec `--skip-errors` : lignes écartées détaillées dans le rapport et les logs ; au-delà, elles sont seulement comptées |
 | `INIT_LOG_TOUS_LES_SITES` | `50` | `init`, étape `versions` : fréquence des lignes d'avancement, en sites traités |
 | `INIT_MAX_ANOMALIES_LOGUEES` | `50` | `init`, étape `cles` : plafond des sommes de clés hors tolérance journalisées une à une. Le compte total est toujours rendu. |
@@ -384,9 +386,12 @@ un `DELETE` de 22 M de lignes prend longtemps. Trois contreparties :
 Avec, elle est écartée et le chargement continue :
 
 - lignes écartées : colonne obligatoire vide, nombre ou date mal formé, ligne portant un
-  autre référentiel, doublon de PDI (`uk_pdi_ref`), valeur refusée par MySQL (hors bornes,
-  texte trop long). Un lot refusé par MySQL est rejoué ligne à ligne pour n'écarter que la
-  ligne fautive ;
+  autre référentiel, doublon de PDI, valeur refusée par MySQL (hors bornes, texte trop
+  long). Un lot refusé par MySQL est rejoué ligne à ligne pour n'écarter que la ligne
+  fautive. Les doublons sont traités **après** le chargement, avant de recréer l'index
+  unique (voir « Performance ») : la première occurrence du fichier est conservée, et ils
+  sont signalés par PDI (`PDI 123 : doublon identique` / `en CONFLIT`), sans numéro de
+  ligne — `scripts/nettoyer_csv_cles.py` les donne si besoin ;
 - toujours bloquants : en-tête inattendu, fichier absent, panne technique (connexion,
   verrou, droits), et un fichier dont **aucune** ligne n'est conforme ;
 - le rapport compte les lignes écartées (`LIGNES_IGNOREES`) et détaille les
@@ -440,20 +445,43 @@ table étant auto-incrémentée. Un en-tête différent fait échouer la command
   `trppu_referentiel`, vouée à disparaître, n'est **pas** consultée : le chargement ne
   vérifie pas que le référentiel y est déclaré.
 
-**Déroulé** — garde-fou (fichier présent sur S3), purge, puis lecture
-en streaming et insertion par lots de `CHARGEMENT_TAILLE_LOT` lignes. Le fichier n'est ni
-téléchargé sur disque ni chargé en mémoire.
+**Déroulé** — garde-fous (autre référentiel, fichier présent), purge (`TRUNCATE`), retrait
+des index secondaires, lecture en streaming et insertion par lots de `CHARGEMENT_TAILLE_LOT`
+lignes, traitement des doublons, reconstruction des index, contrôles finaux. Le fichier n'est
+ni téléchargé sur disque ni chargé en mémoire.
 
-**Atomicité** : chaque lot est commité séparément. Sur 22 M de lignes, une transaction
-unique ferait du journal d'annulation, de la durée de connexion et du coût du `ROLLBACK` le
-vrai risque. En contrepartie, un échec laisse un chargement **partiel** : le rapport indique
-combien de lignes étaient passées, et il suffit de relancer — la purge rend l'opération
+**Performance** — maintenir l'index **unique** `uk_pdi_ref` ligne à ligne est ce qui rend un
+chargement de 22 M de lignes interminable : l'unicité se vérifie immédiatement, les PDI
+arrivent dans le désordre, et dès que l'index dépasse le cache InnoDB chaque insertion lit
+le disque — environ 1 000 lignes/s, en baisse continue. Le chargement retire donc
+`uk_pdi_ref` et `idx_cr_ref_actif`, insère, puis les reconstruit en une passe triée
+(`app/traitements/index_chargement.py`). Côté batch : le lot suivant est lu et converti
+pendant l'insertion du courant, et la mémoire reste bornée (deux lots, quelle que soit la
+taille du fichier — compatible avec un conteneur de 356 Mo).
+
+- **Droits** : `DROP` (pour le `TRUNCATE`), `ALTER` et `INDEX` sur la table. Sans `ALTER`,
+  le chargement se fait quand même, index en place, avec un avertissement : correct, mais
+  lent.
+- **Verrous** : tout le DDL passe par une connexion dédiée avec
+  `lock_wait_timeout = CHARGEMENT_LOCK_WAIT_TIMEOUT`. Si l'API lit la table à ce moment-là,
+  le chargement échoue en une minute au lieu de bloquer toutes ses requêtes.
+- **Côté serveur MySQL** (DBA) : `innodb_buffer_pool_size` (128 Mo par défaut, très
+  insuffisant pour 22 M de lignes) et `innodb_sort_buffer_size` (1 Mo par défaut ; 64 Mo
+  accélère la reconstruction des index) sont les deux réglages qui comptent.
+
+**Atomicité et reprise** : chaque lot est commité séparément. Sur 22 M de lignes, une
+transaction unique ferait du journal d'annulation, de la durée de connexion et du coût du
+`ROLLBACK` le vrai risque. Un échec **après** le retrait des index remet la table dans un
+état propre : vidée, index recréés (instantané sur une table vide), avec un avertissement.
+Si le processus est tué (OOM, pod supprimé), les index peuvent manquer : le chargement
+suivant les recrée de lui-même. Il suffit de relancer — la purge rend l'opération
 idempotente.
 
-**Erreur la plus fréquente** : `Duplicate entry` sur `uk_pdi_ref`, retraduit en « le fichier
-porte deux fois le même couple (PDI, référentiel) ». Le fichier doit être dédoublonné en
-amont ; un `DISTINCT` ne suffit pas, deux lignes d'un même PDI aux trafics différents y
-survivent.
+**Doublons de PDI** : sans `--skip-errors`, le chargement échoue en fin de parcours avec le
+nombre de PDI en doublon (dont ceux aux données différentes) et les premiers détaillés, puis
+remet la table en état. Le fichier doit être dédoublonné en amont
+(`scripts/nettoyer_csv_cles.py`) ; un `DISTINCT` ne suffit pas, deux lignes d'un même PDI
+aux trafics différents y survivent.
 
 **Attention** : recharger un référentiel périme tout ce qui en découle (agrégats, clés
 calculées d'autres traitements). Ils sont à rejouer ensuite.
@@ -469,7 +497,9 @@ Référentiel : 1
 [OK] Fichier 'referentiels/cles.csv' présent sur S3 (1288490188 octets)
 [OK] Aucun autre référentiel que 1 dans la table
 [OK] Purge (TRUNCATE) : 22395341 ligne(s) supprimée(s)
+[OK] Index secondaires retirés pendant le chargement
 [OK] 22395341 ligne(s) insérée(s) en 4480 lot(s)
+[OK] Index secondaires reconstruits
 [OK] Volumétrie en base : 22395341 ligne(s)
 [OK] PDI distincts : 22395341
 [OK] Lignes actives (date_fin_validite NULL) : 22395341

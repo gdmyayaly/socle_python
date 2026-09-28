@@ -167,8 +167,17 @@ Faire valider la liste des lignes ecartees avant de continuer.
 
 Purge : la table est videe par TRUNCATE (quasi instantane). Refuse si
 la table contient un autre referentiel. Irreversible, exige le droit
-DROP, et attend que plus personne ne lise la table (API, autres
-batchs) : ne pas lancer pendant que l'API l'utilise.
+DROP. Si l'API lit la table, le chargement echoue apres 60 s
+(CHARGEMENT_LOCK_WAIT_TIMEOUT) au lieu de la bloquer : relancer.
+
+Performance : les index secondaires sont retires pendant le
+chargement puis reconstruits en une passe (droits ALTER et INDEX).
+Les doublons de PDI sont traites juste avant de recreer l'index
+unique : en mode strict le chargement echoue en fin de parcours, avec
+--skip-errors la premiere occurrence est conservee. Memoire du pod
+bornee (deux lots de CHARGEMENT_TAILLE_LOT lignes).
+Suivre l'avancement : lignes "Avancement chargement" (debit_lignes_s)
+dans kubectl logs.
 
 Fichier different de CSV_CLES_REPARTITION : ajouter a la liste
 "- '--fichier'" puis "- <nom_du_fichier.csv>".

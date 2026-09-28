@@ -21,6 +21,7 @@ from app.config import (
     MYSQL_RETRY_DELAY,
     MYSQL_USER_WRITE,
     MYSQL_USER_READ,
+    MYSQL_POOL_RECYCLE,
     MYSQL_POOL_SIZE,
     SQL_SCRIPT_WARN_SIZE,
 )
@@ -82,6 +83,9 @@ class Database:
                     minsize=self.min_connections,
                     maxsize=self.max_connections,
                     autocommit=True,
+                    # Renouvelle une connexion restée inactive : MySQL la couperait au-delà
+                    # de `wait_timeout`, pendant les étapes longues.
+                    pool_recycle=MYSQL_POOL_RECYCLE,
                 )
                 logger.info(
                     "Connexion au pool MySQL établie %s",

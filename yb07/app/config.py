@@ -44,6 +44,10 @@ def _entier_positif(nom: str, defaut: int) -> int:
 
 
 MYSQL_POOL_SIZE = _entier_positif("MYSQL_POOL_SIZE", 10)
+# Âge maximal (secondes) d'une connexion inactive du pool avant renouvellement. Pendant une
+# étape longue, la connexion de lecture reste inactive : si MySQL la coupe (`wait_timeout`),
+# la requête suivante échouerait (« server has gone away »). À garder sous `wait_timeout`.
+MYSQL_POOL_RECYCLE = _entier_positif("MYSQL_POOL_RECYCLE", 600)
 
 # Requêtes utilitaires pour les checks
 HEALTH_CHECK_QUERY = "SELECT 1 AS ok"
@@ -87,6 +91,10 @@ CHARGEMENT_LOG_TOUTES_LES = _entier_positif("CHARGEMENT_LOG_TOUTES_LES", 100_000
 # Au-delà, elles sont seulement comptées — un fichier entièrement faux ne doit pas produire
 # un rapport de 22 M de lignes.
 CHARGEMENT_MAX_REJETS_DETAILLES = _entier_positif("CHARGEMENT_MAX_REJETS_DETAILLES", 100)
+# Attente maximale (secondes) d'un verrou de métadonnées pour le TRUNCATE et les ALTER du
+# chargement. Sans borne, MySQL attend jusqu'à un an, et toutes les requêtes des autres
+# sessions (API) s'empilent derrière : mieux vaut échouer vite et relancer.
+CHARGEMENT_LOCK_WAIT_TIMEOUT = _entier_positif("CHARGEMENT_LOCK_WAIT_TIMEOUT", 60)
 
 # Initialisation des clés de répartition (commande `init`).
 #

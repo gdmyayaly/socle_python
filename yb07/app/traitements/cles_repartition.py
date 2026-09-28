@@ -27,6 +27,10 @@ Deux écarts assumés avec ce script, tous deux dus au format de fichier, qui a 
   vrai risque. Un échec laisse donc un chargement partiel : c'est la purge (RG6) qui rend
   la commande rejouable, et le rapport dit combien de lignes étaient passées.
 
+Performance (cf. `index_chargement.py`) : les index secondaires sont retirés pendant le
+chargement puis reconstruits en une passe triée, les doublons étant traités juste avant de
+recréer l'index unique ; le lot suivant est lu et converti pendant l'insertion du courant.
+
 La purge RG6 est un `TRUNCATE TABLE`, quasi instantané là où un `DELETE` de 22 M de lignes
 prend longtemps. Il vide **toute** la table et ne s'annule pas (DDL, commit implicite) : il
 n'est donc joué que si la table ne contient aucun autre référentiel que celui chargé —
@@ -47,6 +51,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -66,6 +71,7 @@ from app.db.mysql import db_read, db_write
 from app.erreurs import TraitementImpossible
 from app.log_utils import ctx
 from app.services import fichier_local, s3
+from app.traitements import index_chargement
 from app.traitements.rapport import ECHEC, SUCCES, Rapport
 
 logger = logging.getLogger(__name__)
@@ -106,10 +112,9 @@ INSERT INTO trppu_cles_repartition
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
-# RG6. `TRUNCATE` vide **tous** les référentiels, remet l'auto-incrément à zéro et, étant
-# du DDL, interdit tout retour arrière : il n'est joué que derrière `AUTRE_REFERENTIEL_SQL`.
-PURGE_SQL = "TRUNCATE TABLE trppu_cles_repartition"
-# Garde-fou du TRUNCATE. Servi par `idx_cr_ref_actif` (id_referentiel en tête) : un parcours d'index, pas de table.
+# RG6. La purge est un `TRUNCATE` (`index_chargement.vider_table`) : il vide **tous** les
+# référentiels et, étant du DDL, interdit tout retour arrière. Il n'est joué que derrière ce
+# garde-fou, servi par `idx_cr_ref_actif` (id_referentiel en tête) : un parcours d'index.
 AUTRE_REFERENTIEL_SQL = """
 SELECT id_referentiel FROM trppu_cles_repartition WHERE id_referentiel <> %s LIMIT 1
 """
@@ -182,15 +187,29 @@ def _entier_optionnel(ligne: dict[str, str], colonne: str, numero: int) -> int |
 def _decimal(ligne: dict[str, str], colonne: str, numero: int) -> Decimal:
     valeur = _obligatoire(ligne, colonne, numero)
     try:
-        return Decimal(valeur)
+        nombre = Decimal(valeur)
     except InvalidOperation as erreur:
         raise TraitementImpossible(
             f"Ligne {numero} : '{colonne}' = '{valeur}' n'est pas un décimal."
         ) from erreur
+    # `Decimal` accepte « NaN » et « Infinity », que MySQL refuserait à l'insertion.
+    if not nombre.is_finite():
+        raise TraitementImpossible(
+            f"Ligne {numero} : '{colonne}' = '{valeur}' n'est pas un décimal."
+        )
+    return nombre
 
 
 def _date(ligne: dict[str, str], colonne: str, numero: int) -> date:
     valeur = _obligatoire(ligne, colonne, numero)
+    # Chemin rapide pour la forme canonique AAAA-MM-JJ : `fromisoformat` est en C, dix fois
+    # plus rapide que `strptime` — sur 22 M de lignes × 2 dates, cela se compte en minutes.
+    # Les autres formes passent par `strptime`, qui garde exactement l'ancien comportement.
+    if len(valeur) == 10 and valeur[4] == "-" and valeur[7] == "-":
+        try:
+            return date.fromisoformat(valeur)
+        except ValueError:
+            pass
     try:
         return datetime.strptime(valeur, "%Y-%m-%d").date()
     except ValueError as erreur:
@@ -286,12 +305,16 @@ class _Rejets:
     id_referentiel: int
     total: int = 0
     details: list[str] = field(default_factory=list)
+    # La conversion tourne dans un thread pendant que l'insertion signale ses propres rejets.
+    _verrou: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def ajouter(self, numero: int, motif: str) -> None:
-        self.total += 1
-        if len(self.details) >= CHARGEMENT_MAX_REJETS_DETAILLES:
-            return
-        self.details.append(motif)
+    def ajouter(self, numero: int | None, motif: str) -> None:
+        """`numero` : ligne du fichier, None pour un doublon trouvé en base (sans ligne)."""
+        with self._verrou:
+            self.total += 1
+            if len(self.details) >= CHARGEMENT_MAX_REJETS_DETAILLES:
+                return
+            self.details.append(motif)
         logger.warning(
             "Rejet ligne clés de répartition %s",
             ctx(id_referentiel=self.id_referentiel, ligne=numero, motif=motif),
@@ -381,6 +404,9 @@ async def charger_cles_repartition(
         libelle_source = "sur S3"
     lignes_inserees = 0
     lots = 0
+    # Vrai tant que les index secondaires sont retirés : un échec doit alors remettre la
+    # table dans un état propre (vide, index en place) plutôt que la laisser sans index.
+    index_a_restaurer = False
 
     try:
         # --- Garde-fous, avant toute écriture -----------------------------
@@ -406,7 +432,7 @@ async def charger_cles_repartition(
         rapport.ok(f"Fichier '{cle}' présent {libelle_source} ({taille} octets)")
 
         # --- RG6 : purge -------------------------------------------------
-        await _tronquer()
+        await index_chargement.vider_table()
         # TRUNCATE ne rend pas de nombre de lignes : c'est le comptage fait juste avant, que
         # le garde-fou garantit être le contenu entier de la table.
         supprimees = nb_presentes
@@ -416,8 +442,41 @@ async def charger_cles_repartition(
         )
         rapport.ok(f"Purge (TRUNCATE) : {supprimees} ligne(s) supprimée(s)")
 
+        # --- Index secondaires retirés le temps du chargement ---------------
+        index_a_restaurer = await index_chargement.retirer_index()
+        if index_a_restaurer:
+            rapport.ok("Index secondaires retirés pendant le chargement")
+        else:
+            rapport.avertissements.append(
+                "Index secondaires conservés pendant le chargement (droit ALTER manquant) : "
+                "chargement nettement plus lent."
+            )
+
         # --- Lecture en streaming et insertion par lots ---------------------
         lignes_inserees, lots = await _charger(ouvrir, cle, id_referentiel, debut, rejets)
+
+        # --- Doublons, puis index reconstruits en une passe -----------------
+        if index_a_restaurer:
+            doublons = await index_chargement.reconstruire_index(
+                ecarter=rejets is not None,
+                signaler=(lambda motif: rejets.ajouter(None, motif)) if rejets else None,
+            )
+            if doublons.pdi and rejets is None:
+                rapport.avertissements.extend(doublons.details)
+                raise TraitementImpossible(
+                    f"{doublons.pdi} PDI en doublon dans le fichier "
+                    f"({doublons.lignes_en_trop} ligne(s) en trop, dont {doublons.conflits} "
+                    "aux données différentes). Dédoublonner le fichier "
+                    "(scripts/nettoyer_csv_cles.py) ou relancer avec --skip-errors."
+                )
+            index_a_restaurer = False
+            lignes_inserees -= doublons.lignes_en_trop
+            rapport.ok("Index secondaires reconstruits")
+            if doublons.pdi:
+                rapport.ok(
+                    f"{doublons.lignes_en_trop} doublon(s) de PDI écarté(s) — "
+                    f"{doublons.identiques} identique(s), {doublons.conflits} en conflit"
+                )
 
     except TraitementImpossible as erreur:
         logger.warning(
@@ -431,7 +490,9 @@ async def charger_cles_repartition(
         )
         rapport.ko(str(erreur))
         rapport.statut = ECHEC
-        rapport.etats["LIGNES_CHARGEES"] = lignes_inserees
+        rapport.etats["LIGNES_CHARGEES"] = await _apres_echec(
+            rapport, index_a_restaurer, lignes_inserees
+        )
         _reporter_rejets(rapport, rejets)
         return rapport
     except Exception as erreur:  # noqa: BLE001 - la CLI ne doit jamais rendre de stacktrace
@@ -441,7 +502,9 @@ async def charger_cles_repartition(
         )
         rapport.erreur = _message_erreur(erreur)
         rapport.statut = ECHEC
-        rapport.etats["LIGNES_CHARGEES"] = lignes_inserees
+        rapport.etats["LIGNES_CHARGEES"] = await _apres_echec(
+            rapport, index_a_restaurer, lignes_inserees
+        )
         _reporter_rejets(rapport, rejets)
         return rapport
 
@@ -478,18 +541,21 @@ async def charger_cles_repartition(
     return rapport
 
 
-async def _tronquer() -> None:
-    """`TRUNCATE TABLE`, avec un message actionnable si le compte n'en a pas le droit."""
-    try:
-        # Une seule tentative : un droit manquant ne se corrige pas en réessayant.
-        await db_write.execute(PURGE_SQL, retries=1)
-    except Exception as erreur:  # noqa: BLE001 - retraduit ou relancé
-        if _code_mysql(erreur) == 1142:
-            raise TraitementImpossible(
-                "TRUNCATE refusé par MySQL : le compte d'écriture n'a pas le droit DROP sur "
-                "trppu_cles_repartition — l'accorder au compte SGBD_APP_USER_WRITE."
-            ) from erreur
-        raise
+async def _apres_echec(rapport: Rapport, index_a_restaurer: bool, lignes: int) -> int:
+    """Remet la table en état si ses index étaient retirés. Retourne les lignes restantes."""
+    if not index_a_restaurer:
+        return lignes
+    if await index_chargement.remettre_table_vide():
+        rapport.avertissements.append(
+            "Chargement interrompu : la table a été vidée et ses index recréés. Relancer le "
+            "chargement une fois la cause corrigée."
+        )
+        return 0
+    rapport.avertissements.append(
+        "Chargement interrompu ET remise en état impossible : la table peut être sans ses "
+        "index secondaires. Relancer le chargement, qui les recrée."
+    )
+    return lignes
 
 
 def _reporter_rejets(rapport: Rapport, rejets: _Rejets | None) -> None:
@@ -517,49 +583,79 @@ async def _charger(
         lecteur = csv.DictReader(flux, delimiter=CSV_DELIMITEUR)
         verifier_entete(lecteur.fieldnames)
 
-        while True:
-            brutes = await asyncio.to_thread(_lire_lot, lecteur, CHARGEMENT_TAILLE_LOT)
-            if not brutes:
-                break
+        def preparer():
+            return asyncio.ensure_future(
+                asyncio.to_thread(_preparer_lot, lecteur, id_referentiel, rejets)
+            )
 
-            # `lecteur.line_num` porte le numéro de la dernière ligne lue, en-tête compris :
-            # on remonte au premier enregistrement du lot pour numéroter chaque ligne.
-            premiere = lecteur.line_num - len(brutes) + 1
-            valeurs: list[tuple[Any, ...]] = []
-            numeros: list[int] = []
-            for decalage, ligne in enumerate(brutes):
-                numero = premiere + decalage
-                try:
-                    valeurs.append(convertir(ligne, numero, id_referentiel))
-                except TraitementImpossible as erreur:
-                    if rejets is None:
-                        raise
-                    rejets.ajouter(numero, str(erreur))
+        # Le lot suivant est lu et converti (thread) pendant que MySQL insère le courant :
+        # CPU et base travaillent en même temps. Deux lots au plus en mémoire.
+        suivant = preparer()
+        try:
+            while True:
+                lot = await suivant
+                if lot is None:
+                    break
+                suivant = preparer()
+                valeurs, numeros, premiere = lot
+                if not valeurs:
                     continue
-                numeros.append(numero)
+                lignes_inserees += await _inserer_lot(valeurs, numeros, premiere, rejets)
+                lots += 1
 
-            if not valeurs:
-                continue
-
-            try:
-                async with db_write.transaction() as tx:
-                    await tx.execute_many(INSERT_SQL, valeurs)
-                inserees = len(valeurs)
-            except Exception as erreur:  # noqa: BLE001 - retraduit puis relancé
-                if rejets is None or _code_mysql(erreur) not in CODES_ERREUR_LIGNE:
-                    raise _traduire_erreur_insertion(erreur, premiere) from erreur
-                # Le lot a été annulé en bloc : on le rejoue ligne à ligne pour n'écarter que
-                # la ou les lignes fautives.
-                inserees = await _inserer_ligne_a_ligne(valeurs, numeros, rejets)
-
-            lignes_inserees += inserees
-            lots += 1
-
-            if lignes_inserees >= prochain_jalon:
-                _journaliser_avancement(id_referentiel, lignes_inserees, lots, debut)
-                prochain_jalon += CHARGEMENT_LOG_TOUTES_LES
+                if lignes_inserees >= prochain_jalon:
+                    _journaliser_avancement(id_referentiel, lignes_inserees, lots, debut)
+                    prochain_jalon += CHARGEMENT_LOG_TOUTES_LES
+        finally:
+            # Un thread ne s'annule pas : on attend la préparation en cours avant de fermer
+            # le flux qu'elle lit, et on absorbe son éventuelle erreur (déjà remontée, ou
+            # sans objet puisqu'on sort).
+            await asyncio.gather(suivant, return_exceptions=True)
 
     return lignes_inserees, lots
+
+
+def _preparer_lot(
+    lecteur: Iterator[dict[str, str]], id_referentiel: int, rejets: _Rejets | None
+) -> tuple[list[tuple[Any, ...]], list[int], int] | None:
+    """Lit et convertit un lot (appelé dans un thread). None en fin de fichier."""
+    brutes = _lire_lot(lecteur, CHARGEMENT_TAILLE_LOT)
+    if not brutes:
+        return None
+    # `lecteur.line_num` porte le numéro de la dernière ligne lue, en-tête compris : on
+    # remonte au premier enregistrement du lot pour numéroter chaque ligne.
+    premiere = lecteur.line_num - len(brutes) + 1
+    valeurs: list[tuple[Any, ...]] = []
+    numeros: list[int] = []
+    for decalage, ligne in enumerate(brutes):
+        numero = premiere + decalage
+        try:
+            valeurs.append(convertir(ligne, numero, id_referentiel))
+        except TraitementImpossible as erreur:
+            if rejets is None:
+                raise
+            rejets.ajouter(numero, str(erreur))
+            continue
+        numeros.append(numero)
+    return valeurs, numeros, premiere
+
+
+async def _inserer_lot(
+    valeurs: list[tuple[Any, ...]], numeros: list[int], premiere: int, rejets: _Rejets | None
+) -> int:
+    """Insère un lot en une requête multi-lignes, commitée seule. Retourne les insérées."""
+    try:
+        async with db_write.transaction() as tx:
+            await tx.execute_many(INSERT_SQL, valeurs)
+        return len(valeurs)
+    except Exception as erreur:  # noqa: BLE001 - retraduit puis relancé
+        if rejets is None or _code_mysql(erreur) not in CODES_ERREUR_LIGNE:
+            raise _traduire_erreur_insertion(erreur, premiere) from erreur
+        # Le lot a été annulé en bloc : on le rejoue ligne à ligne pour n'écarter que la ou
+        # les lignes fautives. Sans index unique (cas nominal), un doublon ne fait plus
+        # échouer de lot : ce chemin ne sert qu'aux valeurs refusées par MySQL, ou quand
+        # les index n'ont pas pu être retirés.
+        return await _inserer_ligne_a_ligne(valeurs, numeros, rejets)
 
 
 async def _inserer_ligne_a_ligne(
