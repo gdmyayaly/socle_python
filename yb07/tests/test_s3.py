@@ -388,3 +388,82 @@ def test_listing_tronque_a_la_limite(bouchonner_boto3):
 )
 def test_taille_lisible(octets, attendu):
     assert s3.taille_lisible(octets) == attendu
+
+
+# --- Vérification TLS -------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def tls_par_defaut(monkeypatch):
+    """Isole tous les tests du `.env` local : un S3_CA_BUNDLE pointant vers un fichier pas
+    encore déposé ferait échouer des tests qui n'ont rien à voir avec TLS."""
+    monkeypatch.setattr(s3, "S3_VERIFY_SSL", True)
+    monkeypatch.setattr(s3, "S3_CA_BUNDLE", "")
+
+
+def test_tls_standard_laisse_boto3_decider(tls_par_defaut, bouchonner_boto3):
+    options = bouchonner_boto3(FauxClient())
+
+    s3.construire_client()
+
+    assert "verify" not in options[0]
+
+
+def test_bundle_ca_transmis_a_boto3(monkeypatch, tmp_path, tls_par_defaut, bouchonner_boto3):
+    """Même mécanisme que l'API jours fermés de python/ : le proxy TLS de l'entreprise."""
+    bundle = tmp_path / "cacert.pem"
+    bundle.write_text("-----BEGIN CERTIFICATE-----\n", encoding="ascii")
+    monkeypatch.setattr(s3, "S3_CA_BUNDLE", str(bundle))
+    options = bouchonner_boto3(FauxClient())
+
+    s3.construire_client()
+
+    assert options[0]["verify"] == str(bundle)
+
+
+def test_bundle_ca_introuvable_refuse_en_citant_le_chemin(
+    monkeypatch, tmp_path, tls_par_defaut, bouchonner_boto3
+):
+    manquant = str(tmp_path / "certif" / "cacert.pem")
+    monkeypatch.setattr(s3, "S3_CA_BUNDLE", manquant)
+    bouchonner_boto3(FauxClient())
+
+    with pytest.raises(TraitementImpossible) as erreur:
+        s3.construire_client()
+    assert manquant in str(erreur.value)
+
+
+def test_verification_desactivee_prime_sur_le_bundle(
+    monkeypatch, tls_par_defaut, bouchonner_boto3
+):
+    monkeypatch.setattr(s3, "S3_VERIFY_SSL", False)
+    monkeypatch.setattr(s3, "S3_CA_BUNDLE", "certif/absent.pem")
+    options = bouchonner_boto3(FauxClient())
+
+    s3.construire_client()
+
+    assert options[0]["verify"] is False
+    assert "DÉSACTIVÉE" in s3.decrire_configuration()["verification_tls"]
+
+
+def test_erreur_ssl_traduite_vers_s3_ca_bundle():
+    from botocore.exceptions import SSLError
+
+    erreur = s3._traduire(
+        SSLError(endpoint_url="https://s3", error="CERTIFICATE_VERIFY_FAILED"), "f.csv"
+    )
+
+    assert "S3_CA_BUNDLE" in str(erreur)
+
+
+def test_diagnostic_ne_leve_pas_sur_bundle_introuvable(
+    monkeypatch, tls_par_defaut, bouchonner_boto3
+):
+    """`s3-check` doit rendre un état lisible, c'est précisément là qu'on le lance."""
+    monkeypatch.setattr(s3, "S3_CA_BUNDLE", "/nulle/part/cacert.pem")
+    bouchonner_boto3(FauxClient())
+
+    acces = s3.verifier_acces()
+
+    assert acces["status"] == "error"
+    assert "Bundle CA introuvable" in acces["error"]

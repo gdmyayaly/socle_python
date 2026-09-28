@@ -63,6 +63,15 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
 S3_BUCKET = os.getenv("S3_BUCKET", "")
 S3_PREFIXE = os.getenv("S3_PREFIXE", "")
 S3_TIMEOUT = _entier_positif("S3_TIMEOUT", 60)
+# Vérification TLS, sur le modèle de l'API jours fermés de `python/` : chemin vers un bundle
+# CA (ex. certif/cacert.pem, pour le proxy d'inspection TLS de l'entreprise), relatif à la
+# racine du module ou absolu. Vide = magasin de certificats par défaut de boto3.
+_s3_ca = os.getenv("S3_CA_BUNDLE", "").strip()
+if _s3_ca and not os.path.isabs(_s3_ca):
+    _s3_ca = str(Path(__file__).resolve().parent.parent / _s3_ca)
+S3_CA_BUNDLE = _s3_ca
+# Désactive complètement la vérification TLS. Dépannage en dev UNIQUEMENT (risque MITM).
+S3_VERIFY_SSL = os.getenv("S3_VERIFY_SSL", "true").strip().lower() == "true"
 
 # Fichiers CSV. Le nom du fichier est une donnée d'exploitation : il change à chaque
 # livraison du métier, il n'a rien à faire dans le code.
