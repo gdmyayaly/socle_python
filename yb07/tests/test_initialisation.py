@@ -94,7 +94,7 @@ def chargement_reussi(monkeypatch):
     """Neutralise l'étape 1, qui a sa propre couverture (`test_chargement_cles_repartition`)."""
     appels = []
 
-    async def _faux(id_referentiel, fichier=None):
+    async def _faux(id_referentiel, fichier=None, *, ignorer_erreurs=False):
         appels.append((id_referentiel, fichier))
         return _rapport_chargement()
 
@@ -157,7 +157,7 @@ def test_les_scripts_de_donnees_sont_joues_en_transaction(chargement_reussi):
 
 
 def test_le_chargement_en_echec_arrete_la_chaine(monkeypatch):
-    async def _echec(id_referentiel, fichier=None):
+    async def _echec(id_referentiel, fichier=None, *, ignorer_erreurs=False):
         rapport = Rapport(titre="CHARGEMENT", id_traitement=id_referentiel)
         rapport.ko("Fichier introuvable sur S3.")
         return rapport
@@ -682,3 +682,44 @@ def test_le_code_retour_suit_le_verdict_du_rapport(monkeypatch, capsys, reussi, 
 
     assert asyncio.run(main.cmd_init(args)) == code
     assert "INIT" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# --skip-errors
+# ---------------------------------------------------------------------------
+
+
+def test_skip_errors_transmis_au_chargement_et_avertissements_remontes(monkeypatch):
+    """Les lignes écartées doivent figurer dans le rapport final de `init`, pas seulement
+    dans celui de l'étape — et la chaîne continue."""
+    recu = {}
+
+    async def _faux(id_referentiel, fichier=None, *, ignorer_erreurs=False):
+        recu["ignorer_erreurs"] = ignorer_erreurs
+        rapport = _rapport_chargement()
+        rapport.etats["LIGNES_IGNOREES"] = 2
+        rapport.avertissements += ["Ligne 7 : vide", "Ligne 9 : doublon de PDI"]
+        return rapport
+
+    monkeypatch.setattr(initialisation, "charger_cles_repartition", _faux)
+
+    rapport = _lancer(etape="chargement", ignorer_erreurs=True)
+
+    assert rapport.reussi, rapport.motifs
+    assert recu == {"ignorer_erreurs": True}
+    assert rapport.etats["LIGNES_IGNOREES"] == 2
+    assert rapport.avertissements == ["Ligne 7 : vide", "Ligne 9 : doublon de PDI"]
+
+
+def test_sans_skip_errors_le_chargement_reste_strict(monkeypatch):
+    recu = {}
+
+    async def _faux(id_referentiel, fichier=None, *, ignorer_erreurs=False):
+        recu["ignorer_erreurs"] = ignorer_erreurs
+        return _rapport_chargement()
+
+    monkeypatch.setattr(initialisation, "charger_cles_repartition", _faux)
+
+    _lancer(etape="chargement")
+
+    assert recu == {"ignorer_erreurs": False}

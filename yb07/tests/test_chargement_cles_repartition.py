@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import io
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import date
 from decimal import Decimal
 
+import pymysql
 import pytest
 
 from app.traitements import cles_repartition as module
@@ -366,7 +367,7 @@ def test_commande_locale_transmet_le_chemin(monkeypatch):
 
     recu = {}
 
-    async def _faux(id_referentiel, fichier=None, *, chemin_local=None):
+    async def _faux(id_referentiel, fichier=None, *, chemin_local=None, ignorer_erreurs=False):
         recu.update(id_referentiel=id_referentiel, chemin_local=chemin_local)
         return module.Rapport(titre="T", id_traitement=id_referentiel)
 
@@ -376,3 +377,137 @@ def test_commande_locale_transmet_le_chemin(monkeypatch):
     asyncio.run(main.cmd_charger_cles_repartition_local(args))
 
     assert recu == {"id_referentiel": 2, "chemin_local": "x.csv"}
+
+
+# --- --skip-errors ----------------------------------------------------------
+
+# PDI_1 invalide (trafic non numérique) : non conforme à la conversion.
+LIGNE_MAL_FORMEE = LIGNE_PLEINE.replace("1.0196987815888434", "abc", 1)
+
+
+class BaseAvecDoublon(FausseBase):
+    """Refuse en doublon (1062) tout PDI déjà inséré, comme `uk_pdi_ref`."""
+
+    def __init__(self, *args, code=1062, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.code = code
+        self.pdi_inseres: set[int] = set()
+
+    def _refuser_si_doublon(self, ligne):
+        if ligne[0] in self.pdi_inseres:
+            raise pymysql.err.IntegrityError(self.code, f"Duplicate entry '{ligne[0]}-1'")
+
+    @asynccontextmanager
+    async def transaction(self):
+        base = self
+
+        class Curseur:
+            async def execute_many(self, query, lignes):
+                lignes = list(lignes)
+                for ligne in lignes:
+                    base._refuser_si_doublon(ligne)
+                if len({ligne[0] for ligne in lignes}) != len(lignes):
+                    raise pymysql.err.IntegrityError(base.code, "Duplicate entry")
+                base.pdi_inseres.update(ligne[0] for ligne in lignes)
+                return base._enregistrer("execute_many", query, lignes)
+
+            async def execute(self, query, ligne):
+                base._refuser_si_doublon(ligne)
+                base.pdi_inseres.add(ligne[0])
+                return base._enregistrer("execute", query, ligne)
+
+        yield Curseur()
+
+
+def test_skip_errors_ecarte_la_ligne_mal_formee(s3_bouchonne, brancher_base):
+    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_MAL_FORMEE))
+    brancher_base(base_nominale())
+
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    assert rapport.etats["LIGNES_CHARGEES"] == 1
+    assert rapport.etats["LIGNES_IGNOREES"] == 1
+    assert rapport.avertissements[0].startswith("Ligne 3 :")
+    assert "Avertissements :" in rapport.texte()
+
+
+def test_sans_skip_errors_la_meme_ligne_fait_echouer(s3_bouchonne, brancher_base):
+    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_MAL_FORMEE))
+    brancher_base(base_nominale())
+
+    rapport = charger(id_referentiel=1, fichier="f.csv")
+
+    assert rapport.statut == ECHEC
+    assert "LIGNES_IGNOREES" not in rapport.etats
+
+
+def test_skip_errors_ecarte_un_doublon_en_rejouant_le_lot_ligne_a_ligne(
+    s3_bouchonne, brancher_base
+):
+    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_PLEINE))
+    base = brancher_base(BaseAvecDoublon(base_nominale().reponses))
+
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    assert rapport.etats["LIGNES_CHARGEES"] == 1
+    assert rapport.etats["LIGNES_IGNOREES"] == 1
+    assert "doublon de PDI" in rapport.avertissements[0]
+    assert "Ligne 3" in rapport.avertissements[0]
+    assert base.pdi_inseres == {100005554}
+
+
+def test_skip_errors_ne_masque_pas_une_panne_technique(s3_bouchonne, brancher_base):
+    """Une connexion perdue (2013) n'est pas un défaut de ligne : le chargement s'arrête."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_PLEINE))
+    brancher_base(BaseAvecDoublon(base_nominale().reponses, code=2013))
+
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    assert rapport.statut == ECHEC
+
+
+def test_skip_errors_aucune_ligne_conforme_echoue(s3_bouchonne, brancher_base):
+    s3_bouchonne(csv_de(LIGNE_MAL_FORMEE, LIGNE_MAL_FORMEE))
+    brancher_base(base_nominale())
+
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    assert rapport.statut == ECHEC
+    assert "Aucune ligne conforme" in " ".join(rapport.motifs)
+
+
+def test_skip_errors_detail_plafonne(monkeypatch, s3_bouchonne, brancher_base):
+    monkeypatch.setattr(module, "CHARGEMENT_MAX_REJETS_DETAILLES", 1)
+    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_MAL_FORMEE, LIGNE_MAL_FORMEE, LIGNE_MAL_FORMEE))
+    brancher_base(base_nominale())
+
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    assert rapport.etats["LIGNES_IGNOREES"] == 3
+    assert len(rapport.avertissements) == 2
+    assert "2 autre(s)" in rapport.avertissements[1]
+
+
+def test_avertissements_sans_effet_sur_le_verdict():
+    rapport = module.Rapport(titre="T", id_traitement=1)
+    rapport.avertissements.append("Ligne 3 : ignorée")
+
+    assert rapport.reussi
+    assert rapport.to_dict()["avertissements"] == ["Ligne 3 : ignorée"]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["charger-cles-repartition", "1", "--skip-errors"],
+        ["charger-cles-repartition-local", "1", "f.csv", "--skip-errors"],
+        ["init", "1", "--skip-errors"],
+    ],
+)
+def test_option_skip_errors_sur_les_trois_commandes(arguments):
+    from app.main import build_parser
+
+    assert build_parser().parse_args(arguments).ignorer_erreurs is True
+    assert build_parser().parse_args(arguments[:-1]).ignorer_erreurs is False

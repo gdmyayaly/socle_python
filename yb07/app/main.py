@@ -151,7 +151,6 @@ async def cmd_s3_check(args: argparse.Namespace) -> int:
         print(f"  bucket       : {config['bucket']}")
         print(f"  prefixe      : {config['prefixe']}")
         print(f"  adressage    : {config['adressage']}")
-        print(f"  tls          : {config['verification_tls']}")
         identifiants = config["identifiants"]
         if config["access_key"]:
             identifiants += f" (AWS_ACCESS_KEY_ID={config['access_key']})"
@@ -237,14 +236,20 @@ async def _executer_traitement(traitement, args: argparse.Namespace) -> int:
 async def cmd_charger_cles_repartition(args: argparse.Namespace) -> int:
     """Charge `trppu_cles_repartition` depuis le CSV déposé sur S3."""
     return await _executer_traitement(
-        lambda a: charger_cles_repartition(a.id_traitement, a.fichier), args
+        lambda a: charger_cles_repartition(
+            a.id_traitement, a.fichier, ignorer_erreurs=a.ignorer_erreurs
+        ),
+        args,
     )
 
 
 async def cmd_charger_cles_repartition_local(args: argparse.Namespace) -> int:
     """Charge `trppu_cles_repartition` depuis un CSV du disque local."""
     return await _executer_traitement(
-        lambda a: charger_cles_repartition(a.id_traitement, chemin_local=a.chemin), args
+        lambda a: charger_cles_repartition(
+            a.id_traitement, chemin_local=a.chemin, ignorer_erreurs=a.ignorer_erreurs
+        ),
+        args,
     )
 
 
@@ -260,8 +265,21 @@ async def cmd_init(args: argparse.Namespace) -> int:
             libelle=a.libelle,
             dry_run=a.dry_run,
             controles_longs=not a.sans_controles_longs,
+            ignorer_erreurs=a.ignorer_erreurs,
         ),
         args,
+    )
+
+
+def _ajouter_skip_errors(sous_commande: argparse.ArgumentParser) -> None:
+    """Option commune aux commandes qui chargent le CSV des clés de répartition."""
+    sous_commande.add_argument(
+        "--skip-errors",
+        dest="ignorer_erreurs",
+        action="store_true",
+        help="Écarte les lignes non conformes du CSV (champ vide ou mal formé, autre "
+        "référentiel, doublon…) au lieu d'arrêter le chargement. Elles sont listées dans "
+        "les avertissements du rapport et comptées dans LIGNES_IGNOREES.",
     )
 
 
@@ -344,6 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Nom du fichier dans le bucket, à défaut de CSV_CLES_REPARTITION.",
     )
+    _ajouter_skip_errors(chargement)
     chargement.set_defaults(handler=cmd_charger_cles_repartition)
 
     chargement_local = sous_commandes.add_parser(
@@ -362,6 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
         "chemin",
         help="Chemin du fichier CSV (ou .csv.gz), absolu ou relatif au dossier courant.",
     )
+    _ajouter_skip_errors(chargement_local)
     chargement_local.set_defaults(handler=cmd_charger_cles_repartition_local)
 
     init = sous_commandes.add_parser(
@@ -422,6 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Saute les contrôles qui balaient les 24 M de lignes (somme des clés, CA3 de "
         "DSR-699). Une clé fausse ne serait alors pas détectée.",
     )
+    _ajouter_skip_errors(init)
     init.set_defaults(handler=cmd_init)
 
     return parser

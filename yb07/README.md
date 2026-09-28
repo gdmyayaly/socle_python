@@ -209,8 +209,6 @@ acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
 | `S3_BUCKET` | `""` | Bucket source |
 | `S3_PREFIXE` | `""` | Dossier dans le bucket, sans slash de début ni de fin ; vide = racine |
 | `S3_TIMEOUT` | `60` | Délai d'attente réseau, en secondes |
-| `S3_CA_BUNDLE` | `""` | Bundle CA pour le proxy d'inspection TLS de l'entreprise — le même que `python/certif/cacert.pem`. Chemin relatif à la racine de `yb07/` (ex. `certif/cacert.pem`) ou absolu. Vide = certificats par défaut. Un fichier introuvable est signalé avec son chemin. |
-| `S3_VERIFY_SSL` | `true` | `false` désactive toute vérification TLS — dépannage en dev **uniquement** (risque d'interception). Prime sur `S3_CA_BUNDLE`. |
 
 ### Fichiers CSV et chargements
 
@@ -221,6 +219,7 @@ acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
 | `CSV_ENCODAGE` | `utf-8-sig` | Décode aussi l'UTF-8 nu et absorbe le BOM |
 | `CHARGEMENT_TAILLE_LOT` | `5000` | Nombre de lignes par lot inséré — chaque lot est commité séparément |
 | `CHARGEMENT_LOG_TOUTES_LES` | `100000` | Fréquence des lignes de log d'avancement, en lignes chargées |
+| `CHARGEMENT_MAX_REJETS_DETAILLES` | `100` | Avec `--skip-errors` : lignes écartées détaillées dans le rapport et les logs ; au-delà, elles sont seulement comptées |
 | `INIT_LOG_TOUS_LES_SITES` | `50` | `init`, étape `versions` : fréquence des lignes d'avancement, en sites traités |
 | `INIT_MAX_ANOMALIES_LOGUEES` | `50` | `init`, étape `cles` : plafond des sommes de clés hors tolérance journalisées une à une. Le compte total est toujours rendu. |
 
@@ -325,7 +324,6 @@ Configuration S3
   bucket       : trppu
   prefixe      : referentiels/
   adressage    : path
-  tls          : bundle C:/.../yb07/certif/cacert.pem
   identifiants : explicites (AWS_ACCESS_KEY_ID=AK**********90)
 Accès : ok
   buckets visibles : trppu, archives
@@ -364,6 +362,38 @@ demandé.
 |---|---|
 | `id_referentiel` | **Obligatoire.** Référentiel à charger : il cible la purge, et toute ligne du fichier portant un autre référentiel fait échouer le chargement. |
 | `--fichier` | Nom du fichier dans le bucket, à défaut de `CSV_CLES_REPARTITION`. Pour un rechargement ponctuel sans toucher au `.env`. |
+| `--skip-errors` | Écarte les lignes non conformes au lieu d'arrêter le chargement (voir ci-dessous). |
+
+**`--skip-errors`** — sans l'option, la première ligne non conforme arrête le chargement.
+Avec, elle est écartée et le chargement continue :
+
+- lignes écartées : colonne obligatoire vide, nombre ou date mal formé, ligne portant un
+  autre référentiel, doublon de PDI (`uk_pdi_ref`), valeur refusée par MySQL (hors bornes,
+  texte trop long). Un lot refusé par MySQL est rejoué ligne à ligne pour n'écarter que la
+  ligne fautive ;
+- toujours bloquants : en-tête inattendu, fichier absent, panne technique (connexion,
+  verrou, droits), et un fichier dont **aucune** ligne n'est conforme ;
+- le rapport compte les lignes écartées (`LIGNES_IGNOREES`) et détaille les
+  `CHARGEMENT_MAX_REJETS_DETAILLES` premières dans une section `Avertissements :` — elles
+  sont aussi journalisées (`Rejet ligne clés de répartition`). Les avertissements ne changent
+  pas le verdict : `RESULTAT : SUCCES` si le reste est conforme.
+
+```
+[OK] 22395339 ligne(s) insérée(s) en 4480 lot(s)
+[OK] 2 ligne(s) non conforme(s) ignorée(s) (--skip-errors)
+...
+LIGNES_IGNOREES = 2
+
+Avertissements :
+
+  - Ligne 1841 : la colonne 'regate_dex' est vide alors qu'elle est obligatoire.
+  - Ligne 90217 : doublon de PDI — le couple (PDI, référentiel) figure déjà plus haut dans le fichier.
+
+RESULTAT : SUCCES
+```
+
+Un PDI écarté n'aura pas de clé calculée à l'étape `cles` : relire les avertissements
+**avant** de poursuivre la chaîne.
 
 **Format attendu** — 18 colonnes séparées par `;`, en-tête compris :
 
@@ -455,6 +485,7 @@ pour un fichier transmis hors bucket.
 |---|---|
 | `id_referentiel` | **Obligatoire.** Comme pour le chargement S3. |
 | `chemin` | **Obligatoire.** Chemin du fichier, absolu ou relatif au dossier courant. Un `.gz` est décompressé à la volée. |
+| `--skip-errors` | Comme pour le chargement S3. |
 
 Le fichier est localisé (existence, lisibilité) **avant** la purge. `CSV_CLES_REPARTITION`
 n'est pas utilisé ; `CSV_DELIMITEUR` et `CSV_ENCODAGE` s'appliquent. Dans le rapport, la
@@ -486,6 +517,7 @@ python -m app.main init 1 --depuis versions     # reprend ici et enchaîne
 | `--commentaire`, `--libelle` | Portés par les versions de clés créées (DSR-698). |
 | `--dry-run` | Lit et découpe les scripts sans rien écrire. L'étape `chargement` est sautée : elle n'a pas de mode à blanc. |
 | `--sans-controles-longs` | Saute les contrôles qui balaient les 24 M de lignes. Une clé fausse ne serait alors pas détectée. |
+| `--skip-errors` | Transmis à l'étape `chargement` : les lignes non conformes du CSV sont écartées, et listées dans les avertissements du rapport final de `init`. Sans effet sur les autres étapes. |
 
 Étapes, dans l'ordre : `chargement`, `migration`, `correctif`, `agregats`, `versions`, `cles`.
 

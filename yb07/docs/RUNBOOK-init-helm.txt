@@ -1,0 +1,304 @@
+========================================================================
+YB07 - INITIALISATION DES CLES DE REPARTITION VIA HELM (KUBERNETES)
+========================================================================
+
+Objet : initialiser un referentiel de cles de repartition avec le
+CronJob Helm de yb07, etape par etape, apres creation des tables.
+
+Referentiel utilise dans les exemples : 1. Le remplacer partout si
+besoin. Toutes les lignes du CSV doivent porter ce meme id_referentiel.
+
+
+------------------------------------------------------------------------
+1. REGLES A RESPECTER
+------------------------------------------------------------------------
+
+- Ne JAMAIS laisser "init" tourner sur un schedule (ex. */15) :
+  init est une operation unique, certaines etapes durent des heures,
+  et l'etape "cles" est IRREVERSIBLE (CA4 de DSR-699).
+- Le CronJob reste SUSPENDU (suspend: true). Chaque etape est lancee
+  a la main avec "kubectl create job --from=cronjob/...".
+- Une etape a la fois. On ne passe a la suivante que si le rapport
+  se termine par "RESULTAT : SUCCES" et que le pod est "Completed".
+- Pas de relance automatique : backoffLimit: 0 si le chart le permet.
+- Pas d'activeDeadlineSeconds trop court : il tuerait "migration" ou
+  "cles" en plein milieu.
+
+
+------------------------------------------------------------------------
+2. VALUES.YAML DE BASE
+------------------------------------------------------------------------
+
+cronjobs:
+  enabled: true
+  jobs:
+    yb07:
+      schedule: "0 0 1 1 *"
+      suspend: true
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      image:
+        repository: fhgf
+        tag: "1.0.0"
+        pullPolicy: IfNotPresent
+      command:
+        - python
+        - '-m'
+        - app.main
+        - db-check
+
+Notes :
+- "schedule" est sans importance tant que suspend vaut true.
+- Preferer un tag fige a "latest" : on sait quelle version a tourne.
+- Configuration (SGBD_*, S3_*, AWS_*, CSV_*) en variables
+  d'environnement ; mots de passe dans un Secret (envFrom). Les
+  variables du pod priment sur un eventuel .env.
+
+
+------------------------------------------------------------------------
+3. PROCEDURE POUR CHAQUE ETAPE
+------------------------------------------------------------------------
+
+a) Remplacer le bloc "command" du values.yaml par celui de l'etape
+   (voir section 4), en gardant l'indentation de votre fichier.
+
+b) Appliquer :
+
+   helm upgrade <release> <chart> -f values.yaml
+
+c) Lancer le job (nom unique a chaque fois) :
+
+   kubectl create job yb07-<etape> --from=cronjob/<nom-du-cronjob>
+
+d) Suivre le rapport :
+
+   kubectl logs -f job/yb07-<etape>
+
+e) Verifier la fin du rapport ("RESULTAT : SUCCES") et le statut :
+
+   kubectl get job yb07-<etape>
+
+f) Relancer une etape deja lancee : supprimer l'ancien job ou changer
+   son nom (ex. yb07-chargement-2).
+
+   kubectl delete job yb07-<etape>
+
+
+------------------------------------------------------------------------
+4. LES ETAPES, DANS L'ORDRE
+------------------------------------------------------------------------
+
+ETAPE 0a - Connexion MySQL                          duree : secondes
+Rejouable : oui
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - db-check
+
+A verifier : lecture et ecriture "connected".
+
+
+ETAPE 0b - Acces S3 et presence du CSV              duree : secondes
+Rejouable : oui
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - s3-check
+
+A verifier : "Acces : ok" et le fichier CSV visible dans le listing.
+Pour lister un autre dossier : ajouter "- '--prefixe'" puis
+"- <dossier>" a la fin de la liste.
+
+
+ETAPE 1 - Marche a blanc                            duree : secondes
+Rejouable : oui (n'ecrit rien)
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--dry-run'
+
+A verifier : les scripts sont lus et decoupes, aucune ecriture.
+
+
+ETAPE 2 - Chargement du CSV                   duree : longue (22 M l.)
+Rejouable : oui (purge du referentiel puis rechargement)
+
+Mode strict (la premiere ligne non conforme arrete tout) :
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--etape'
+        - chargement
+
+Mode tolerant (les lignes non conformes sont ecartees et listees
+dans le rapport final) :
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--etape'
+        - chargement
+        - '--skip-errors'
+
+A verifier : LIGNES_CHARGEES, LIGNES_ACTIVES, et en mode tolerant
+LIGNES_IGNOREES et la section "Avertissements :".
+ATTENTION : un PDI ecarte n'aura PAS de cle calculee a l'etape 7.
+Faire valider la liste des lignes ecartees avant de continuer.
+
+Fichier different de CSV_CLES_REPARTITION : ajouter a la liste
+"- '--fichier'" puis "- <nom_du_fichier.csv>".
+
+
+ETAPE 3 - Migration (index, colonne)     duree : rapide si deja fait
+Rejouable : oui (chaque ALTER est teste avant)
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--etape'
+        - migration
+
+Tables creees depuis yb05/db/database.sql : les index et la colonne
+date_creation existent deja, l'etape ne reconstruit rien.
+
+
+ETAPE 4 - Correctif (elargissement de colonnes)   duree : variable
+Rejouable : oui
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--etape'
+        - correctif
+
+A verifier : totaux en decimal(35+,19).
+
+
+ETAPE 5 - Agregats par site                          duree : longue
+Rejouable : oui (DELETE cible puis INSERT)
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--etape'
+        - agregats
+
+A verifier : nombre de sites, CA2, CA5 (autres referentiels intacts).
+
+
+ETAPE 6 - Versions de cles                ~ un script par site
+Rejouable : oui (un site deja versionne est saute)
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--etape'
+        - versions
+
+A verifier : SITES_TRAITES, VERSIONS_CREEES, et SITES_VERSIONS_KO = 0.
+Libelle / commentaire des versions : ajouter "- '--libelle'" puis
+"- '<texte>'", ou "- '--commentaire'" puis "- '<texte>'".
+
+
+ETAPE 7 - Calcul des cles                   duree : PLUSIEURS HEURES
+Rejouable : NON - IRREVERSIBLE
+
+AVANT DE LANCER :
+- rapport de l'etape 6 relu : aucun site en echec ;
+- autant de versions actives que de sites agreges ;
+- en cas de --skip-errors a l'etape 2 : lignes ecartees validees.
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--etape'
+        - cles
+
+A verifier : CA1 (une cle par PDI actif), CA2, CA3 (sommes a 1).
+Aucun avancement n'est affiche pendant l'etape : suivre depuis un
+client MySQL avec yb05/db/suivi.sql.
+
+
+------------------------------------------------------------------------
+5. EN CAS D'ECHEC
+------------------------------------------------------------------------
+
+Le rapport indique "REPRENDRE_A = <etape>". Corriger la cause, puis
+reprendre a cette etape et enchainer les suivantes :
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '1'
+        - '--depuis'
+        - <etape>
+
+"--depuis cles" enchaine directement le calcul irreversible : ne
+l'utiliser qu'apres avoir relu le rapport de l'etape "versions".
+
+Codes de sortie : 0 = succes, 1 = echec (le job passe en Failed).
+
+
+------------------------------------------------------------------------
+6. PASSAGES SUIVANTS (NOUVEAU REFERENTIEL)
+------------------------------------------------------------------------
+
+Une fois les durees connues (ligne "Fin etape", champ duration_ms dans
+les logs) et la fenetre d'exploitation validee, la chaine peut etre
+lancee d'un bloc sur un NOUVEAU referentiel :
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - init
+        - '2'
+
+Ajouter "- '--skip-errors'" pour le mode tolerant au chargement.
+
+
+------------------------------------------------------------------------
+7. POINTS D'ATTENTION DEPLOIEMENT
+------------------------------------------------------------------------
+
+- yb07 n'a pas de .dockerignore et le Dockerfile fait "COPY . .".
+  Un .env present au moment du build finit dans l'image, avec les
+  mots de passe. Verifier l'image ou ajouter un .dockerignore.
+- Le rapport part sur la sortie standard, les logs JSON sur la sortie
+  d'erreur : les deux sont visibles dans "kubectl logs".
+- Le dossier logs/ du conteneur disparait avec le pod : se fier a
+  "kubectl logs" (ou Kibana si la collecte est en place).
+- La table trppu_referentiel n'est plus consultee par yb07.

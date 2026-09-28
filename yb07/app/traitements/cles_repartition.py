@@ -27,6 +27,12 @@ Deux écarts assumés avec ce script, tous deux dus au format de fichier, qui a 
   vrai risque. Un échec laisse donc un chargement partiel : c'est la purge (RG6) qui rend
   la commande rejouable, et le rapport dit combien de lignes étaient passées.
 
+Avec `ignorer_erreurs` (option `--skip-errors`), une ligne non conforme — champ obligatoire
+vide, valeur mal formée, autre référentiel, doublon ou valeur refusée par MySQL — est écartée
+au lieu d'arrêter le chargement. Elle figure dans les avertissements du rapport, et le total
+dans `LIGNES_IGNOREES`. Un en-tête faux ou une panne technique (connexion, verrou, droits)
+restent bloquants : ce ne sont pas des défauts d'une ligne.
+
 Le traitement **ne lève pas** : il rend un `Rapport` dont `reussi` vaut `False`. C'est la
 CLI qui en déduit le code de retour du processus.
 """
@@ -37,12 +43,14 @@ import asyncio
 import csv
 import logging
 import time
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterator
 
 from app.config import (
     CHARGEMENT_LOG_TOUTES_LES,
+    CHARGEMENT_MAX_REJETS_DETAILLES,
     CHARGEMENT_TAILLE_LOT,
     CSV_CLES_REPARTITION,
     CSV_DELIMITEUR,
@@ -100,6 +108,11 @@ PURGE_SQL = "DELETE FROM trppu_cles_repartition WHERE id_referentiel = %s"
 LIGNES_PRESENTES_SQL = (
     "SELECT COUNT(*) AS nb FROM trppu_cles_repartition WHERE id_referentiel = %s"
 )
+# Erreurs MySQL imputables à UNE ligne : doublon (1062), valeur hors bornes (1264), date
+# invalide (1292), valeur incorrecte (1366), texte trop long (1406). Toute autre erreur
+# (connexion, verrou, droits) arrête le chargement, même avec --skip-errors.
+CODES_ERREUR_LIGNE = frozenset({1062, 1264, 1292, 1366, 1406})
+
 CONTROLE_FINAL_SQL = """
 SELECT COUNT(*)                             AS nb_lignes,
        COUNT(DISTINCT id_pdi)               AS nb_pdi_distincts,
@@ -253,6 +266,55 @@ def _lire_lot(lecteur: Iterator[dict[str, str]], taille: int) -> list[dict[str, 
 
 
 # ---------------------------------------------------------------------------
+# Lignes écartées (--skip-errors)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Rejets:
+    """Lignes écartées par `--skip-errors` : toutes comptées, les premières détaillées."""
+
+    id_referentiel: int
+    total: int = 0
+    details: list[str] = field(default_factory=list)
+
+    def ajouter(self, numero: int, motif: str) -> None:
+        self.total += 1
+        if len(self.details) >= CHARGEMENT_MAX_REJETS_DETAILLES:
+            return
+        self.details.append(motif)
+        logger.warning(
+            "Rejet ligne clés de répartition %s",
+            ctx(id_referentiel=self.id_referentiel, ligne=numero, motif=motif),
+        )
+
+    def avertissements(self) -> list[str]:
+        restants = self.total - len(self.details)
+        if restants <= 0:
+            return list(self.details)
+        return [
+            *self.details,
+            f"… et {restants} autre(s) ligne(s) ignorée(s), non détaillée(s) "
+            f"(CHARGEMENT_MAX_REJETS_DETAILLES = {CHARGEMENT_MAX_REJETS_DETAILLES}).",
+        ]
+
+
+def _code_mysql(erreur: Exception) -> int | None:
+    """Code d'erreur MySQL porté par une exception pymysql/aiomysql, sinon None."""
+    args = getattr(erreur, "args", ())
+    return args[0] if args and isinstance(args[0], int) else None
+
+
+def _motif_insertion(erreur: Exception, numero: int) -> str:
+    if _code_mysql(erreur) == 1062:
+        return (
+            f"Ligne {numero} : doublon de PDI — le couple (PDI, référentiel) figure déjà "
+            "plus haut dans le fichier."
+        )
+    return f"Ligne {numero} : valeur refusée par MySQL — {erreur}"
+
+
+# ---------------------------------------------------------------------------
 # Traitement
 # ---------------------------------------------------------------------------
 
@@ -262,12 +324,14 @@ async def charger_cles_repartition(
     fichier: str | None = None,
     *,
     chemin_local: str | None = None,
+    ignorer_erreurs: bool = False,
 ) -> Rapport:
     """Charge `trppu_cles_repartition` depuis le CSV du bucket S3, ou d'un fichier local.
 
     `fichier` surcharge `CSV_CLES_REPARTITION` pour un rechargement ponctuel depuis S3.
     `chemin_local`, s'il est renseigné, désigne un fichier du disque : S3 n'est alors pas
-    sollicité et `fichier` est ignoré.
+    sollicité et `fichier` est ignoré. `ignorer_erreurs` écarte les lignes non conformes
+    au lieu d'échouer (cf. docstring du module).
     """
     debut = time.perf_counter()
     nom_fichier = chemin_local or fichier or CSV_CLES_REPARTITION
@@ -284,8 +348,10 @@ async def charger_cles_repartition(
             fichier=nom_fichier,
             source="local" if chemin_local else "s3",
             bucket=None if chemin_local else S3_BUCKET,
+            skip_errors=ignorer_erreurs or None,
         ),
     )
+    rejets = _Rejets(id_referentiel) if ignorer_erreurs else None
 
     if not nom_fichier:
         motif = "Aucun fichier : renseigner CSV_CLES_REPARTITION ou passer --fichier."
@@ -329,7 +395,7 @@ async def charger_cles_repartition(
         rapport.ok(f"Purge du référentiel : {supprimees} ligne(s) supprimée(s)")
 
         # --- Lecture en streaming et insertion par lots ---------------------
-        lignes_inserees, lots = await _charger(ouvrir, cle, id_referentiel, debut)
+        lignes_inserees, lots = await _charger(ouvrir, cle, id_referentiel, debut, rejets)
 
     except TraitementImpossible as erreur:
         logger.warning(
@@ -344,6 +410,7 @@ async def charger_cles_repartition(
         rapport.ko(str(erreur))
         rapport.statut = ECHEC
         rapport.etats["LIGNES_CHARGEES"] = lignes_inserees
+        _reporter_rejets(rapport, rejets)
         return rapport
     except Exception as erreur:  # noqa: BLE001 - la CLI ne doit jamais rendre de stacktrace
         logger.exception(
@@ -353,13 +420,24 @@ async def charger_cles_repartition(
         rapport.erreur = _message_erreur(erreur)
         rapport.statut = ECHEC
         rapport.etats["LIGNES_CHARGEES"] = lignes_inserees
+        _reporter_rejets(rapport, rejets)
         return rapport
 
     rapport.ok(f"{lignes_inserees} ligne(s) insérée(s) en {lots} lot(s)")
+    if rejets is not None:
+        # Écarter des lignes est toléré, n'en garder aucune ne l'est pas : un fichier dont
+        # toutes les lignes sont fausses n'est pas un référentiel.
+        rapport.ajouter(
+            lignes_inserees > 0 or rejets.total == 0,
+            f"{rejets.total} ligne(s) non conforme(s) ignorée(s) (--skip-errors)",
+            f"Aucune ligne conforme : les {rejets.total} ligne(s) du fichier ont été "
+            "écartées.",
+        )
     await _controles_finaux(rapport, id_referentiel, lignes_inserees)
 
     rapport.etats["LIGNES_CHARGEES"] = lignes_inserees
     rapport.etats["LIGNES_PRECEDENTES"] = nb_presentes
+    _reporter_rejets(rapport, rejets)
     rapport.statut = SUCCES if rapport.reussi else ECHEC
 
     duration_ms = round((time.perf_counter() - debut) * 1000, 1)
@@ -370,6 +448,7 @@ async def charger_cles_repartition(
             fichier=nom_fichier,
             lignes=lignes_inserees,
             lots=lots,
+            lignes_ignorees=rejets.total if rejets else None,
             verdict=rapport.statut,
             duration_ms=duration_ms,
         ),
@@ -377,13 +456,22 @@ async def charger_cles_repartition(
     return rapport
 
 
+def _reporter_rejets(rapport: Rapport, rejets: _Rejets | None) -> None:
+    """Porte les lignes écartées dans le rapport — y compris sur un chargement interrompu."""
+    if rejets is None:
+        return
+    rapport.etats["LIGNES_IGNOREES"] = rejets.total
+    rapport.avertissements.extend(rejets.avertissements())
+
+
 async def _charger(
-    ouvrir, cle: str, id_referentiel: int, debut: float
+    ouvrir, cle: str, id_referentiel: int, debut: float, rejets: _Rejets | None = None
 ) -> tuple[int, int]:
     """Lit le CSV en streaming et insère par lots. Retourne (lignes, lots).
 
     `ouvrir` est `s3.ouvrir_objet` ou `fichier_local.ouvrir` : même signature, un
-    gestionnaire de contexte qui rend un flux texte.
+    gestionnaire de contexte qui rend un flux texte. `rejets`, s'il est fourni, reçoit les
+    lignes non conformes au lieu de faire échouer le chargement.
     """
     lignes_inserees = 0
     lots = 0
@@ -401,18 +489,34 @@ async def _charger(
             # `lecteur.line_num` porte le numéro de la dernière ligne lue, en-tête compris :
             # on remonte au premier enregistrement du lot pour numéroter chaque ligne.
             premiere = lecteur.line_num - len(brutes) + 1
-            valeurs = [
-                convertir(ligne, premiere + decalage, id_referentiel)
-                for decalage, ligne in enumerate(brutes)
-            ]
+            valeurs: list[tuple[Any, ...]] = []
+            numeros: list[int] = []
+            for decalage, ligne in enumerate(brutes):
+                numero = premiere + decalage
+                try:
+                    valeurs.append(convertir(ligne, numero, id_referentiel))
+                except TraitementImpossible as erreur:
+                    if rejets is None:
+                        raise
+                    rejets.ajouter(numero, str(erreur))
+                    continue
+                numeros.append(numero)
+
+            if not valeurs:
+                continue
 
             try:
                 async with db_write.transaction() as tx:
                     await tx.execute_many(INSERT_SQL, valeurs)
+                inserees = len(valeurs)
             except Exception as erreur:  # noqa: BLE001 - retraduit puis relancé
-                raise _traduire_erreur_insertion(erreur, premiere) from erreur
+                if rejets is None or _code_mysql(erreur) not in CODES_ERREUR_LIGNE:
+                    raise _traduire_erreur_insertion(erreur, premiere) from erreur
+                # Le lot a été annulé en bloc : on le rejoue ligne à ligne pour n'écarter que
+                # la ou les lignes fautives.
+                inserees = await _inserer_ligne_a_ligne(valeurs, numeros, rejets)
 
-            lignes_inserees += len(valeurs)
+            lignes_inserees += inserees
             lots += 1
 
             if lignes_inserees >= prochain_jalon:
@@ -420,6 +524,29 @@ async def _charger(
                 prochain_jalon += CHARGEMENT_LOG_TOUTES_LES
 
     return lignes_inserees, lots
+
+
+async def _inserer_ligne_a_ligne(
+    valeurs: list[tuple[Any, ...]], numeros: list[int], rejets: _Rejets
+) -> int:
+    """Rejoue un lot refusé ligne à ligne, dans une seule transaction. Retourne les insérées.
+
+    InnoDB n'annule que l'instruction fautive, pas la transaction : les lignes valides du
+    lot sont commitées ensemble à la fin. Ce chemin n'est pris que pour un lot en erreur,
+    le coût du ligne à ligne reste marginal.
+    """
+    inserees = 0
+    async with db_write.transaction() as tx:
+        for valeur, numero in zip(valeurs, numeros):
+            try:
+                await tx.execute(INSERT_SQL, valeur)
+            except Exception as erreur:  # noqa: BLE001 - trié ci-dessous
+                if _code_mysql(erreur) not in CODES_ERREUR_LIGNE:
+                    raise
+                rejets.ajouter(numero, _motif_insertion(erreur, numero))
+                continue
+            inserees += 1
+    return inserees
 
 
 def _journaliser_avancement(

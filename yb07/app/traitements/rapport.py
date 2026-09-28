@@ -53,6 +53,9 @@ class Rapport:
     erreur: str | None = None
     etats: dict[str, Any] = field(default_factory=dict)
     """Indicateurs affichés en fin de rapport, ex. `LIGNES_CHARGEES = 22395341`."""
+    avertissements: list[str] = field(default_factory=list)
+    """Anomalies tolérées, ex. les lignes écartées par `--skip-errors`. Affichées, mais sans
+    effet sur le verdict : c'est ce qui les distingue d'un contrôle `[KO]`."""
 
     # ------------------------------------------------------------------
     # Construction
@@ -109,6 +112,10 @@ class Rapport:
             lignes.append("")
             lignes += [f"{cle} = {valeur}" for cle, valeur in self.etats.items()]
 
+        if self.avertissements:
+            lignes += ["", "Avertissements :", ""]
+            lignes += [f"  - {avertissement}" for avertissement in self.avertissements]
+
         lignes += ["", f"RESULTAT : {self.statut}"]
 
         if self.motifs:
@@ -127,6 +134,7 @@ class Rapport:
                 {"libelle": c.libelle, "ok": c.ok, "motif": c.motif} for c in self.controles
             ],
             "etats": self.etats,
+            "avertissements": self.avertissements,
             "erreur": self.erreur,
             "motifs": self.motifs,
         }

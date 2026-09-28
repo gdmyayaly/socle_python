@@ -124,6 +124,7 @@ class _Etat:
     libelle: str | None = None
     dry_run: bool = False
     controles_longs: bool = True
+    ignorer_erreurs: bool = False
 
     #: Nombre de PDI actifs, rendu par l'étape « chargement ». Rend le CA1 de DSR-699 gratuit
     #: quand la chaîne tourne de bout en bout ; vaut `None` en reprise.
@@ -149,6 +150,7 @@ async def initialiser_cles_repartition(
     libelle: str | None = None,
     dry_run: bool = False,
     controles_longs: bool = True,
+    ignorer_erreurs: bool = False,
     db_lecture=db_read,
     db_ecriture=db_write,
 ) -> Rapport:
@@ -156,7 +158,9 @@ async def initialiser_cles_repartition(
 
     `depuis` reprend à cette étape et enchaîne les suivantes ; `etape` n'en joue qu'une. Les deux
     s'excluent. `dry_run` lit et découpe les scripts sans rien écrire — l'étape « chargement »
-    est alors sautée, elle n'a pas de mode à blanc.
+    est alors sautée, elle n'a pas de mode à blanc. `ignorer_erreurs` est transmis à
+    l'étape « chargement » : les lignes non conformes du CSV y sont écartées et listées
+    dans les avertissements du rapport, au lieu d'arrêter la chaîne.
     """
     debut = time.perf_counter()
     rapport = Rapport(
@@ -167,7 +171,13 @@ async def initialiser_cles_repartition(
 
     logger.info(
         "Début initialisation clés de répartition %s",
-        ctx(id_referentiel=id_referentiel, depuis=depuis, etape=etape, dry_run=dry_run),
+        ctx(
+            id_referentiel=id_referentiel,
+            depuis=depuis,
+            etape=etape,
+            dry_run=dry_run,
+            skip_errors=ignorer_erreurs or None,
+        ),
     )
 
     jouees: list[str] = []
@@ -187,6 +197,7 @@ async def initialiser_cles_repartition(
             libelle=libelle,
             dry_run=dry_run,
             controles_longs=controles_longs,
+            ignorer_erreurs=ignorer_erreurs,
         )
 
         if not await controles_init.verifier_prerequis(
@@ -354,7 +365,9 @@ async def _etape_chargement(etat: _Etat, rang: int, total: int) -> bool:
         )
         return True
 
-    sous_rapport = await charger_cles_repartition(etat.id_referentiel, etat.fichier)
+    sous_rapport = await charger_cles_repartition(
+        etat.id_referentiel, etat.fichier, ignorer_erreurs=etat.ignorer_erreurs
+    )
 
     etat.rapport.ajouter(
         sous_rapport.reussi,
@@ -368,6 +381,7 @@ async def _etape_chargement(etat: _Etat, rang: int, total: int) -> bool:
     )
     etat.rapport.controles.extend(sous_rapport.controles)
     etat.rapport.etats.update(sous_rapport.etats)
+    etat.rapport.avertissements.extend(sous_rapport.avertissements)
     if sous_rapport.erreur and not etat.rapport.erreur:
         etat.rapport.erreur = sous_rapport.erreur
 

@@ -15,22 +15,19 @@ import gzip
 import io
 import logging
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator, TextIO
 
 import boto3
 from botocore.client import Config
-from botocore.exceptions import BotoCoreError, ClientError, SSLError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import (
     AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY,
     S3_BUCKET,
-    S3_CA_BUNDLE,
     S3_ENDPOINT_URL,
     S3_PREFIXE,
     S3_TIMEOUT,
-    S3_VERIFY_SSL,
 )
 from app.erreurs import TraitementImpossible
 from app.log_utils import ctx
@@ -91,9 +88,6 @@ def construire_client():
     }
     if S3_ENDPOINT_URL:
         options["endpoint_url"] = S3_ENDPOINT_URL
-    verify = _verification_tls()
-    if verify is not None:
-        options["verify"] = verify
     if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
         options["aws_access_key_id"] = AWS_ACCESS_KEY_ID
         options["aws_secret_access_key"] = AWS_SECRET_ACCESS_KEY
@@ -107,32 +101,6 @@ def construire_client():
         ),
     )
     return boto3.client("s3", **options)
-
-
-def _verification_tls() -> bool | str | None:
-    """Valeur du paramètre `verify` de boto3, ou None pour garder son comportement par défaut.
-
-    Même priorité que l'API jours fermés de `python/` : désactivée > bundle CA dédié >
-    vérification standard. Un bundle introuvable fait échouer tout de suite, avec son
-    chemin : sans cela, boto3 rend une erreur SSL qui ne dit pas quel fichier manque.
-    """
-    if not S3_VERIFY_SSL:
-        return False
-    if S3_CA_BUNDLE:
-        if not Path(S3_CA_BUNDLE).is_file():
-            raise TraitementImpossible(
-                f"Bundle CA introuvable : '{S3_CA_BUNDLE}' (S3_CA_BUNDLE)."
-            )
-        return S3_CA_BUNDLE
-    return None
-
-
-def _libelle_tls() -> str:
-    if not S3_VERIFY_SSL:
-        return "DÉSACTIVÉE (S3_VERIFY_SSL=false)"
-    if S3_CA_BUNDLE:
-        return f"bundle {S3_CA_BUNDLE}"
-    return "standard"
 
 
 def _traduire(erreur: Exception, cle: str) -> TraitementImpossible:
@@ -150,12 +118,6 @@ def _traduire(erreur: Exception, cle: str) -> TraitementImpossible:
                 f"Accès refusé à '{cle}' — vérifier AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY."
             )
         return TraitementImpossible(f"Erreur S3 sur '{cle}' : {code or erreur}.")
-    if isinstance(erreur, SSLError):
-        return TraitementImpossible(
-            f"Certificat TLS du stockage S3 refusé ({S3_ENDPOINT_URL or 'endpoint par défaut'}) "
-            "— renseigner S3_CA_BUNDLE avec le bundle CA de l'entreprise (ex. "
-            f"certif/cacert.pem). Détail : {erreur}"
-        )
     return TraitementImpossible(
         f"Stockage S3 injoignable ({S3_ENDPOINT_URL or 'endpoint par défaut'}) : {erreur}"
     )
@@ -183,7 +145,6 @@ def decrire_configuration() -> dict:
         "prefixe": S3_PREFIXE or "(racine)",
         "adressage": "path" if S3_ENDPOINT_URL else "auto",
         "timeout_s": S3_TIMEOUT,
-        "verification_tls": _libelle_tls(),
         "identifiants": "explicites" if explicites else "chaîne boto3 par défaut",
         "access_key": _masquer(AWS_ACCESS_KEY_ID) if explicites else "",
         # Une clé sans secret est ignorée par `construire_client` : le signaler évite de
@@ -225,13 +186,9 @@ def verifier_acces() -> dict:
             resultat["error"] = (
                 "S3_BUCKET n'est pas renseigné et aucun bucket n'est visible."
             )
-    except (ClientError, BotoCoreError, TraitementImpossible) as erreur:
+    except (ClientError, BotoCoreError) as erreur:
         resultat["status"] = "error"
-        resultat["error"] = (
-            str(erreur)
-            if isinstance(erreur, TraitementImpossible)
-            else str(_traduire(erreur, S3_BUCKET or "(bucket)"))
-        )
+        resultat["error"] = str(_traduire(erreur, S3_BUCKET or "(bucket)"))
         logger.warning(
             "Rejet accès S3 %s",
             ctx(endpoint=S3_ENDPOINT_URL or "par défaut", bucket=S3_BUCKET, motif=resultat["error"]),
