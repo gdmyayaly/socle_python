@@ -151,6 +151,7 @@ async def cmd_s3_check(args: argparse.Namespace) -> int:
         print(f"  bucket       : {config['bucket']}")
         print(f"  prefixe      : {config['prefixe']}")
         print(f"  adressage    : {config['adressage']}")
+        print(f"  tls          : {config['verification_tls']}")
         identifiants = config["identifiants"]
         if config["access_key"]:
             identifiants += f" (AWS_ACCESS_KEY_ID={config['access_key']})"

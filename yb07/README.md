@@ -209,6 +209,8 @@ acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
 | `S3_BUCKET` | `""` | Bucket source |
 | `S3_PREFIXE` | `""` | Dossier dans le bucket, sans slash de début ni de fin ; vide = racine |
 | `S3_TIMEOUT` | `60` | Délai d'attente réseau, en secondes |
+| `S3_CA_BUNDLE` | `""` | Bundle CA pour le proxy d'inspection TLS de l'entreprise — le même que `python/certif/cacert.pem`. Chemin relatif à la racine de `yb07/` (ex. `certif/cacert.pem`) ou absolu. Vide = certificats par défaut de boto3. Un fichier introuvable est signalé avec son chemin. |
+| `S3_VERIFY_SSL` | `true` | `false` désactive toute vérification TLS — dépannage en dev **uniquement** (risque d'interception). Prime sur `S3_CA_BUNDLE`. |
 
 ### Fichiers CSV et chargements
 
@@ -324,6 +326,7 @@ Configuration S3
   bucket       : trppu
   prefixe      : referentiels/
   adressage    : path
+  tls          : bundle C:/.../yb07/certif/cacert.pem
   identifiants : explicites (AWS_ACCESS_KEY_ID=AK**********90)
 Accès : ok
   buckets visibles : trppu, archives

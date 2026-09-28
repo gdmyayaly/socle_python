@@ -51,6 +51,9 @@ cronjobs:
 Notes :
 - "schedule" est sans importance tant que suspend vaut true.
 - Preferer un tag fige a "latest" : on sait quelle version a tourne.
+- Certificat de l'entreprise : S3_CA_BUNDLE=certif/cacert.pem (chemin
+  relatif a la racine de yb07 dans l'image) ; le fichier doit etre
+  present dans l'image ou monte en volume.
 - Configuration (SGBD_*, S3_*, AWS_*, CSV_*) en variables
   d'environnement ; mots de passe dans un Secret (envFrom). Les
   variables du pod priment sur un eventuel .env.
@@ -110,7 +113,8 @@ Rejouable : oui
         - app.main
         - s3-check
 
-A verifier : "Acces : ok" et le fichier CSV visible dans le listing.
+A verifier : "Acces : ok", la ligne "tls" (bundle attendu), et le
+fichier CSV visible dans le listing.
 Pour lister un autre dossier : ajouter "- '--prefixe'" puis
 "- <dossier>" a la fin de la liste.
 
