@@ -30,6 +30,7 @@ from app.db.sql_script import (
     ScriptResult,
     StatementResult,
     is_ddl,
+    is_display_select,
     split_sql_script,
     statement_preview,
 )
@@ -151,6 +152,7 @@ class FausseBase:
         dry_run: bool = False,
         database: str | None = "",
         disable_foreign_keys: bool = False,
+        skip_selects: bool = False,
     ) -> ScriptResult:
         """Découpe le script pour de vrai, puis rend un `ScriptResult` crédible.
 
@@ -175,21 +177,22 @@ class FausseBase:
         )
         for index, sql in enumerate(instructions, start=1):
             apercu = statement_preview(sql)
+            non_joue = dry_run or (skip_selects and is_display_select(sql))
             resultat.statements.append(
                 StatementResult(
                     source=label,
                     index=index,
                     preview=apercu,
                     is_ddl=is_ddl(sql),
-                    rowcount=-1 if dry_run else self._rowcount_script(apercu),
-                    skipped=dry_run,
+                    rowcount=-1 if non_joue else self._rowcount_script(apercu),
+                    skipped=non_joue,
                 )
             )
         resultat.committed = transactional and not dry_run
 
         self.scripts.append(
             {"label": label, "texte": script, "transactional": transactional,
-             "dry_run": dry_run, "resultat": resultat}
+             "dry_run": dry_run, "skip_selects": skip_selects, "resultat": resultat}
         )
         return resultat
 

@@ -42,7 +42,7 @@ from app.db.sql_parametres import injecter_parametres
 from app.db.sql_script import SqlScriptError, statement_preview
 from app.erreurs import TraitementImpossible
 from app.log_utils import ctx
-from app.traitements import controles_init
+from app.traitements import controles_init, index_chargement
 from app.traitements.cles_repartition import charger_cles_repartition
 from app.traitements.rapport import ECHEC, SUCCES, Rapport
 
@@ -108,6 +108,22 @@ CO_REGATE_A_BLANC = "000000"
 APERCU_INSERT_AGREGATS = "INSERT INTO trppu_trafic_site"
 APERCU_INSERT_VERSION = "INSERT INTO trppu_version_cle"
 APERCU_INSERT_CLES = "INSERT INTO trppu_cles_repartition_calcule"
+
+#: Index unique de `trppu_cles_repartition_calcule`, retiré le temps du calcul quand la table
+#: est vide (première initialisation). Même raison que pour le chargement : maintenu ligne à
+#: ligne sur 22 M d'insertions dans le désordre, il fait de l'étape une affaire d'heures.
+TABLE_CLES = "trppu_cles_repartition_calcule"
+INDEX_UNIQUE_CLES = "uq_crc_version_pdi"
+DEFINITION_INDEX_UNIQUE_CLES = "UNIQUE KEY `uq_crc_version_pdi` (`id_version_cle`, `id_pdi`)"
+# Sur l'instance d'écriture : ils décident d'un DDL.
+CLES_CALCULEES_PRESENTES_SQL = "SELECT 1 AS ok FROM trppu_cles_repartition_calcule LIMIT 1"
+INDEX_UNIQUE_CLES_PRESENT_SQL = """
+SELECT COUNT(*) AS nb
+  FROM information_schema.STATISTICS
+ WHERE TABLE_SCHEMA = DATABASE()
+   AND TABLE_NAME = 'trppu_cles_repartition_calcule'
+   AND INDEX_NAME = 'uq_crc_version_pdi'
+"""
 
 
 @dataclass
@@ -350,6 +366,11 @@ async def _executer_script(
         label=f"db/{fichier}{suffixe_label}",
         transactional=transactional,
         dry_run=etat.dry_run,
+        # Les SELECT des scripts sont des constats pour une exécution manuelle : leurs
+        # résultats seraient jetés, et plusieurs balaient 24 M de lignes (ré-agrégation de
+        # vérification, anti-jointure des PDI sans clé, sommes par site…). Les contrôles
+        # utiles sont rejoués par `controles_init`, par des requêtes indexées.
+        skip_selects=True,
     )
 
 
@@ -586,9 +607,16 @@ async def _etape_cles(etat: _Etat, rang: int, total: int) -> bool:
     ):
         return False
 
-    resultat = await _executer_script(
-        etat, CLES, {"id_referentiel": etat.id_referentiel, "co_regate": None}
-    )
+    index_retire = False if etat.dry_run else await _retirer_index_cles(etat)
+    try:
+        resultat = await _executer_script(
+            etat, CLES, {"id_referentiel": etat.id_referentiel, "co_regate": None}
+        )
+    finally:
+        # Recréé dans tous les cas : sur échec, le script (transactionnel) a été annulé, la
+        # table est vide et la reconstruction instantanée ; sur succès, c'est une passe triée.
+        if index_retire:
+            await _recreer_index_cles(etat)
 
     if etat.dry_run:
         etat.rapport.ok(
@@ -616,6 +644,77 @@ async def _etape_cles(etat: _Etat, rang: int, total: int) -> bool:
         controles_longs=etat.controles_longs,
     )
     return etat.rapport.reussi
+
+
+async def _retirer_index_cles(etat: _Etat) -> bool:
+    """Retire `uq_crc_version_pdi` si la table des clés est vide. Rend True s'il l'a été.
+
+    Seulement sur table vide : ailleurs, l'index sert les lectures de l'API
+    (`WHERE id_version_cle = ?`) et sa reconstruction porterait sur tous les référentiels
+    déjà calculés. Sans droit ALTER, le calcul se fait index en place — plus lent, correct.
+    """
+    if await etat.db_ecriture.fetch_one(CLES_CALCULEES_PRESENTES_SQL):
+        logger.info(
+            "Fin préparation calcul des clés %s",
+            ctx(index=INDEX_UNIQUE_CLES, action="conservé", motif="table non vide"),
+        )
+        return False
+    present = await etat.db_ecriture.fetch_one(INDEX_UNIQUE_CLES_PRESENT_SQL)
+    if not (present and present["nb"]):
+        return True  # déjà absent (calcul précédent interrompu) : à recréer après
+    try:
+        await index_chargement.executer_ddl(
+            f"ALTER TABLE {TABLE_CLES} DROP INDEX `{INDEX_UNIQUE_CLES}`",
+            etape="index-retrait",
+            prefixe="cles",
+            table=TABLE_CLES,
+            db=etat.db_ecriture,
+        )
+    except index_chargement.DroitManquant as erreur:
+        logger.warning("Rejet retrait index clés %s", ctx(motif=str(erreur)))
+        etat.rapport.avertissements.append(
+            f"Index {INDEX_UNIQUE_CLES} conservé pendant le calcul (droit ALTER manquant) : "
+            "étape nettement plus lente."
+        )
+        return False
+    logger.info(
+        "Fin préparation calcul des clés %s",
+        ctx(index=INDEX_UNIQUE_CLES, action="retiré", motif="table vide"),
+    )
+    return True
+
+
+async def _recreer_index_cles(etat: _Etat) -> None:
+    """Recrée `uq_crc_version_pdi` en une passe triée. Un échec est porté au rapport.
+
+    Un doublon (version, PDI) est impossible par construction — une version active par site,
+    un PDI unique par référentiel (`uk_pdi_ref`) : si la reconstruction échoue, c'est
+    l'invariant qui est cassé, et le CA4 ne peut plus être affirmé.
+    """
+    debut = time.perf_counter()
+    logger.info("Début reconstruction index clés %s", ctx(index=INDEX_UNIQUE_CLES))
+    try:
+        await index_chargement.executer_ddl(
+            f"ALTER TABLE {TABLE_CLES} ADD {DEFINITION_INDEX_UNIQUE_CLES}",
+            etape="index-reconstruction",
+            prefixe="cles",
+            table=TABLE_CLES,
+            db=etat.db_ecriture,
+        )
+    except Exception as erreur:  # noqa: BLE001 - porté au rapport, jamais de stacktrace
+        logger.exception("Erreur reconstruction index clés %s", ctx(index=INDEX_UNIQUE_CLES))
+        etat.rapport.ko(
+            f"Index {INDEX_UNIQUE_CLES} non recréé : {erreur}. Le recréer avant toute "
+            f"lecture des clés : ALTER TABLE {TABLE_CLES} ADD {DEFINITION_INDEX_UNIQUE_CLES}"
+        )
+        return
+    logger.info(
+        "Fin reconstruction index clés %s",
+        ctx(
+            index=INDEX_UNIQUE_CLES,
+            duration_ms=round((time.perf_counter() - debut) * 1000, 1),
+        ),
+    )
 
 
 _IMPLEMENTATIONS = {

@@ -210,6 +210,33 @@ def is_ddl(statement: str) -> bool:
     return first_keyword(statement) in DDL_KEYWORDS
 
 
+#: Instructions qui modifient des données ou le schéma : ce sont elles que le suivi
+#: d'exécution trace une à une (nombre de lignes, durée).
+WRITE_KEYWORDS = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE", "EXECUTE"}) | DDL_KEYWORDS
+
+
+def is_write(statement: str) -> bool:
+    """True si l'instruction modifie des données ou le schéma.
+
+    `EXECUTE` en fait partie : les scripts rejouables y font passer leurs `ALTER`.
+    """
+    return first_keyword(statement) in WRITE_KEYWORDS
+
+
+def is_display_select(statement: str) -> bool:
+    """True pour un `SELECT` de pure consultation, sans effet de bord.
+
+    Les scripts de la chaîne sont écrits pour être aussi joués à la main dans un client SQL :
+    ils affichent des constats avant et après chaque écriture. Exécutés par le batch, leurs
+    résultats sont jetés — mais la base, elle, fait tout le travail, parfois un balayage de
+    24 M de lignes. `SELECT … INTO` (variable ou fichier) a un effet : il n'est jamais
+    considéré comme d'affichage.
+    """
+    if first_keyword(statement) != "SELECT":
+        return False
+    return re.search(r"\bINTO\b", statement, re.IGNORECASE) is None
+
+
 def statement_preview(statement: str, max_length: int = PREVIEW_MAX_LENGTH) -> str:
     """Aperçu mono-ligne, commentaires retirés, tronqué — destiné aux logs.
 
@@ -232,6 +259,8 @@ __all__ = [
     "StatementResult",
     "first_keyword",
     "is_ddl",
+    "is_display_select",
+    "is_write",
     "split_sql_script",
     "statement_preview",
 ]

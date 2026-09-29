@@ -30,6 +30,8 @@ from app.db.sql_script import (
     SqlScriptError,
     StatementResult,
     is_ddl,
+    is_display_select,
+    is_write,
     split_sql_script,
     statement_preview,
 )
@@ -198,6 +200,7 @@ class Database:
         encoding: str = "utf-8-sig",
         database: str | None = _CONFIGURED_DB,
         disable_foreign_keys: bool = False,
+        skip_selects: bool = False,
     ) -> ScriptResult:
         """Exécute un fichier .sql, instruction par instruction.
 
@@ -212,6 +215,7 @@ class Database:
             encoding=encoding,
             database=database,
             disable_foreign_keys=disable_foreign_keys,
+            skip_selects=skip_selects,
         )
 
     async def execute_sql_files(
@@ -224,6 +228,7 @@ class Database:
         encoding: str = "utf-8-sig",
         database: str | None = _CONFIGURED_DB,
         disable_foreign_keys: bool = False,
+        skip_selects: bool = False,
     ) -> ScriptResult:
         """Exécute plusieurs fichiers .sql **dans l'ordre**, sur une seule connexion.
 
@@ -247,6 +252,9 @@ class Database:
                 ``CREATE DATABASE`` puis ``USE``).
             disable_foreign_keys: exécute ``SET FOREIGN_KEY_CHECKS = 0`` avant la
                 première instruction, sur la même connexion.
+            skip_selects: ne joue pas les ``SELECT`` de pure consultation (cf.
+                ``is_display_select``) : leurs résultats seraient jetés, alors que la base
+                ferait tout le travail. Ils figurent dans le résultat avec ``skipped=True``.
 
         Returns:
             ScriptResult: détail instruction par instruction (aperçu, rowcount, durée,
@@ -292,6 +300,7 @@ class Database:
             dry_run=dry_run,
             database=database,
             disable_foreign_keys=disable_foreign_keys,
+            skip_selects=skip_selects,
         )
 
     async def execute_sql_script(
@@ -304,6 +313,7 @@ class Database:
         dry_run: bool = False,
         database: str | None = _CONFIGURED_DB,
         disable_foreign_keys: bool = False,
+        skip_selects: bool = False,
     ) -> ScriptResult:
         """Exécute un script SQL fourni sous forme de chaîne.
 
@@ -317,6 +327,7 @@ class Database:
             dry_run=dry_run,
             database=database,
             disable_foreign_keys=disable_foreign_keys,
+            skip_selects=skip_selects,
         )
 
     @asynccontextmanager
@@ -379,6 +390,7 @@ class Database:
         dry_run: bool,
         database: str | None,
         disable_foreign_keys: bool,
+        skip_selects: bool = False,
     ) -> ScriptResult:
         """Cœur de l'exécution : parcourt les scripts déjà lus et découpés."""
         started = time.perf_counter()
@@ -455,6 +467,13 @@ class Database:
                             is_ddl=is_ddl(sql),
                         )
                         result.statements.append(entry)
+                        if skip_selects and is_display_select(sql):
+                            entry.skipped = True
+                            logger.debug(
+                                "Instruction SQL non jouée %s",
+                                ctx(source=label, index=i, motif="SELECT d'affichage"),
+                            )
+                            continue
                         logger.debug(
                             "Instruction SQL %s",
                             ctx(source=label, index=i, apercu=entry.preview),
@@ -491,6 +510,19 @@ class Database:
                                 result=result,
                             ) from e
                         entry.duration_ms = (time.perf_counter() - t0) * 1000
+                        # Suivi des actions : chaque écriture est tracée avec son volume et
+                        # sa durée — c'est ce qui dit, après coup, ce que la chaîne a fait.
+                        if is_write(sql):
+                            logger.info(
+                                "Fin instruction SQL %s",
+                                ctx(
+                                    source=label,
+                                    index=i,
+                                    apercu=entry.preview,
+                                    lignes=entry.rowcount,
+                                    duration_ms=round(entry.duration_ms, 1),
+                                ),
+                            )
 
                 if transactional:
                     await conn.commit()
@@ -514,10 +546,13 @@ class Database:
         logger.info(
             "Fin script SQL %s",
             ctx(
+                sources=", ".join(result.sources),
                 executees=result.executed_count,
+                selects_non_joues=sum(s.skipped for s in result.statements) or None,
                 instructions=result.total_count,
-                duration_ms=result.duration_ms,
                 erreurs=result.error_count,
+                commit=result.committed if transactional else None,
+                duration_ms=result.duration_ms,
             ),
         )
         return result

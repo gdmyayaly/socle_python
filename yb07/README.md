@@ -567,6 +567,16 @@ python -m app.main init 1 --depuis versions     # reprend ici et enchaîne
 
 Étapes, dans l'ordre : `chargement`, `migration`, `correctif`, `agregats`, `versions`, `cles`.
 
+**Charge sur la base** — les scripts de `db/` sont écrits pour être aussi joués à la main :
+ils affichent des constats (`SELECT`) avant et après chaque écriture. Joués par `init`, leurs
+résultats seraient jetés alors que plusieurs balaient 24 M de lignes (ré-agrégation de
+vérification des agrégats, anti-jointure des PDI sans clé, sommes par site…). `init` ne joue
+donc **que** les `SET` et les écritures (`skip_selects`) ; les contrôles utiles sont rejoués
+par `controles_init.py`, par des requêtes indexées. Les scripts eux-mêmes sont inchangés.
+Sur une table des clés calculées **vide** (première initialisation), `uq_crc_version_pdi` est
+retiré le temps du calcul puis reconstruit en une passe — même raison que pour le
+chargement ; sur une table déjà remplie, il n'est pas touché (il sert les lectures de l'API).
+
 **Ne pas lancer `init` d'un bloc au premier passage sur un référentiel réel.** Deux étapes se
 comptent en heures (`migration` construit un index sur 24 M de lignes, `cles` en écrit autant)
 et n'émettent aucun avancement : ce sont des `INSERT … SELECT` monolithiques, le socle ne rend
@@ -851,8 +861,18 @@ métier vit donc dans `app_message`, sous la grammaire
   d'accès uniquement masquée.
 - L'exécution des scripts SQL (début, fin, avertissements DDL, échecs) — l'aperçu des
   instructions est tronqué à 120 caractères et **jamais** le SQL complet, les scripts de
-  données pouvant contenir des informations personnelles.
-- `init` : début et fin de chaque étape (`Début|Fin étape initialisation`, avec `etape`,
+  données pouvant contenir des informations personnelles. **Chaque instruction qui écrit**
+  (`INSERT`, `UPDATE`, `DELETE`, DDL, `EXECUTE`) a sa ligne `Fin instruction SQL` avec
+  `source`, `index`, `apercu`, `lignes` et `duration_ms` : le suivi de ce que la chaîne a
+  réellement fait. `Fin script SQL` rappelle `sources`, le nombre d'instructions jouées,
+  les `selects_non_joues` et le `commit`.
+- Le chargement : purge, retrait des index (`Fin retrait index`), avancement tous les
+  `CHARGEMENT_LOG_TOUTES_LES` lignes avec le débit, chaque ligne écartée par
+  `--skip-errors` (`Rejet ligne clés de répartition`, plafonné), reconstruction des index
+  par phase (`Avancement reconstruction index`), contrôles finaux avec leur durée, et la
+  remise en état après un échec.
+- `init` : l'index unique des clés retiré puis recréé autour du calcul (`Fin préparation
+  calcul des clés`, `Début|Fin reconstruction index clés`) ; début et fin de chaque étape (`Début|Fin étape initialisation`, avec `etape`,
   `rang`, `verdict`, `duration_ms`), les prérequis refusés (`Rejet prérequis
   initialisation`), chaque site en échec à l'étape `versions` (`Rejet création de version`),
   et chaque site dont la somme des clés sort de la tolérance (`Rejet contrôle somme des clés`,

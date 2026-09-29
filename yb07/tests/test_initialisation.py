@@ -75,9 +75,15 @@ def _lectures(**surcharges) -> FausseBase:
     return FausseBase(reponses)
 
 
-def _ecritures(**options) -> FausseBase:
+def _ecritures(reponses: dict | None = None, **options) -> FausseBase:
+    """Instance d'écriture. Par défaut la table des clés calculées n'est pas vide : l'index
+    `uq_crc_version_pdi` reste en place et le déroulé ne porte que les scripts de la chaîne.
+    Le cas « table vide » (première initialisation) a ses propres tests."""
     options.setdefault("rowcounts_scripts", ROWCOUNTS)
-    return FausseBase({}, **options)
+    return FausseBase(
+        {"FROM trppu_cles_repartition_calcule LIMIT 1": {"ok": 1}, **(reponses or {})},
+        **options,
+    )
 
 
 def _rapport_chargement(lignes: int = 120) -> Rapport:
@@ -723,3 +729,111 @@ def test_sans_skip_errors_le_chargement_reste_strict(monkeypatch):
     _lancer(etape="chargement")
 
     assert recu == {"ignorer_erreurs": False}
+
+
+# ---------------------------------------------------------------------------
+# Étape « cles » : index unique retiré le temps du calcul, sur table vide seulement
+# ---------------------------------------------------------------------------
+
+TABLE_CLES_VIDE = {
+    "FROM trppu_cles_repartition_calcule LIMIT 1": None,
+    "INDEX_NAME = 'uq_crc_version_pdi'": {"nb": 1},
+}
+
+
+def test_premiere_initialisation_index_retire_puis_recree():
+    ecritures = _ecritures(TABLE_CLES_VIDE)
+
+    rapport = _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert rapport.reussi, rapport.motifs
+    assert ecritures.scripts_joues() == [
+        "cles/index-retrait",
+        "db/DSR-699_cles_calculees.sql",
+        "cles/index-reconstruction",
+    ]
+    assert "DROP INDEX `uq_crc_version_pdi`" in ecritures.texte_du_script("index-retrait")
+    recree = ecritures.texte_du_script("index-reconstruction")
+    assert "ADD UNIQUE KEY `uq_crc_version_pdi` (`id_version_cle`, `id_pdi`)" in recree
+    assert recree.startswith("SET SESSION lock_wait_timeout")
+
+
+def test_table_des_cles_non_vide_index_intact():
+    """Ailleurs, l'index sert les lectures de l'API : on n'y touche pas."""
+    ecritures = _ecritures()
+
+    _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert not any(label.startswith("cles/") for label in ecritures.scripts_joues())
+
+
+def test_index_recree_meme_si_le_calcul_echoue():
+    echec = SqlScriptError(
+        "boum",
+        source="db/DSR-699_cles_calculees.sql",
+        index=7,
+        statement="INSERT INTO trppu_cles_repartition_calcule …",
+        original=RuntimeError("1365 Division by 0"),
+    )
+    ecritures = _ecritures(TABLE_CLES_VIDE, echecs_scripts={"DSR-699": echec})
+
+    rapport = _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert not rapport.reussi
+    assert ecritures.scripts_joues()[-1] == "cles/index-reconstruction"
+
+
+def test_index_deja_absent_est_recree_sans_retrait():
+    ecritures = _ecritures(
+        {**TABLE_CLES_VIDE, "INDEX_NAME = 'uq_crc_version_pdi'": {"nb": 0}}
+    )
+
+    _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert ecritures.scripts_joues() == [
+        "db/DSR-699_cles_calculees.sql",
+        "cles/index-reconstruction",
+    ]
+
+
+def test_sans_droit_alter_le_calcul_se_fait_index_en_place():
+    import pymysql
+
+    ecritures = _ecritures(
+        TABLE_CLES_VIDE,
+        echecs_scripts={"index-retrait": pymysql.err.OperationalError(1142, "denied")},
+    )
+
+    rapport = _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert rapport.reussi, rapport.motifs
+    assert "cles/index-reconstruction" not in ecritures.scripts_joues()
+    assert any("droit ALTER manquant" in a for a in rapport.avertissements)
+
+
+def test_reconstruction_impossible_portee_au_rapport():
+    ecritures = _ecritures(
+        TABLE_CLES_VIDE,
+        echecs_scripts={"index-reconstruction": RuntimeError("1062 Duplicate entry")},
+    )
+
+    rapport = _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert not rapport.reussi
+    assert any("uq_crc_version_pdi non recréé" in m for m in rapport.motifs)
+
+
+def test_les_scripts_de_la_chaine_ne_jouent_pas_leurs_select_d_affichage(
+    chargement_reussi,
+):
+    ecritures = _ecritures()
+
+    _lancer(db_ecriture=ecritures)
+
+    scripts = [s for s in ecritures.scripts if s["label"].startswith("db/")]
+    assert scripts and all(s["skip_selects"] for s in scripts)
+    cles = next(s for s in scripts if "DSR-699" in s["label"])
+    non_joues = [st.preview for st in cles["resultat"].statements if st.skipped]
+    assert non_joues and all(apercu.upper().startswith("SELECT") for apercu in non_joues)
+    joues = [st.preview for st in cles["resultat"].statements if not st.skipped]
+    assert any(apercu.startswith("INSERT INTO trppu_cles_repartition_calcule") for apercu in joues)

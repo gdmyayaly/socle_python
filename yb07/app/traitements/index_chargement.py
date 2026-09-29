@@ -88,18 +88,19 @@ def _code_mysql(erreur: BaseException) -> int | None:
     return args[0] if args and isinstance(args[0], int) else None
 
 
-async def executer_ddl(*instructions: str, etape: str) -> None:
+async def executer_ddl(
+    *instructions: str, etape: str, prefixe: str = "chargement", table: str = TABLE, db=None
+) -> None:
     """Joue du DDL sur une connexion dédiée, avec une attente de verrou bornée.
 
     Connexion dédiée (runner de scripts du socle) : le `SET SESSION` disparaît avec elle et
-    ne contamine pas le pool.
+    ne contamine pas le pool. `db` : instance d'écriture (défaut : `db_write`).
     """
+    db = db or db_write
     script = f"SET SESSION lock_wait_timeout = {CHARGEMENT_LOCK_WAIT_TIMEOUT};\n"
     script += "\n".join(f"{instruction};" for instruction in instructions)
     try:
-        await db_write.execute_sql_script(
-            script, label=f"chargement/{etape}", transactional=False
-        )
+        await db.execute_sql_script(script, label=f"{prefixe}/{etape}", transactional=False)
     except Exception as erreur:  # noqa: BLE001 - retraduit ou relancé
         origine = erreur.original if isinstance(erreur, SqlScriptError) else erreur
         code = _code_mysql(origine)
@@ -110,7 +111,7 @@ async def executer_ddl(*instructions: str, etape: str) -> None:
             ) from erreur
         if code == 1205:
             raise TraitementImpossible(
-                f"Table {TABLE} utilisée par une autre session : verrou non obtenu en "
+                f"Table {table} utilisée par une autre session : verrou non obtenu en "
                 f"{CHARGEMENT_LOCK_WAIT_TIMEOUT} s (CHARGEMENT_LOCK_WAIT_TIMEOUT). Relancer "
                 "quand l'API et les autres traitements ne la lisent plus."
             ) from erreur

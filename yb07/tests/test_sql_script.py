@@ -532,3 +532,109 @@ def test_le_runner_nutilise_pas_le_pool(monkeypatch):
     asyncio.run(db.execute_sql_script("SELECT 1;"))
 
     assert db._pool is None
+
+
+# --- SELECT d'affichage et instructions qui écrivent ------------------------
+
+import asyncio  # noqa: E402 - propre aux tests du runner ci-dessous
+import logging  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+
+import pytest  # noqa: E402
+
+from app.db.mysql import Database  # noqa: E402
+from app.db.sql_script import is_display_select, is_write  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("sql", "attendu"),
+    [
+        ("SELECT COUNT(*) FROM t", True),
+        ("-- bannière\nSELECT 1", True),
+        ("select a from t where b = 'INTOx'", True),
+        ("SELECT a INTO @x FROM t", False),
+        ("SELECT a FROM t INTO OUTFILE '/tmp/x'", False),
+        ("SET @deja := (SELECT COUNT(*) FROM t)", False),
+        ("INSERT INTO t SELECT * FROM u", False),
+        ("PREPARE stmt FROM @sql", False),
+    ],
+)
+def test_select_d_affichage(sql, attendu):
+    assert is_display_select(sql) is attendu
+
+
+@pytest.mark.parametrize(
+    ("sql", "attendu"),
+    [
+        ("INSERT INTO t VALUES (1)", True),
+        ("UPDATE t SET a = 1", True),
+        ("DELETE FROM t", True),
+        ("ALTER TABLE t ADD KEY k (a)", True),
+        ("EXECUTE stmt", True),
+        ("SET @a := 1", False),
+        ("SELECT 1", False),
+        ("PREPARE stmt FROM @sql", False),
+    ],
+)
+def test_instruction_qui_ecrit(sql, attendu):
+    assert is_write(sql) is attendu
+
+
+def _runner_espion(monkeypatch):
+    """`Database` réel, connexion factice : rend la liste des instructions exécutées."""
+    joues: list[str] = []
+    db = Database(host="h")
+
+    @asynccontextmanager
+    async def connexion(database, autocommit):
+        yield object()
+
+    async def jouer(conn, sql):
+        joues.append(" ".join(sql.split()))
+        return 3
+
+    monkeypatch.setattr(db, "_script_connection", connexion)
+    monkeypatch.setattr(db, "_run_statement", jouer)
+    return db, joues
+
+
+SCRIPT = "SET @a := 1;\nSELECT COUNT(*) FROM t;\nINSERT INTO t VALUES (1);\n"
+
+
+def test_runner_saute_les_select_d_affichage(monkeypatch):
+    db, joues = _runner_espion(monkeypatch)
+
+    resultat = asyncio.run(
+        db.execute_sql_script(SCRIPT, label="s.sql", transactional=False, skip_selects=True)
+    )
+
+    assert joues == ["SET @a := 1", "INSERT INTO t VALUES (1)"]
+    assert [s.skipped for s in resultat.statements] == [False, True, False]
+    assert resultat.executed_count == 2
+
+
+def test_runner_sans_option_joue_tout(monkeypatch):
+    db, joues = _runner_espion(monkeypatch)
+
+    asyncio.run(db.execute_sql_script(SCRIPT, label="s.sql", transactional=False))
+
+    assert len(joues) == 3
+
+
+def test_suivi_des_ecritures_dans_les_logs(monkeypatch, caplog):
+    """Chaque écriture est tracée en INFO avec son volume et sa durée ; la fin de script
+    rappelle sa source et le nombre de SELECT non joués."""
+    db, _ = _runner_espion(monkeypatch)
+
+    with caplog.at_level(logging.INFO, logger="app.db.mysql"):
+        asyncio.run(
+            db.execute_sql_script(
+                SCRIPT, label="s.sql", transactional=False, skip_selects=True
+            )
+        )
+
+    ecritures = [r.getMessage() for r in caplog.records if "Fin instruction SQL" in r.getMessage()]
+    assert len(ecritures) == 1
+    assert "source=s.sql" in ecritures[0] and "lignes=3" in ecritures[0]
+    fin = next(r.getMessage() for r in caplog.records if "Fin script SQL" in r.getMessage())
+    assert "sources=s.sql" in fin and "selects_non_joues=1" in fin
