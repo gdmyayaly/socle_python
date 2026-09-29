@@ -64,6 +64,8 @@ def base_nominale(**surcharges) -> FausseBase:
         ],
         # Recherche des doublons avant de recréer l'index unique : aucun.
         "HAVING COUNT(*) > 1": [],
+        # Sites à total nul (--skip-errors seulement) : aucun.
+        "HAVING SUM(trafic_colis) = 0": [],
         "AS nb_actives": {
             "nb_lignes": 1,
             "nb_actives": 1,
@@ -825,3 +827,78 @@ def test_controle_final_sans_comptage_distinct_ni_lecture_de_table():
     sql = " ".join(module.CONTROLE_FINAL_SQL.split()).upper()
     assert "DISTINCT" not in sql
     assert "DATE_DEBUT_VALIDITE" not in sql
+
+
+
+# --- Sites à total nul écartés par --skip-errors ------------------------------
+
+
+def _site_nul(code="122200", nb=2, **nuls):
+    ligne = {"co_regate_site": code, "nb_pdi_actifs": nb}
+    ligne.update({"colis": 0, "oo": 0, "t3s": 0, "potentielip": 0, **nuls})
+    return ligne
+
+
+def test_skip_errors_ecarte_les_sites_a_total_nul(s3_bouchonne, brancher_base):
+    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_TROUEE))
+    base = brancher_base(
+        base_nominale(
+            **{
+                "HAVING SUM(trafic_colis) = 0": [_site_nul("833280", nb=1, potentielip=1)],
+                "AS nb_actives": {"nb_lignes": 1, "nb_actives": 1},
+            }
+        )
+    )
+    # Le PDI actif du site est supprimé ; il n'a pas de PDI inactif.
+    base.rowcounts = {
+        "date_fin_validite IS NULL AND co_regate_site IN": 1,
+        "date_fin_validite IS NOT NULL AND co_regate_site IN": 0,
+    }
+
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    # Actifs puis inactifs du site, dans une même transaction, paramétrés.
+    suppressions = [sql for sql in base.ecritures() if sql.startswith("DELETE")]
+    assert len(suppressions) == 2
+    assert "date_fin_validite IS NULL" in suppressions[0]
+    assert "date_fin_validite IS NOT NULL" in suppressions[1]
+    assert base.parametres_de("date_fin_validite IS NULL AND co_regate_site IN") == (1, "833280")
+    assert rapport.etats["SITES_TOTAL_NUL_ECARTES"] == 1
+    assert rapport.etats["LIGNES_SITES_TOTAL_NUL"] == 1
+    assert rapport.etats["LIGNES_CHARGEES"] == 1  # 2 insérées - 1 retirée
+    assert any(
+        "Site 833280 écarté : total potentielip nul" in a for a in rapport.avertissements
+    )
+
+
+def test_sans_skip_errors_les_sites_a_total_nul_ne_sont_pas_touches(
+    s3_bouchonne, brancher_base
+):
+    """En mode strict, c'est le calcul des clés qui bloque, avec sa question métier."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = brancher_base(base_nominale())
+
+    charger(id_referentiel=1, fichier="f.csv")
+
+    lues = [sql for genre, sql, _ in base.journal if genre == "fetch"]
+    assert not any("HAVING SUM(trafic_colis) = 0" in sql for sql in lues)
+    assert not base.a_ecrit("co_regate_site IN")
+
+
+def test_aucun_site_a_total_nul(s3_bouchonne, brancher_base):
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = brancher_base(base_nominale())
+
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    assert any("Aucun site à total de trafic nul" in c.libelle for c in rapport.controles)
+    assert not base.a_ecrit("co_regate_site IN")
+
+
+def test_recherche_des_sites_nuls_en_lecture_sequentielle():
+    """Conditions minimales : un seul parcours séquentiel, pas 22 M lectures aléatoires."""
+    sql = " ".join(module.SITES_TOTAL_NUL_SQL.split())
+    assert "IGNORE INDEX (idx_cr_ref_actif)" in sql
+    assert "date_fin_validite IS NULL" in sql

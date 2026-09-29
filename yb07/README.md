@@ -394,6 +394,12 @@ Avec, elle est écartée et le chargement continue :
   unique (voir « Performance ») : la première occurrence du fichier est conservée, et ils
   sont signalés par PDI (`PDI 123 : doublon identique` / `en CONFLIT`), sans numéro de
   ligne — `scripts/nettoyer_csv_cles.py` les donne si besoin ;
+- **sites à total nul** : après le chargement, les sites dont un total de trafic (colis, OO,
+  3S ou potentiel IP, sur les PDI actifs) vaut 0 sont retirés en entier — leurs clés
+  diviseraient par zéro. Même règle que `scripts/extraire_sites_totaux_zero.py` : la table
+  contient alors ce que contiendrait son fichier « bon ». Chaque site est listé dans les
+  avertissements (`Site 122200 écarté : total potentielip nul — …`), les totaux dans
+  `SITES_TOTAL_NUL_ECARTES` et `LIGNES_SITES_TOTAL_NUL`. Coût : une lecture séquentielle ;
 - toujours bloquants : en-tête inattendu, fichier absent, panne technique (connexion,
   verrou, droits), et un fichier dont **aucune** ligne n'est conforme ;
 - le rapport compte les lignes écartées (`LIGNES_IGNOREES`) et détaille les
