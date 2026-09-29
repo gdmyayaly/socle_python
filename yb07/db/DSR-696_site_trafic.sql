@@ -108,7 +108,12 @@ SELECT id_referentiel,
        SUM(COALESCE(potentielip, 0)),
        MIN(date_debut_validite),
        NULL
-  FROM trppu_cles_repartition
+  -- IGNORE INDEX : une seule lecture séquentielle de la table, quelle que soit la mémoire du
+  -- serveur. Par `idx_cr_ref_actif`, MySQL irait chercher chaque ligne une à une (22 M
+  -- lectures aléatoires) : avec un petit cache InnoDB, c'est des heures. La table ne porte
+  -- qu'un référentiel, la lecture complète ne lit rien d'inutile. Contrepartie : un calcul
+  -- pour un seul site (@co_regate) lit aussi toute la table — `init` n'en fait jamais.
+  FROM trppu_cles_repartition IGNORE INDEX (idx_cr_ref_actif)
  WHERE id_referentiel = @id_referentiel
    AND date_fin_validite IS NULL                              -- RG1
    AND (@co_regate IS NULL OR co_regate_site = @co_regate)

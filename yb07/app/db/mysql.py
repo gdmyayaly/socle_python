@@ -474,10 +474,18 @@ class Database:
                                 ctx(source=label, index=i, motif="SELECT d'affichage"),
                             )
                             continue
-                        logger.debug(
-                            "Instruction SQL %s",
-                            ctx(source=label, index=i, apercu=entry.preview),
-                        )
+                        if is_write(sql):
+                            # Annoncée AVANT : une écriture peut durer des minutes sans rien
+                            # émettre ; cette ligne dit laquelle est en cours.
+                            logger.info(
+                                "Début instruction SQL %s",
+                                ctx(source=label, index=i, apercu=entry.preview),
+                            )
+                        else:
+                            logger.debug(
+                                "Instruction SQL %s",
+                                ctx(source=label, index=i, apercu=entry.preview),
+                            )
 
                         t0 = time.perf_counter()
                         try:

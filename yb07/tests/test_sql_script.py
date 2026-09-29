@@ -633,8 +633,29 @@ def test_suivi_des_ecritures_dans_les_logs(monkeypatch, caplog):
             )
         )
 
-    ecritures = [r.getMessage() for r in caplog.records if "Fin instruction SQL" in r.getMessage()]
+    messages = [r.getMessage() for r in caplog.records]
+    debuts = [m for m in messages if "Début instruction SQL" in m]
+    ecritures = [m for m in messages if "Fin instruction SQL" in m]
+    # Annoncée avant, tracée après : une écriture longue se voit pendant qu'elle tourne.
+    assert len(debuts) == 1 and "apercu=INSERT INTO t" in debuts[0]
+    assert messages.index(debuts[0]) < messages.index(ecritures[0])
     assert len(ecritures) == 1
     assert "source=s.sql" in ecritures[0] and "lignes=3" in ecritures[0]
     fin = next(r.getMessage() for r in caplog.records if "Fin script SQL" in r.getMessage())
     assert "sources=s.sql" in fin and "selects_non_joues=1" in fin
+
+
+
+def test_agregats_et_cles_lisent_la_table_en_une_passe():
+    """Conditions minimales : sans cache InnoDB confortable, seul un parcours séquentiel des
+    22 M lignes reste rapide. Les deux INSERT … SELECT l'imposent."""
+    from pathlib import Path
+
+    db = Path(__file__).resolve().parent.parent / "db"
+    for nom in ("DSR-696_site_trafic.sql", "DSR-699_cles_calculees.sql"):
+        texte = (db / nom).read_text(encoding="utf-8-sig")
+        assert "trppu_cles_repartition IGNORE INDEX (idx_cr_ref_actif)" in " ".join(
+            texte.replace(" c IGNORE", " IGNORE").split()
+        ), nom
+    cles = (db / "DSR-699_cles_calculees.sql").read_text(encoding="utf-8-sig")
+    assert "SELECT STRAIGHT_JOIN" in cles

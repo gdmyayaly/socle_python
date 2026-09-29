@@ -152,7 +152,14 @@ INSERT INTO trppu_cles_repartition_calcule
      cle_oo,
      cle_3s,
      cle_potentielip)
-SELECT v.id_version_cle,
+-- STRAIGHT_JOIN + IGNORE INDEX : la table des 22 M PDI est lue une seule fois, de façon
+-- séquentielle, et chaque ligne va chercher son site et sa version par index dans deux petites
+-- tables (quelques milliers de lignes, tenues en cache). Laissé libre, l'optimiseur peut
+-- partir des sites et aller chercher les PDI un à un par `idx_cr_ref_actif` : 22 M lectures
+-- aléatoires, des heures avec un petit cache InnoDB. Contrepartie : un calcul pour un seul
+-- site (@co_regate) lit aussi toute la table — `init` n'en fait jamais.
+SELECT STRAIGHT_JOIN
+       v.id_version_cle,
        c.id_referentiel,
        c.id_pdi,
        c.co_regate_site,
@@ -160,7 +167,7 @@ SELECT v.id_version_cle,
        c.trafic_oo    / s.trafic_oo_total,
        c.trafic_3s    / s.trafic_3s_total,
        CAST(COALESCE(c.potentielip, 0) AS DECIMAL(24,18)) / s.potentielip_total
-  FROM trppu_cles_repartition c
+  FROM trppu_cles_repartition c IGNORE INDEX (idx_cr_ref_actif)
   JOIN trppu_trafic_site  s ON s.id_referentiel = c.id_referentiel
                            AND s.co_regate_site = c.co_regate_site
   JOIN trppu_version_cle  v ON v.id_referentiel = c.id_referentiel
