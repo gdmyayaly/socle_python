@@ -346,6 +346,34 @@ class Database:
             skip_selects=skip_selects,
         )
 
+    async def execute_sql_units(
+        self,
+        units: Sequence[tuple[str, Sequence[str]]],
+        *,
+        transactional: bool = True,
+        continue_on_error: bool = False,
+        dry_run: bool = False,
+        database: str | None = _CONFIGURED_DB,
+        disable_foreign_keys: bool = False,
+        skip_selects: bool = False,
+    ) -> ScriptResult:
+        """Exécute des scripts **déjà découpés**, `(libellé, instructions)`, dans l'ordre.
+
+        Tous sur **une seule connexion** et, en mode transactionnel, dans **une seule
+        transaction** : un échec annule l'ensemble. C'est ce qui permet de traiter des
+        milliers de petits scripts (un par site) sans ouvrir autant de connexions ni valider
+        autant de transactions. Mêmes options et mêmes limites que `execute_sql_files`.
+        """
+        return await self._run_units(
+            [(label, list(statements)) for label, statements in units],
+            transactional=transactional,
+            continue_on_error=continue_on_error,
+            dry_run=dry_run,
+            database=database,
+            disable_foreign_keys=disable_foreign_keys,
+            skip_selects=skip_selects,
+        )
+
     @asynccontextmanager
     async def _script_connection(self, database: str | None, autocommit: bool):
         """Connexion dédiée (HORS POOL) pour l'exécution d'un script SQL.

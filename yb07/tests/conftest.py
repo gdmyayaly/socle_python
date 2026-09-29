@@ -106,6 +106,8 @@ class FausseBase:
         self.scripts: list[dict[str, Any]] = []
         self.transactions_commitees = 0
         self.transactions_annulees = 0
+        self.lots_commites = 0
+        self.lots_annules = 0
 
     # -- lectures ---------------------------------------------------------
 
@@ -194,6 +196,58 @@ class FausseBase:
             {"label": label, "texte": script, "transactional": transactional,
              "dry_run": dry_run, "skip_selects": skip_selects, "resultat": resultat}
         )
+        return resultat
+
+    async def execute_sql_units(
+        self,
+        units,
+        *,
+        transactional: bool = True,
+        continue_on_error: bool = False,
+        dry_run: bool = False,
+        database: str | None = "",
+        disable_foreign_keys: bool = False,
+        skip_selects: bool = False,
+    ) -> ScriptResult:
+        """Scripts déjà découpés, une connexion, une transaction : chaque unité est
+        journalisée comme un script (même libellé), et la première unité en échec fait
+        échouer l'ensemble — comme le ROLLBACK de la vraie transaction."""
+        if self.lecture_seule and not dry_run:
+            raise EcritureInterdite("écriture interdite : lot de scripts")
+
+        resultat = ScriptResult(
+            sources=[label for label, _ in units], transactional=transactional, dry_run=dry_run
+        )
+        for label, instructions in units:
+            texte = ";\n".join(instructions) + ";\n"
+            for fragment, erreur in self.echecs_scripts.items():
+                if fragment in label:
+                    self.scripts.append(
+                        {"label": label, "texte": texte, "transactional": transactional,
+                         "dry_run": dry_run, "lot": True, "erreur": erreur}
+                    )
+                    self.lots_annules += 1
+                    raise erreur
+            for index, sql in enumerate(instructions, start=1):
+                apercu = statement_preview(sql)
+                non_joue = dry_run or (skip_selects and is_display_select(sql))
+                resultat.statements.append(
+                    StatementResult(
+                        source=label,
+                        index=index,
+                        preview=apercu,
+                        is_ddl=is_ddl(sql),
+                        rowcount=-1 if non_joue else self._rowcount_script(apercu),
+                        skipped=non_joue,
+                    )
+                )
+            self.scripts.append(
+                {"label": label, "texte": texte, "transactional": transactional,
+                 "dry_run": dry_run, "skip_selects": skip_selects, "lot": True,
+                 "resultat": resultat}
+            )
+        resultat.committed = transactional and not dry_run
+        self.lots_commites += 1
         return resultat
 
     async def execute_sql_file(self, path, **options) -> ScriptResult:

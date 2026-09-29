@@ -334,9 +334,14 @@ def test_un_site_en_echec_n_arrete_pas_la_boucle():
 
     rapport = _lancer(db_ecriture=ecritures, etape="versions")
 
-    assert len(ecritures.scripts_joues()) == len(SITES)
+    # Le lot échoue sur le site 2 et est annulé, puis rejoué site par site : chaque site est
+    # tenté, et seul le fautif est écarté.
+    assert ecritures.lots_annules == 1
+    rejoues = [s["label"] for s in ecritures.scripts if not s.get("lot")]
+    assert [label.rsplit("@", 1)[1] for label in rejoues] == SITES
     assert not rapport.reussi
     assert rapport.etats["SITES_VERSIONS_KO"] == 1
+    assert rapport.etats["VERSIONS_CREEES"] == len(SITES) - 1
 
 
 def test_l_etape_cles_n_est_pas_jouee_si_un_site_a_echoue():
@@ -386,6 +391,7 @@ def test_le_rapport_ne_porte_pas_une_ligne_par_site(monkeypatch):
 
 def test_un_avancement_est_journalise_pendant_la_boucle(monkeypatch, caplog):
     monkeypatch.setattr(initialisation, "INIT_LOG_TOUS_LES_SITES", 2)
+    monkeypatch.setattr(initialisation, "INIT_VERSIONS_TAILLE_LOT", 2)
     with caplog.at_level(logging.INFO, logger="app.traitements.initialisation"):
         _lancer(etape="versions")
 
@@ -904,3 +910,26 @@ def test_rapport_d_echec_des_versions_exploitable():
     assert "site 000002 : Échec de db/DSR-698_version_cle.sql@x, instruction 8" in avertissements
     assert "--depuis versions" in avertissements
     assert rapport.etats["REPRENDRE_A"] == "versions"
+
+
+
+def test_versions_par_lots_une_transaction_par_lot(monkeypatch):
+    """Une connexion et une transaction par lot, et non plus par site."""
+    monkeypatch.setattr(initialisation, "INIT_VERSIONS_TAILLE_LOT", 2)
+    ecritures = _ecritures()
+
+    rapport = _lancer(db_ecriture=ecritures, etape="versions")
+
+    assert rapport.reussi, rapport.motifs
+    assert ecritures.lots_commites == 2  # 3 sites, lots de 2 : [1, 2] puis [3]
+    assert rapport.etats["VERSIONS_CREEES"] == len(SITES)
+    assert all(s.get("lot") for s in ecritures.scripts)
+
+
+def test_un_lot_n_est_pas_rejoue_si_tout_passe():
+    ecritures = _ecritures()
+
+    _lancer(db_ecriture=ecritures, etape="versions")
+
+    assert ecritures.lots_annules == 0
+    assert len(ecritures.scripts_joues()) == len(SITES)

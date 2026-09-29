@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import sqlparse
 
@@ -192,6 +193,9 @@ def _is_comment_only(text: str) -> bool:
     return parsed[0].token_first(skip_ws=True, skip_cm=True) is None
 
 
+# Mis en cache : une même instruction est analysée pour des milliers de sites (étape
+# « versions ») et `sqlparse` coûte plusieurs millisecondes par appel.
+@lru_cache(maxsize=4096)
 def first_keyword(statement: str) -> str:
     """Premier mot-clé SQL significatif, en majuscules (``""`` si indéterminable).
 
@@ -237,6 +241,7 @@ def is_display_select(statement: str) -> bool:
     return re.search(r"\bINTO\b", statement, re.IGNORECASE) is None
 
 
+@lru_cache(maxsize=4096)
 def statement_preview(statement: str, max_length: int = PREVIEW_MAX_LENGTH) -> str:
     """Aperçu mono-ligne, commentaires retirés, tronqué — destiné aux logs.
 

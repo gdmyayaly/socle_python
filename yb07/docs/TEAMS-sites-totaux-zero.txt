@@ -1,0 +1,90 @@
+Bonjour a tous,
+
+Point sur l'initialisation des cles de repartition (yb07,
+referentiel 1) :
+
+- chargement, migration, correctif, agregats : OK
+- versions : OK, 2022 sites, 2022 versions creees
+- calcul des cles : BLOQUE avant ecriture, rien n'a ete modifie
+
+Raison : 30 sites ont au moins un total de trafic a zero dans
+trppu_trafic_site (ex. 122200, 134090, 140380, 201080, 203620).
+Une cle = trafic du PDI / total du site : sur ces sites le calcul
+diviserait par zero. Le traitement refuse de le faire sans regle
+metier.
+
+Question metier : que faire de ces sites ?
+  1. corriger les donnees source (fichier livre), puis recharger
+  2. cle = 0 pour la composante dont le total est nul
+  3. repartition egale : cle = 1 / nombre de PDI du site
+  4. exclure ces sites du calcul (leurs PDI n'auront pas de cle)
+
+Requetes pour les identifier (lecture seule, rapides) :
+
+-- 1) Les 30 sites et le ou les totaux a zero
+SELECT s.co_regate_site,
+       s.trafic_colis_total, s.trafic_oo_total,
+       s.trafic_3s_total, s.potentielip_total,
+       CONCAT_WS(',',
+         IF(s.trafic_colis_total = 0, 'colis', NULL),
+         IF(s.trafic_oo_total    = 0, 'oo', NULL),
+         IF(s.trafic_3s_total    = 0, '3s', NULL),
+         IF(s.potentielip_total  = 0, 'potentielip', NULL)
+       ) AS totaux_a_zero
+  FROM trppu_trafic_site s
+ WHERE s.id_referentiel = 1
+   AND (s.trafic_colis_total = 0 OR s.trafic_oo_total = 0
+        OR s.trafic_3s_total = 0 OR s.potentielip_total = 0)
+ ORDER BY totaux_a_zero, s.co_regate_site;
+
+-- 2) Combien de sites par type de total a zero
+SELECT totaux_a_zero, COUNT(*) AS nb_sites
+  FROM (SELECT CONCAT_WS(',',
+                 IF(trafic_colis_total = 0, 'colis', NULL),
+                 IF(trafic_oo_total    = 0, 'oo', NULL),
+                 IF(trafic_3s_total    = 0, '3s', NULL),
+                 IF(potentielip_total  = 0, 'potentielip', NULL)
+               ) AS totaux_a_zero
+          FROM trppu_trafic_site
+         WHERE id_referentiel = 1
+           AND (trafic_colis_total = 0 OR trafic_oo_total = 0
+                OR trafic_3s_total = 0 OR potentielip_total = 0)) x
+ GROUP BY totaux_a_zero
+ ORDER BY nb_sites DESC;
+
+-- 3) Identite de ces sites et etat de leurs PDI actifs
+SELECT c.co_regate_site,
+       MAX(c.lb_regate)             AS libelle_site,
+       MAX(c.type_site)             AS type_site,
+       MAX(c.co_regate_dex)         AS dex,
+       MAX(c.lb_dex)                AS libelle_dex,
+       COUNT(*)                     AS nb_pdi_actifs,
+       SUM(c.potentielip IS NULL)   AS nb_potentielip_vide,
+       SUM(c.potentielip = 0)       AS nb_potentielip_zero,
+       SUM(c.trafic_colis = 0)      AS nb_colis_zero,
+       SUM(c.trafic_oo = 0)         AS nb_oo_zero,
+       SUM(c.trafic_3s = 0)         AS nb_3s_zero
+  FROM trppu_trafic_site s
+  JOIN trppu_cles_repartition c
+    ON c.id_referentiel = s.id_referentiel
+   AND c.co_regate_site = s.co_regate_site
+   AND c.date_fin_validite IS NULL
+ WHERE s.id_referentiel = 1
+   AND (s.trafic_colis_total = 0 OR s.trafic_oo_total = 0
+        OR s.trafic_3s_total = 0 OR s.potentielip_total = 0)
+ GROUP BY c.co_regate_site
+ ORDER BY c.co_regate_site;
+
+-- 4) Detail des PDI d'un site (remplacer le code regate)
+SELECT id_pdi, pdi_rattache, nature, type_site,
+       trafic_colis, trafic_oo, trafic_3s, nb_pre, potentielip
+  FROM trppu_cles_repartition
+ WHERE id_referentiel = 1
+   AND date_fin_validite IS NULL
+   AND co_regate_site = '122200'
+ ORDER BY id_pdi;
+
+Des la regle validee, le calcul se relance seul :
+  python -m app.main init 1 --depuis cles
+
+Merci pour vos retours.

@@ -659,3 +659,39 @@ def test_agregats_et_cles_lisent_la_table_en_une_passe():
         ), nom
     cles = (db / "DSR-699_cles_calculees.sql").read_text(encoding="utf-8-sig")
     assert "SELECT STRAIGHT_JOIN" in cles
+
+
+def test_plusieurs_scripts_une_connexion_une_transaction(monkeypatch):
+    """`execute_sql_units` : mille petits scripts ne coûtent qu'une connexion et un commit."""
+    ouvertures, evenements = [], []
+    db = Database(host="h")
+
+    class Connexion:
+        async def begin(self):
+            evenements.append("BEGIN")
+
+        async def commit(self):
+            evenements.append("COMMIT")
+
+        async def rollback(self):
+            evenements.append("ROLLBACK")
+
+    @asynccontextmanager
+    async def connexion(database, autocommit):
+        ouvertures.append(autocommit)
+        yield Connexion()
+
+    async def jouer(conn, sql):
+        evenements.append(" ".join(sql.split()))
+        return 1
+
+    monkeypatch.setattr(db, "_script_connection", connexion)
+    monkeypatch.setattr(db, "_run_statement", jouer)
+
+    unites = [(f"v@{n}", [f"SET @co := '{n}'", "INSERT INTO t VALUES (@co)"]) for n in range(3)]
+    resultat = asyncio.run(db.execute_sql_units(unites, transactional=True))
+
+    assert ouvertures == [False]  # une seule connexion, hors autocommit
+    assert evenements[0] == "BEGIN" and evenements[-1] == "COMMIT"
+    assert evenements.count("BEGIN") == 1 and evenements.count("COMMIT") == 1
+    assert [s.source for s in resultat.statements] == ["v@0", "v@0", "v@1", "v@1", "v@2", "v@2"]

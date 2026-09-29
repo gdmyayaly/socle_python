@@ -42,9 +42,10 @@ from app.config import (
     CHARGEMENT_LOCK_WAIT_TIMEOUT,
     INIT_LOG_TOUS_LES_SITES,
     INIT_MAX_ANOMALIES_LOGUEES,
+    INIT_VERSIONS_TAILLE_LOT,
 )
 from app.db.mysql import db_read, db_write
-from app.db.sql_parametres import injecter_parametres
+from app.db.sql_parametres import injecter_parametres, instructions_parametrees
 from app.db.sql_script import SqlScriptError, statement_preview
 from app.erreurs import TraitementImpossible
 from app.log_utils import ctx
@@ -532,45 +533,20 @@ async def _etape_versions(etat: _Etat, rang: int, total: int) -> bool:
         return False
 
     debut = time.perf_counter()
-    creees = 0
-    deja_a_jour = 0
-    echecs: list[str] = []
-    # Pour le rapport d'échec : le motif de chaque site, et les causes regroupées — une cause
-    # unique (colonne trop courte, droit manquant…) touche souvent tous les sites à la fois.
-    motifs: dict[str, str] = {}
-    causes: Counter[str] = Counter()
-
-    for traites, site in enumerate(sites, start=1):
-        try:
-            resultat = await _executer_script(
-                etat, VERSIONS, _parametres_version(etat, site), suffixe_label=f"@{site}"
+    bilan = _BilanVersions()
+    traites = 0
+    # Par lots : une connexion et une transaction pour INIT_VERSIONS_TAILLE_LOT sites, au lieu
+    # d'une par site — l'ouverture de connexion et le commit coûtaient l'essentiel du temps.
+    for debut_lot in range(0, len(sites), INIT_VERSIONS_TAILLE_LOT):
+        lot = [str(site) for site in sites[debut_lot : debut_lot + INIT_VERSIONS_TAILLE_LOT]]
+        await _versionner_lot(etat, lot, bilan)
+        precedent, traites = traites, traites + len(lot)
+        if traites // INIT_LOG_TOUS_LES_SITES > precedent // INIT_LOG_TOUS_LES_SITES:
+            _journaliser_avancement(
+                etat, traites, len(sites), bilan.creees, bilan.echecs, debut
             )
-        except SqlScriptError as erreur:
-            # Un site n'explique pas le suivant : on poursuit, quitte à échouer l'étape. Ce qui
-            # est interdit, c'est de passer au calcul des clés — voir plus bas.
-            echecs.append(str(site))
-            motifs[str(site)] = _message_script(erreur)
-            causes[_cause(erreur)] += 1
-            logger.warning(
-                "Rejet création de version %s",
-                ctx(
-                    id_referentiel=etat.id_referentiel,
-                    co_regate=site,
-                    motif=_message_script(erreur),
-                ),
-            )
-        else:
-            if controles_init.rowcount(resultat, APERCU_INSERT_VERSION) > 0:
-                creees += 1
-            else:
-                deja_a_jour += 1
-            logger.debug(
-                "Fin création de version %s",
-                ctx(id_referentiel=etat.id_referentiel, co_regate=site),
-            )
-
-        if traites % INIT_LOG_TOUS_LES_SITES == 0:
-            _journaliser_avancement(etat, traites, len(sites), creees, echecs, debut)
+    creees, deja_a_jour = bilan.creees, bilan.deja_a_jour
+    echecs, motifs, causes = bilan.echecs, bilan.motifs, bilan.causes
 
     etat.rapport.ajouter(
         not echecs,
@@ -594,6 +570,109 @@ async def _etape_versions(etat: _Etat, rang: int, total: int) -> bool:
         etat.rapport, etat.db_lecture, etat.id_referentiel, len(sites)
     )
     return etat.rapport.reussi
+
+
+@dataclass
+class _BilanVersions:
+    """Compteurs de l'étape « versions », alimentés lot par lot."""
+
+    creees: int = 0
+    deja_a_jour: int = 0
+    echecs: list[str] = field(default_factory=list)
+    # Pour le rapport d'échec : le motif de chaque site, et les causes regroupées — une cause
+    # unique (colonne trop courte, droit manquant…) touche souvent tous les sites à la fois.
+    motifs: dict[str, str] = field(default_factory=dict)
+    causes: Counter = field(default_factory=Counter)
+
+
+async def _versionner_lot(etat: _Etat, lot: list[str], bilan: _BilanVersions) -> None:
+    """Crée les versions d'un lot de sites, sur une connexion et dans une transaction.
+
+    Un site en échec annule tout le lot (c'est une transaction) : le lot est alors rejoué site
+    par site, chacun dans sa propre transaction, pour n'écarter que les sites fautifs et
+    rendre au rapport leur motif exact. Rejouer est sans risque : l'annulation n'a rien
+    laissé, et le script saute un site déjà versionné.
+    """
+    fichier, transactional = SCRIPTS[VERSIONS]
+    unites = [
+        (
+            f"db/{fichier}@{site}",
+            instructions_parametrees(etat.scripts[VERSIONS], _parametres_version(etat, site)),
+        )
+        for site in lot
+    ]
+    try:
+        resultat = await etat.db_ecriture.execute_sql_units(
+            unites, transactional=transactional, skip_selects=True
+        )
+    except SqlScriptError as erreur:
+        logger.warning(
+            "Rejet lot de versions %s",
+            ctx(
+                id_referentiel=etat.id_referentiel,
+                sites=len(lot),
+                premier_site=lot[0],
+                site_en_echec=erreur.source.rsplit("@", 1)[-1],
+                suite="lot annulé, rejoué site par site",
+            ),
+        )
+        for site in lot:
+            await _versionner_site(etat, site, bilan)
+        return
+
+    for site, (label, _) in zip(lot, unites):
+        if _insertions(resultat, label, APERCU_INSERT_VERSION) > 0:
+            bilan.creees += 1
+        else:
+            bilan.deja_a_jour += 1
+    logger.info(
+        "Fin lot de versions %s",
+        ctx(
+            id_referentiel=etat.id_referentiel,
+            sites=len(lot),
+            premier_site=lot[0],
+            dernier_site=lot[-1],
+            duration_ms=round(resultat.duration_ms, 1),
+        ),
+    )
+
+
+async def _versionner_site(etat: _Etat, site: str, bilan: _BilanVersions) -> None:
+    """Un site, dans sa propre transaction — chemin de reprise d'un lot annulé."""
+    try:
+        resultat = await _executer_script(
+            etat, VERSIONS, _parametres_version(etat, site), suffixe_label=f"@{site}"
+        )
+    except SqlScriptError as erreur:
+        # Un site n'explique pas le suivant : on poursuit, quitte à échouer l'étape. Ce qui
+        # est interdit, c'est de passer au calcul des clés — voir `_etape_versions`.
+        bilan.echecs.append(site)
+        bilan.motifs[site] = _message_script(erreur)
+        bilan.causes[_cause(erreur)] += 1
+        logger.warning(
+            "Rejet création de version %s",
+            ctx(
+                id_referentiel=etat.id_referentiel,
+                co_regate=site,
+                motif=_message_script(erreur),
+            ),
+        )
+        return
+    if controles_init.rowcount(resultat, APERCU_INSERT_VERSION) > 0:
+        bilan.creees += 1
+    else:
+        bilan.deja_a_jour += 1
+
+
+def _insertions(resultat, label: str, debut_apercu: str) -> int:
+    """Lignes écrites par l'instruction `debut_apercu` du script `label` d'un lot."""
+    cible = " ".join(debut_apercu.split()).upper()
+    for instruction in resultat.statements:
+        if instruction.source == label and " ".join(
+            instruction.preview.split()
+        ).upper().startswith(cible):
+            return instruction.rowcount
+    return -1
 
 
 def _cause(erreur: SqlScriptError) -> str:

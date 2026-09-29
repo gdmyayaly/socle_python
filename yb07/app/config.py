@@ -109,6 +109,9 @@ CHARGEMENT_LOCK_WAIT_TIMEOUT = _entier_positif("CHARGEMENT_LOCK_WAIT_TIMEOUT", 6
 # l'étape muette. D'où une ligne d'avancement toutes les N itérations, cadencée sur le
 # volume comme celle du chargement.
 INIT_LOG_TOUS_LES_SITES = _entier_positif("INIT_LOG_TOUS_LES_SITES", 50)
+# Étape « versions » : sites traités par lot, sur une connexion et dans une transaction.
+# Un site en échec annule son lot, qui est alors rejoué site par site pour l'isoler.
+INIT_VERSIONS_TAILLE_LOT = _entier_positif("INIT_VERSIONS_TAILLE_LOT", 1000)
 # Plafond des anomalies de somme de clés journalisées une à une : sur un référentiel
 # intégralement faux, des milliers d'avertissements identiques ne servent personne. Le
 # compte total, lui, est toujours rendu.

@@ -225,7 +225,8 @@ acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
 | `CHARGEMENT_LOG_TOUTES_LES` | `100000` | Fréquence des lignes de log d'avancement, en lignes chargées |
 | `CHARGEMENT_LOCK_WAIT_TIMEOUT` | `60` | Attente maximale (s) d'un verrou pour tout le DDL de `yb07` : `TRUNCATE` et index du chargement, index des clés, scripts `migration` et `correctif`. Au-delà, échec lisible plutôt que de bloquer les requêtes de l'API derrière lui. |
 | `CHARGEMENT_MAX_REJETS_DETAILLES` | `100` | Avec `--skip-errors` : lignes écartées détaillées dans le rapport et les logs ; au-delà, elles sont seulement comptées |
-| `INIT_LOG_TOUS_LES_SITES` | `50` | `init`, étape `versions` : fréquence des lignes d'avancement, en sites traités |
+| `INIT_LOG_TOUS_LES_SITES` | `50` | `init`, étape `versions` : fréquence des lignes d'avancement, en sites traités (arrondie au lot) |
+| `INIT_VERSIONS_TAILLE_LOT` | `1000` | `init`, étape `versions` : sites traités sur une connexion et dans une transaction. Un site en échec annule son lot, rejoué alors site par site pour n'écarter que le fautif. |
 | `INIT_MAX_ANOMALIES_LOGUEES` | `50` | `init`, étape `cles` : plafond des sommes de clés hors tolérance journalisées une à une. Le compte total est toujours rendu. |
 
 > Ne pas mettre de commentaire en fin de ligne dans `.env` : `python-dotenv` ne le retire

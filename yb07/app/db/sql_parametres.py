@@ -125,6 +125,25 @@ def injecter_parametres(
     affectation du script. C'est ce qui attrape la faute de frappe : `@co_regates` au lieu de
     `@co_regate` produirait sinon un script parfaitement valide, et un résultat faux.
     """
+    instructions = instructions_parametrees(
+        script, parametres, exiger_presence=exiger_presence
+    )
+    # `split_sql_script` a retiré les délimiteurs, il faut les remettre.
+    return ";\n".join(instructions) + ";\n"
+
+
+def instructions_parametrees(
+    script: str,
+    parametres: Mapping[str, Any],
+    *,
+    exiger_presence: bool = True,
+) -> list[str]:
+    """Comme `injecter_parametres`, mais rend les instructions **déjà découpées**.
+
+    Le découpage du modèle est mis en cache (`_decomposer`) : répété pour des milliers de sites,
+    seul le bloc de paramètres change. Passer ces instructions au socle
+    (`Database.execute_sql_units`) évite de redécouper un texte recomposé à chaque site.
+    """
     conservees, trouves = _decomposer(script, tuple(parametres))
 
     if exiger_presence:
@@ -138,9 +157,7 @@ def injecter_parametres(
     # L'ordre du mapping est conservé (dict ordonné depuis Python 3.7) : le script produit est
     # déterministe, donc comparable dans un test.
     prefixe = [f"SET @{nom} := {litteral_sql(valeur)}" for nom, valeur in parametres.items()]
-
-    # `split_sql_script` a retiré les délimiteurs, il faut les remettre.
-    return ";\n".join(prefixe + list(conservees)) + ";\n"
+    return prefixe + list(conservees)
 
 
 @lru_cache(maxsize=16)
