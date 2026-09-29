@@ -184,6 +184,7 @@ de vérité en cas de doute.
 | `SGBD_DB_NAME` | `yb07` | Nom de la base |
 | `SGBD_MAX_RETRIES` | `3` | Nombre de tentatives de connexion |
 | `SGBD_RETRY_DELAY` | `1.0` | Délai de base entre tentatives (backoff linéaire : `délai × tentative`) |
+| `SGBD_COLLATION` | `""` | Classement des connexions. Vide = celui de la base (`@@collation_database`). Évite l'erreur 1267 « Illegal mix of collations » : pymysql ouvre en `utf8mb4_general_ci`, les tables sont en `utf8mb4_0900_ai_ci`. |
 | `MYSQL_POOL_RECYCLE` | `600` | Âge maximal (s) d'une connexion inactive du pool avant renouvellement. À garder sous le `wait_timeout` du serveur : pendant une étape longue, la connexion de lecture reste inactive, et MySQL la couperait. |
 | `MYSQL_POOL_SIZE` | `10` | Taille maximale de chaque pool. Toute valeur inexploitable est ramenée au défaut : un batch d'exploitation ne refuse pas de démarrer pour une variable mal saisie. |
 | `SQL_SCRIPT_WARN_SIZE` | `10485760` | Taille (octets) au-delà de laquelle un script `.sql` déclenche un avertissement |

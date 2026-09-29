@@ -874,3 +874,33 @@ def test_verrou_non_obtenu_explique_dans_le_rapport():
 
     assert not rapport.reussi
     assert "SHOW FULL PROCESSLIST" in (rapport.erreur or "")
+
+
+def test_rapport_d_echec_des_versions_exploitable():
+    """Causes regroupées, détail par site, et la commande de reprise : de quoi corriger."""
+    import pymysql
+
+    def echec(valeur):
+        return SqlScriptError(
+            "boum",
+            source="db/DSR-698_version_cle.sql@x",
+            index=8,
+            statement="INSERT INTO trppu_version_cle (…) SELECT …",
+            original=pymysql.err.DataError(
+                1366, f"Incorrect string value: '{valeur}' for column 'libelle' at row 1"
+            ),
+        )
+
+    ecritures = _ecritures(echecs_scripts={"@000002": echec("a"), "@000003": echec("b")})
+
+    rapport = _lancer(db_ecriture=ecritures, etape="versions")
+
+    assert not rapport.reussi
+    assert rapport.etats["SITES_VERSIONS_KO"] == 2
+    assert rapport.etats["SITES_VERSIONS_KO_LISTE"] == "000002,000003"
+    avertissements = "\n".join(rapport.avertissements)
+    # Une seule cause pour les deux sites, malgré des valeurs différentes dans le message.
+    assert "2 site(s) : (1366) Incorrect string value: '…' for column '…'" in avertissements
+    assert "site 000002 : Échec de db/DSR-698_version_cle.sql@x, instruction 8" in avertissements
+    assert "--depuis versions" in avertissements
+    assert rapport.etats["REPRENDRE_A"] == "versions"

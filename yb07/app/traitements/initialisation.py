@@ -31,12 +31,18 @@ en déduit le code de retour du processus.
 from __future__ import annotations
 
 import logging
+import re
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.config import CHARGEMENT_LOCK_WAIT_TIMEOUT, INIT_LOG_TOUS_LES_SITES
+from app.config import (
+    CHARGEMENT_LOCK_WAIT_TIMEOUT,
+    INIT_LOG_TOUS_LES_SITES,
+    INIT_MAX_ANOMALIES_LOGUEES,
+)
 from app.db.mysql import db_read, db_write
 from app.db.sql_parametres import injecter_parametres
 from app.db.sql_script import SqlScriptError, statement_preview
@@ -529,6 +535,10 @@ async def _etape_versions(etat: _Etat, rang: int, total: int) -> bool:
     creees = 0
     deja_a_jour = 0
     echecs: list[str] = []
+    # Pour le rapport d'échec : le motif de chaque site, et les causes regroupées — une cause
+    # unique (colonne trop courte, droit manquant…) touche souvent tous les sites à la fois.
+    motifs: dict[str, str] = {}
+    causes: Counter[str] = Counter()
 
     for traites, site in enumerate(sites, start=1):
         try:
@@ -539,6 +549,8 @@ async def _etape_versions(etat: _Etat, rang: int, total: int) -> bool:
             # Un site n'explique pas le suivant : on poursuit, quitte à échouer l'étape. Ce qui
             # est interdit, c'est de passer au calcul des clés — voir plus bas.
             echecs.append(str(site))
+            motifs[str(site)] = _message_script(erreur)
+            causes[_cause(erreur)] += 1
             logger.warning(
                 "Rejet création de version %s",
                 ctx(
@@ -575,11 +587,53 @@ async def _etape_versions(etat: _Etat, rang: int, total: int) -> bool:
     etat.rapport.etats["SITES_TRAITES"] = len(sites)
     etat.rapport.etats["VERSIONS_CREEES"] = creees
     etat.rapport.etats["SITES_VERSIONS_KO"] = len(echecs)
+    if echecs:
+        _rapporter_echecs_versions(etat, echecs, motifs, causes, len(sites))
 
     await controles_init.controler_versions(
         etat.rapport, etat.db_lecture, etat.id_referentiel, len(sites)
     )
     return etat.rapport.reussi
+
+
+def _cause(erreur: SqlScriptError) -> str:
+    """Cause d'un échec, sans ce qui varie d'un site à l'autre (valeurs citées, nombres) :
+    c'est la clé de regroupement du rapport."""
+    origine = erreur.original
+    args = getattr(origine, "args", ())
+    code = f"({args[0]}) " if args and isinstance(args[0], int) else ""
+    texte = str(args[1]) if len(args) > 1 else str(origine)
+    texte = re.sub(r"'[^']*'", "'…'", texte)
+    return f"{code}{texte} [instruction {erreur.index}]"
+
+
+def _rapporter_echecs_versions(
+    etat: _Etat,
+    echecs: list[str],
+    motifs: dict[str, str],
+    causes: Counter[str],
+    nb_sites: int,
+) -> None:
+    """Rapport exploitable après un échec de l'étape « versions » : causes, sites, reprise."""
+    rapport = etat.rapport
+    rapport.avertissements.append(
+        f"Versions — {len(echecs)} site(s) en échec sur {nb_sites}, par cause :"
+    )
+    rapport.avertissements += [
+        f"    {nombre} site(s) : {cause}" for cause, nombre in causes.most_common()
+    ]
+    detailles = echecs[:INIT_MAX_ANOMALIES_LOGUEES]
+    rapport.avertissements.append(
+        f"Versions — détail des sites en échec ({len(detailles)} sur {len(echecs)}) :"
+    )
+    rapport.avertissements += [f"    site {site} : {motifs[site]}" for site in detailles]
+    rapport.avertissements.append(
+        "Versions — reprise : corriger la cause, puis relancer "
+        f"« init {etat.id_referentiel} --depuis versions ». Les sites déjà versionnés sont "
+        f"sautés : seuls les {len(echecs)} en échec seront rejoués."
+    )
+    suite = "…" if len(echecs) > len(detailles) else ""
+    rapport.etats["SITES_VERSIONS_KO_LISTE"] = ",".join(detailles) + suite
 
 
 def _parametres_version(etat: _Etat, site: Any) -> dict[str, Any]:

@@ -16,6 +16,7 @@ from app.config import (
     MYSQL_HOST_READ,
     MYSQL_MAX_RETRIES,
     MYSQL_PASSWORD_READ,
+    MYSQL_COLLATION,
     MYSQL_PASSWORD_WRITE,
     MYSQL_PORT,
     MYSQL_RETRY_DELAY,
@@ -44,6 +45,19 @@ logger = logging.getLogger(__name__)
 #   None   -> se connecter SANS schéma sélectionné
 #   "xxx"  -> schéma explicite
 _CONFIGURED_DB = ""
+
+
+def _init_command() -> str:
+    """Instruction jouée à l'ouverture de chaque connexion : aligne son classement.
+
+    Les littéraux et les variables de session (`SET @co_regate := '…'`) prennent le classement
+    de la connexion. pymysql l'ouvre en utf8mb4_general_ci ; les tables sont en
+    utf8mb4_0900_ai_ci : `co_regate = @co_regate` lèverait l'erreur 1267. On prend celui de la
+    base, sauf classement imposé par SGBD_COLLATION.
+    """
+    if MYSQL_COLLATION:
+        return f"SET collation_connection = '{MYSQL_COLLATION}'"
+    return "SET collation_connection = @@collation_database"
 
 
 class Database:
@@ -82,6 +96,8 @@ class Database:
                     user=self.user,
                     password=self.password,
                     db=self.database,
+                    charset="utf8mb4",
+                    init_command=_init_command(),
                     minsize=self.min_connections,
                     maxsize=self.max_connections,
                     autocommit=True,
@@ -352,6 +368,8 @@ class Database:
                     user=self.user,
                     password=self.password,
                     db=database,
+                    charset="utf8mb4",
+                    init_command=_init_command(),
                     autocommit=autocommit,
                 )
                 break

@@ -44,6 +44,12 @@ def _entier_positif(nom: str, defaut: int) -> int:
 
 
 MYSQL_POOL_SIZE = _entier_positif("MYSQL_POOL_SIZE", 10)
+# Classement (collation) des connexions. Vide = celui de la base (`@@collation_database`).
+# Sans alignement, pymysql ouvre en utf8mb4_general_ci : une variable de script
+# (`SET @co_regate := '…'`) comparée à une colonne en utf8mb4_0900_ai_ci lève l'erreur 1267
+# « Illegal mix of collations ». Seuls lettres, chiffres et `_` sont acceptés.
+_collation = os.getenv("SGBD_COLLATION", "").strip()
+MYSQL_COLLATION = _collation if _collation.replace("_", "").isalnum() else ""
 # Âge maximal (secondes) d'une connexion inactive du pool avant renouvellement. Pendant une
 # étape longue, la connexion de lecture reste inactive : si MySQL la coupe (`wait_timeout`),
 # la requête suivante échouerait (« server has gone away »). À garder sous `wait_timeout`.
