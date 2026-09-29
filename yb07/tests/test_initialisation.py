@@ -100,7 +100,9 @@ def chargement_reussi(monkeypatch):
     """Neutralise l'étape 1, qui a sa propre couverture (`test_chargement_cles_repartition`)."""
     appels = []
 
-    async def _faux(id_referentiel, fichier=None, *, ignorer_erreurs=False):
+    async def _faux(
+        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+    ):
         appels.append((id_referentiel, fichier))
         return _rapport_chargement()
 
@@ -163,7 +165,9 @@ def test_les_scripts_de_donnees_sont_joues_en_transaction(chargement_reussi):
 
 
 def test_le_chargement_en_echec_arrete_la_chaine(monkeypatch):
-    async def _echec(id_referentiel, fichier=None, *, ignorer_erreurs=False):
+    async def _echec(
+        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+    ):
         rapport = Rapport(titre="CHARGEMENT", id_traitement=id_referentiel)
         rapport.ko("Fichier introuvable sur S3.")
         return rapport
@@ -708,7 +712,9 @@ def test_skip_errors_transmis_au_chargement_et_avertissements_remontes(monkeypat
     dans celui de l'étape — et la chaîne continue."""
     recu = {}
 
-    async def _faux(id_referentiel, fichier=None, *, ignorer_erreurs=False):
+    async def _faux(
+        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+    ):
         recu["ignorer_erreurs"] = ignorer_erreurs
         rapport = _rapport_chargement()
         rapport.etats["LIGNES_IGNOREES"] = 2
@@ -728,7 +734,9 @@ def test_skip_errors_transmis_au_chargement_et_avertissements_remontes(monkeypat
 def test_sans_skip_errors_le_chargement_reste_strict(monkeypatch):
     recu = {}
 
-    async def _faux(id_referentiel, fichier=None, *, ignorer_erreurs=False):
+    async def _faux(
+        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+    ):
         recu["ignorer_erreurs"] = ignorer_erreurs
         return _rapport_chargement()
 
@@ -933,3 +941,20 @@ def test_un_lot_n_est_pas_rejoue_si_tout_passe():
 
     assert ecritures.lots_annules == 0
     assert len(ecritures.scripts_joues()) == len(SITES)
+
+
+
+def test_all_transmis_au_chargement(monkeypatch):
+    recu = {}
+
+    async def _faux(
+        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+    ):
+        recu.update(ignorer=ignorer_erreurs, ecarter=ecarter_sites_total_nul)
+        return _rapport_chargement()
+
+    monkeypatch.setattr(initialisation, "charger_cles_repartition", _faux)
+
+    _lancer(etape="chargement", ignorer_erreurs=True, ecarter_sites_total_nul=True)
+
+    assert recu == {"ignorer": True, "ecarter": True}

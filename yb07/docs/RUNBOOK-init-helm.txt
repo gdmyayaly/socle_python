@@ -162,9 +162,11 @@ dans le rapport final) :
 
 A verifier : LIGNES_CHARGEES, LIGNES_ACTIVES, et en mode tolerant
 LIGNES_IGNOREES et la section "Avertissements :".
-En mode tolerant, les sites dont un total de trafic vaut 0 sont aussi
-ecartes en entier (sinon division par zero a l'etape 7) : voir
-SITES_TOTAL_NUL_ECARTES et les avertissements "Site ... ecarte".
+--skip-errors n'ecarte que les lignes incompletes (et les doublons).
+Pour ecarter AUSSI les sites dont un total de trafic vaut 0 (sinon
+division par zero a l'etape 7), ajouter "- '--all'" apres
+"- '--skip-errors'" : voir SITES_TOTAL_NUL_ECARTES et les
+avertissements "Site ... ecarte". --all seul est refuse.
 ATTENTION : un PDI ecarte n'aura PAS de cle calculee a l'etape 7.
 Faire valider la liste des lignes ecartees avant de continuer.
 

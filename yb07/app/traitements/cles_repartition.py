@@ -42,8 +42,8 @@ au lieu d'arrêter le chargement. Elle figure dans les avertissements du rapport
 dans `LIGNES_IGNOREES`. Un en-tête faux ou une panne technique (connexion, verrou, droits)
 restent bloquants : ce ne sont pas des défauts d'une ligne.
 
-Avec `--skip-errors` toujours, les **sites dont un total de trafic est nul** sont écartés
-après le chargement : leurs PDI rendraient le calcul des clés impossible (division par zéro,
+Avec `ecarter_sites_total_nul` (option `--all`, qui exige `--skip-errors`), les **sites
+dont un total de trafic est nul** sont aussi écartés après le chargement : leurs PDI rendraient le calcul des clés impossible (division par zéro,
 DSR-699). Même formule que l'étape `agregats`, sur la table chargée ; chaque site est listé
 dans les avertissements du rapport.
 
@@ -392,13 +392,15 @@ async def charger_cles_repartition(
     *,
     chemin_local: str | None = None,
     ignorer_erreurs: bool = False,
+    ecarter_sites_total_nul: bool = False,
 ) -> Rapport:
     """Charge `trppu_cles_repartition` depuis le CSV du bucket S3, ou d'un fichier local.
 
     `fichier` surcharge `CSV_CLES_REPARTITION` pour un rechargement ponctuel depuis S3.
     `chemin_local`, s'il est renseigné, désigne un fichier du disque : S3 n'est alors pas
     sollicité et `fichier` est ignoré. `ignorer_erreurs` écarte les lignes non conformes
-    au lieu d'échouer (cf. docstring du module).
+    au lieu d'échouer ; `ecarter_sites_total_nul` écarte en plus les sites dont un total de
+    trafic est nul (cf. docstring du module).
     """
     debut = time.perf_counter()
     nom_fichier = chemin_local or fichier or CSV_CLES_REPARTITION
@@ -416,6 +418,7 @@ async def charger_cles_repartition(
             source="local" if chemin_local else "s3",
             bucket=None if chemin_local else S3_BUCKET,
             skip_errors=ignorer_erreurs or None,
+            all=ecarter_sites_total_nul or None,
         ),
     )
     rejets = _Rejets(id_referentiel) if ignorer_erreurs else None
@@ -517,8 +520,8 @@ async def charger_cles_repartition(
                     f"{doublons.identiques} identique(s), {doublons.conflits} en conflit"
                 )
 
-        # --- Sites à total nul écartés (--skip-errors) -----------------------
-        if rejets is not None:
+        # --- Sites à total nul écartés (--all) ------------------------------
+        if ecarter_sites_total_nul:
             lignes_inserees -= await _ecarter_sites_total_nul(rapport, id_referentiel)
 
     except TraitementImpossible as erreur:
@@ -641,7 +644,7 @@ async def _ecarter_sites_total_nul(rapport: Rapport, id_referentiel: int) -> int
             f"{CHARGEMENT_MAX_REJETS_DETAILLES})."
         )
     rapport.ok(
-        f"{len(sites)} site(s) à total de trafic nul écarté(s) (--skip-errors) : "
+        f"{len(sites)} site(s) à total de trafic nul écarté(s) (--all) : "
         f"{supprimees} ligne(s) retirée(s)"
     )
     rapport.etats["SITES_TOTAL_NUL_ECARTES"] = len(sites)

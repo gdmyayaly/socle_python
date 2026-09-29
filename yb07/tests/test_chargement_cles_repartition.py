@@ -387,7 +387,14 @@ def test_commande_locale_transmet_le_chemin(monkeypatch):
 
     recu = {}
 
-    async def _faux(id_referentiel, fichier=None, *, chemin_local=None, ignorer_erreurs=False):
+    async def _faux(
+        id_referentiel,
+        fichier=None,
+        *,
+        chemin_local=None,
+        ignorer_erreurs=False,
+        ecarter_sites_total_nul=False,
+    ):
         recu.update(id_referentiel=id_referentiel, chemin_local=chemin_local)
         return module.Rapport(titre="T", id_traitement=id_referentiel)
 
@@ -839,7 +846,7 @@ def _site_nul(code="122200", nb=2, **nuls):
     return ligne
 
 
-def test_skip_errors_ecarte_les_sites_a_total_nul(s3_bouchonne, brancher_base):
+def test_all_ecarte_les_sites_a_total_nul(s3_bouchonne, brancher_base):
     s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_TROUEE))
     base = brancher_base(
         base_nominale(
@@ -855,7 +862,9 @@ def test_skip_errors_ecarte_les_sites_a_total_nul(s3_bouchonne, brancher_base):
         "date_fin_validite IS NOT NULL AND co_regate_site IN": 0,
     }
 
-    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+    rapport = charger(
+        id_referentiel=1, fichier="f.csv", ignorer_erreurs=True, ecarter_sites_total_nul=True
+    )
 
     assert rapport.statut == SUCCES, rapport.motifs
     # Actifs puis inactifs du site, dans une même transaction, paramétrés.
@@ -890,7 +899,9 @@ def test_aucun_site_a_total_nul(s3_bouchonne, brancher_base):
     s3_bouchonne(csv_de(LIGNE_PLEINE))
     base = brancher_base(base_nominale())
 
-    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+    rapport = charger(
+        id_referentiel=1, fichier="f.csv", ignorer_erreurs=True, ecarter_sites_total_nul=True
+    )
 
     assert rapport.statut == SUCCES, rapport.motifs
     assert any("Aucun site à total de trafic nul" in c.libelle for c in rapport.controles)
@@ -902,3 +913,37 @@ def test_recherche_des_sites_nuls_en_lecture_sequentielle():
     sql = " ".join(module.SITES_TOTAL_NUL_SQL.split())
     assert "IGNORE INDEX (idx_cr_ref_actif)" in sql
     assert "date_fin_validite IS NULL" in sql
+
+
+
+def test_skip_errors_seul_ne_touche_pas_aux_sites(s3_bouchonne, brancher_base):
+    """--skip-errors n'écarte que les lignes incomplètes ; les sites, c'est --all."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = brancher_base(base_nominale())
+
+    charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    lues = [sql for genre, sql, _ in base.journal if genre == "fetch"]
+    assert not any("HAVING SUM(trafic_colis) = 0" in sql for sql in lues)
+    assert not base.a_ecrit("co_regate_site IN")
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        ["charger-cles-repartition", "1"],
+        ["charger-cles-repartition-local", "1", "f.csv"],
+        ["init", "1"],
+    ],
+)
+def test_option_all(commande):
+    from app.main import build_parser, main
+
+    args = build_parser().parse_args([*commande, "--skip-errors", "--all"])
+    assert args.ignorer_erreurs and args.ecarter_sites_total_nul
+    assert build_parser().parse_args(commande).ecarter_sites_total_nul is False
+
+    # --all étend --skip-errors : seul, il est refusé plutôt qu'activé en silence.
+    with pytest.raises(SystemExit) as sortie:
+        main([*commande, "--all"])
+    assert sortie.value.code == 2

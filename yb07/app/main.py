@@ -241,6 +241,7 @@ async def cmd_charger_cles_repartition(args: argparse.Namespace) -> int:
             a.id_traitement,
             a.fichier,
             ignorer_erreurs=a.ignorer_erreurs,
+            ecarter_sites_total_nul=a.ecarter_sites_total_nul,
         ),
         args,
     )
@@ -253,6 +254,7 @@ async def cmd_charger_cles_repartition_local(args: argparse.Namespace) -> int:
             a.id_traitement,
             chemin_local=a.chemin,
             ignorer_erreurs=a.ignorer_erreurs,
+            ecarter_sites_total_nul=a.ecarter_sites_total_nul,
         ),
         args,
     )
@@ -271,6 +273,7 @@ async def cmd_init(args: argparse.Namespace) -> int:
             dry_run=a.dry_run,
             controles_longs=not a.sans_controles_longs,
             ignorer_erreurs=a.ignorer_erreurs,
+            ecarter_sites_total_nul=a.ecarter_sites_total_nul,
         ),
         args,
     )
@@ -286,6 +289,24 @@ def _ajouter_skip_errors(sous_commande: argparse.ArgumentParser) -> None:
         "référentiel, doublon…) au lieu d'arrêter le chargement. Elles sont listées dans "
         "les avertissements du rapport et comptées dans LIGNES_IGNOREES.",
     )
+    sous_commande.add_argument(
+        "--all",
+        dest="ecarter_sites_total_nul",
+        action="store_true",
+        help="Avec --skip-errors seulement : écarte AUSSI les sites dont un total de trafic "
+        "(colis, OO, 3S, potentiel IP) est nul — leurs clés diviseraient par zéro. Chaque "
+        "site est listé dans les avertissements du rapport.",
+    )
+
+
+def _verifier_options(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Dépendances entre options qu'argparse ne sait pas exprimer.
+
+    `--all` sans `--skip-errors` n'aurait pas de sens : il étend ce que `--skip-errors` écarte.
+    Le refuser vaut mieux que l'activer en silence.
+    """
+    if getattr(args, "ecarter_sites_total_nul", False) and not args.ignorer_erreurs:
+        parser.error("--all s'utilise avec --skip-errors")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -463,7 +484,9 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(list(sys.argv[1:] if argv is None else argv))
+    parser = build_parser()
+    args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+    _verifier_options(parser, args)
     # INFO par défaut : le batch tourne sous ordonnanceur, sans `-v`, et c'est la
     # seule trace de ce qu'il a fait. La sortie console de l'exploitant n'en pâtit
     # pas — le rapport part sur stdout, les logs JSON sur stderr.

@@ -151,6 +151,7 @@ class _Etat:
     dry_run: bool = False
     controles_longs: bool = True
     ignorer_erreurs: bool = False
+    ecarter_sites_total_nul: bool = False
 
     #: Nombre de PDI actifs, rendu par l'étape « chargement ». Rend le CA1 de DSR-699 gratuit
     #: quand la chaîne tourne de bout en bout ; vaut `None` en reprise.
@@ -177,6 +178,7 @@ async def initialiser_cles_repartition(
     dry_run: bool = False,
     controles_longs: bool = True,
     ignorer_erreurs: bool = False,
+    ecarter_sites_total_nul: bool = False,
     db_lecture=db_read,
     db_ecriture=db_write,
 ) -> Rapport:
@@ -203,6 +205,7 @@ async def initialiser_cles_repartition(
             etape=etape,
             dry_run=dry_run,
             skip_errors=ignorer_erreurs or None,
+            all=ecarter_sites_total_nul or None,
         ),
     )
 
@@ -224,6 +227,7 @@ async def initialiser_cles_repartition(
             dry_run=dry_run,
             controles_longs=controles_longs,
             ignorer_erreurs=ignorer_erreurs,
+            ecarter_sites_total_nul=ecarter_sites_total_nul,
         )
 
         if not await controles_init.verifier_prerequis(
@@ -413,6 +417,7 @@ async def _etape_chargement(etat: _Etat, rang: int, total: int) -> bool:
         etat.id_referentiel,
         etat.fichier,
         ignorer_erreurs=etat.ignorer_erreurs,
+        ecarter_sites_total_nul=etat.ecarter_sites_total_nul,
     )
 
     etat.rapport.ajouter(

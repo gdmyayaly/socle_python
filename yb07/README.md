@@ -370,6 +370,7 @@ demandé.
 | `id_referentiel` | **Obligatoire.** Référentiel à charger : il cible la purge, et toute ligne du fichier portant un autre référentiel fait échouer le chargement. |
 | `--fichier` | Nom du fichier dans le bucket, à défaut de `CSV_CLES_REPARTITION`. Pour un rechargement ponctuel sans toucher au `.env`. |
 | `--skip-errors` | Écarte les lignes non conformes au lieu d'arrêter le chargement (voir ci-dessous). |
+| `--all` | Avec `--skip-errors` seulement : écarte **aussi** les sites dont un total de trafic est nul. |
 
 **Purge par `TRUNCATE TABLE`** — la table est vidée par `TRUNCATE`, quasi instantané là où
 un `DELETE` de 22 M de lignes prend longtemps. Trois contreparties :
@@ -394,7 +395,8 @@ Avec, elle est écartée et le chargement continue :
   unique (voir « Performance ») : la première occurrence du fichier est conservée, et ils
   sont signalés par PDI (`PDI 123 : doublon identique` / `en CONFLIT`), sans numéro de
   ligne — `scripts/nettoyer_csv_cles.py` les donne si besoin ;
-- **sites à total nul** : après le chargement, les sites dont un total de trafic (colis, OO,
+- **sites à total nul, avec `--all` en plus** (`--skip-errors --all` ; `--all` seul est
+  refusé) : après le chargement, les sites dont un total de trafic (colis, OO,
   3S ou potentiel IP, sur les PDI actifs) vaut 0 sont retirés en entier — leurs clés
   diviseraient par zéro. Même règle que `scripts/extraire_sites_totaux_zero.py` : la table
   contient alors ce que contiendrait son fichier « bon ». Chaque site est listé dans les
@@ -539,7 +541,7 @@ pour un fichier transmis hors bucket.
 |---|---|
 | `id_referentiel` | **Obligatoire.** Comme pour le chargement S3. |
 | `chemin` | **Obligatoire.** Chemin du fichier, absolu ou relatif au dossier courant. Un `.gz` est décompressé à la volée. |
-| `--skip-errors` | Comme pour le chargement S3. |
+| `--skip-errors`, `--all` | Comme pour le chargement S3. |
 
 Le fichier est localisé (existence, lisibilité) **avant** la purge. `CSV_CLES_REPARTITION`
 n'est pas utilisé ; `CSV_DELIMITEUR` et `CSV_ENCODAGE` s'appliquent. Dans le rapport, la
