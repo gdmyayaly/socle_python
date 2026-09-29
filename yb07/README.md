@@ -698,6 +698,14 @@ Il produit, à côté du fichier (ou dans `--sortie`) :
 - Les numéros de ligne sont ceux du fichier **source** (en-tête = ligne 1).
 - Mémoire : compter 2 à 3 Go pour 22 M de lignes (index des PDI conservés).
 
+Autres outils sur le CSV d'origine (lecture en streaming, mémoire bornée) :
+
+| Script | Rôle |
+|---|---|
+| `scripts/extraire_sites_totaux_zero.py <csv> --sortie <dossier>` | trie en trois fichiers : `_lignes_incompletes.csv`, `_sites_totaux_zero.csv` (sites dont un total de trafic est nul), `_bon.csv` (rechargeable) |
+| `scripts/expliquer_sites_totaux_zero.py <..._sites_totaux_zero.csv>` | cause probable de chaque total nul (vide, 0, porté par des PDI inactifs), dans `_explication.csv` |
+| `scripts/demontrer_site.py <csv> <code_site>` | démonstration pas à pas, pour le métier, du total nul d'un site : extrait des lignes + rapport texte |
+
 ## Docker
 
 ```bash
