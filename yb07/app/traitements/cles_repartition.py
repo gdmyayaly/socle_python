@@ -72,6 +72,7 @@ from typing import Any, Iterator
 from app.config import (
     CHARGEMENT_LOG_TOUTES_LES,
     CHARGEMENT_MAX_REJETS_DETAILLES,
+    CHARGEMENT_RETIRER_INDEX,
     CHARGEMENT_TAILLE_LOT,
     CSV_CLES_REPARTITION,
     CSV_DELIMITEUR,
@@ -497,14 +498,24 @@ async def charger_cles_repartition(
         )
         rapport.ok(f"Purge (TRUNCATE) : {supprimees} ligne(s) supprimée(s)")
 
-        # --- Index secondaires retirés le temps du chargement ---------------
-        index_a_restaurer = await index_chargement.retirer_index()
-        if index_a_restaurer:
-            rapport.ok("Index secondaires retirés pendant le chargement")
+        # --- Index : conservés (défaut) ou retirés le temps du chargement ------
+        if CHARGEMENT_RETIRER_INDEX:
+            index_a_restaurer = await index_chargement.retirer_index()
+            if index_a_restaurer:
+                rapport.ok("Index secondaires retirés pendant le chargement")
+            else:
+                rapport.avertissements.append(
+                    "Index secondaires conservés pendant le chargement (droit ALTER "
+                    "manquant) : chargement nettement plus lent."
+                )
         else:
-            rapport.avertissements.append(
-                "Index secondaires conservés pendant le chargement (droit ALTER manquant) : "
-                "chargement nettement plus lent."
+            # Table vide : recréer un index absent (chargement précédent interrompu) est
+            # instantané, et garantit que l'unicité est contrôlée dès la première ligne.
+            recrees = await index_chargement.completer_index()
+            rapport.ok(
+                "Index conservés pendant le chargement (insertion par lots, sans "
+                "reconstruction finale)"
+                + (f" — {len(recrees)} opération(s) de remise en place" if recrees else "")
             )
 
         # --- Lecture en streaming et insertion par lots ---------------------

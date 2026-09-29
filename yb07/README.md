@@ -225,6 +225,7 @@ acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
 | `CSV_ENCODAGE` | `utf-8-sig` | Décode aussi l'UTF-8 nu et absorbe le BOM |
 | `CHARGEMENT_TAILLE_LOT` | `5000` | Nombre de lignes par lot inséré — chaque lot est commité séparément |
 | `CHARGEMENT_LOG_TOUTES_LES` | `100000` | Fréquence des lignes de log d'avancement, en lignes chargées |
+| `CHARGEMENT_RETIRER_INDEX` | `false` | `false` : index conservés pendant le chargement (lent, sans instruction longue). `true` : index retirés puis reconstruits en une passe (rapide, mais `ALTER` final de plusieurs minutes). Voir « Index : deux modes ». |
 | `CHARGEMENT_LOCK_WAIT_TIMEOUT` | `60` | Attente maximale (s) d'un verrou pour tout le DDL de `yb07` : `TRUNCATE` et index du chargement, index des clés, scripts `migration` et `correctif`. Au-delà, échec lisible plutôt que de bloquer les requêtes de l'API derrière lui. |
 | `CHARGEMENT_MAX_REJETS_DETAILLES` | `100` | Avec `--skip-errors` : lignes écartées détaillées dans le rapport et les logs ; au-delà, elles sont seulement comptées |
 | `INIT_LOG_TOUS_LES_SITES` | `50` | `init`, étape `versions` : fréquence des lignes d'avancement, en sites traités (arrondie au lot) |
@@ -463,12 +464,22 @@ des index secondaires, lecture en streaming et insertion par lots de `CHARGEMENT
 lignes, traitement des doublons, reconstruction des index, contrôles finaux. Le fichier n'est
 ni téléchargé sur disque ni chargé en mémoire.
 
-**Performance** — maintenir l'index **unique** `uk_pdi_ref` ligne à ligne est ce qui rend un
-chargement de 22 M de lignes interminable : l'unicité se vérifie immédiatement, les PDI
-arrivent dans le désordre, et dès que l'index dépasse le cache InnoDB chaque insertion lit
-le disque — environ 1 000 lignes/s, en baisse continue. Le chargement retire donc
-`uk_pdi_ref` et `idx_cr_ref_actif`, insère, puis les reconstruit en une passe triée
-(`app/traitements/index_chargement.py`). Côté batch : le lot suivant est lu et converti
+**Index : deux modes** (`CHARGEMENT_RETIRER_INDEX`).
+
+- **Par défaut, index conservés** : insertion par lots de `CHARGEMENT_TAILLE_LOT` lignes,
+  chacun commité seul. Aucune instruction longue : pas d'`ALTER` final de plusieurs minutes
+  sur 24 M de lignes, gourmand et muet — donc exposé à une coupure réseau pour inactivité.
+  Les doublons sont rejetés à l'insertion par `uk_pdi_ref`, **avec leur numéro de ligne**.
+  Un index absent au départ (chargement précédent interrompu) est recréé sur la table vide,
+  juste après le `TRUNCATE` : instantané. Contrepartie : plus lent — maintenir l'index
+  unique ligne à ligne, PDI dans le désordre, lit le disque dès que l'index dépasse le
+  cache InnoDB (de l'ordre de 1 000 lignes/s avec le cache par défaut, bien plus avec un
+  cache dimensionné).
+- **`CHARGEMENT_RETIRER_INDEX=true`** : `uk_pdi_ref` et `idx_cr_ref_actif` sont retirés,
+  les lignes insérées, puis les index reconstruits en une passe triée
+  (`app/traitements/index_chargement.py`) — environ 9 000 lignes/s mesurées, mais une
+  reconstruction finale longue ; les doublons sont alors traités en fin de parcours, par
+  PDI. À réserver à un chemin réseau sans délai d'inactivité court. Côté batch : le lot suivant est lu et converti
 pendant l'insertion du courant, et la mémoire reste bornée (deux lots, quelle que soit la
 taille du fichier — compatible avec un conteneur de 356 Mo).
 

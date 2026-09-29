@@ -325,6 +325,25 @@ async def _traiter_page(
 # ---------------------------------------------------------------------------
 
 
+async def completer_index(*, etape: str = "index-completion") -> list[str]:
+    """Recrée les index canoniques absents et retire l'index temporaire. Rend les opérations.
+
+    Destiné à une table vide (juste après le TRUNCATE) : l'ALTER est alors instantané. C'est
+    ce qui garantit qu'un chargement index conservés ne tourne jamais sans `uk_pdi_ref`,
+    même après un chargement précédent interrompu qui l'aurait laissé absent.
+    """
+    presents = await index_presents()
+    operations = [f"DROP INDEX `{INDEX_DOUBLONS}`"] if INDEX_DOUBLONS in presents else []
+    operations += [
+        f"ADD {definition}"
+        for nom, definition in INDEX_SECONDAIRES.items()
+        if nom not in presents
+    ]
+    if operations:
+        await executer_ddl(f"ALTER TABLE {TABLE} " + ", ".join(operations), etape=etape)
+    return operations
+
+
 async def remettre_table_vide() -> bool:
     """Table vidée et index canoniques en place — un état propre, obtenu instantanément.
 
@@ -335,17 +354,7 @@ async def remettre_table_vide() -> bool:
     """
     try:
         await vider_table()
-        presents = await index_presents()
-        operations = [f"DROP INDEX `{INDEX_DOUBLONS}`"] if INDEX_DOUBLONS in presents else []
-        operations += [
-            f"ADD {definition}"
-            for nom, definition in INDEX_SECONDAIRES.items()
-            if nom not in presents
-        ]
-        if operations:
-            await executer_ddl(
-                f"ALTER TABLE {TABLE} " + ", ".join(operations), etape="remise-en-etat"
-            )
+        await completer_index(etape="remise-en-etat")
     except Exception:  # noqa: BLE001 - dernier filet, l'échec d'origine prime
         logger.exception("Erreur remise en état table %s", ctx(table=TABLE))
         return False

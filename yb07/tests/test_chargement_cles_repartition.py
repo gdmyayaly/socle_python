@@ -24,6 +24,14 @@ from tests.conftest import FausseBase, Successives
 
 EN_TETE = ";".join(module.COLONNES_CSV)
 
+
+@pytest.fixture(autouse=True)
+def _mode_retrait_des_index(monkeypatch):
+    """Les tests historiques décrivent le mode « index retirés puis reconstruits »
+    (CHARGEMENT_RETIRER_INDEX=true). Le mode par défaut, index conservés, a ses propres
+    tests en fin de fichier, qui repassent ce réglage à False."""
+    monkeypatch.setattr(module, "CHARGEMENT_RETIRER_INDEX", True)
+
 # Une ligne complète, telle qu'elle sort du fichier métier.
 LIGNE_PLEINE = (
     "100005554;6105149;1.0196987815888434;0.0;0.6444216483320571;BPF;372920;PDC1;"
@@ -1088,3 +1096,91 @@ def test_commande_finaliser_chargement():
     assert args.ignorer_erreurs and args.ecarter_sites_total_nul
     with pytest.raises(SystemExit):
         main(["finaliser-chargement", "1", "--all"])
+
+
+
+# --- Mode par défaut : index conservés, insertion par petits lots ----------------------
+
+
+@pytest.fixture
+def index_conserves(monkeypatch):
+    monkeypatch.setattr(module, "CHARGEMENT_RETIRER_INDEX", False)
+
+
+def base_index_en_place(**surcharges) -> FausseBase:
+    return base_nominale(
+        **{
+            "FROM information_schema.STATISTICS": [
+                {"nom": "PRIMARY"},
+                {"nom": "uk_pdi_ref"},
+                {"nom": "idx_cr_ref_actif"},
+            ],
+            **surcharges,
+        }
+    )
+
+
+def test_index_conserves_aucune_reconstruction(index_conserves, s3_bouchonne, brancher_base):
+    """Aucun ALTER long : pas de retrait, pas de reconstruction en fin de chargement."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = brancher_base(base_index_en_place())
+
+    rapport = charger(id_referentiel=1, fichier="f.csv")
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    assert base.scripts_joues() == ["chargement/purge"]
+    assert any("Index conservés pendant le chargement" in c.libelle for c in rapport.controles)
+
+
+def test_index_absent_recree_sur_table_vide(index_conserves, s3_bouchonne, brancher_base):
+    """Un chargement précédent interrompu a laissé uk_pdi_ref absent : il est recréé juste
+    après le TRUNCATE (instantané), avant la première ligne."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = brancher_base(
+        base_index_en_place(
+            **{
+                "FROM information_schema.STATISTICS": [
+                    {"nom": "PRIMARY"},
+                    {"nom": "idx_cr_ref_actif"},
+                    {"nom": "idx_cr_pdi_doublons"},
+                ]
+            }
+        )
+    )
+
+    charger(id_referentiel=1, fichier="f.csv")
+
+    assert base.scripts_joues() == ["chargement/purge", "chargement/index-completion"]
+    completion = base.texte_du_script("index-completion")
+    assert "ADD UNIQUE KEY `uk_pdi_ref`" in completion
+    assert "DROP INDEX `idx_cr_pdi_doublons`" in completion
+    assert "idx_cr_ref_actif" not in completion  # déjà présent : pas recréé
+
+
+def test_index_conserves_doublon_avec_son_numero_de_ligne(
+    index_conserves, s3_bouchonne, brancher_base
+):
+    """Index unique en place : le doublon est rejeté à l'insertion, ligne à ligne, avec son
+    numéro de ligne — plus précis que la détection en fin de chargement."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_PLEINE))
+    base = brancher_base(BaseAvecDoublon(base_index_en_place().reponses))
+
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    doublon = next(a for a in rapport.avertissements if "doublon de PDI" in a)
+    assert doublon.startswith("Ligne 3 :")
+    assert base.pdi_inseres == {100005554}
+
+
+def test_index_conserves_echec_en_cours_ne_touche_pas_aux_index(
+    index_conserves, s3_bouchonne, brancher_base
+):
+    """Index jamais retirés : un échec n'appelle aucune remise en état."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_MAL_FORMEE))
+    base = brancher_base(base_index_en_place())
+
+    rapport = charger(id_referentiel=1, fichier="f.csv")
+
+    assert rapport.statut == ECHEC
+    assert base.scripts_joues() == ["chargement/purge"]

@@ -110,6 +110,11 @@ CHARGEMENT_MAX_REJETS_DETAILLES = _entier_positif("CHARGEMENT_MAX_REJETS_DETAILL
 # et index du chargement, index des clés, scripts `migration` et `correctif`. Sans borne, MySQL attend jusqu'à un an, et toutes les requêtes des autres
 # sessions (API) s'empilent derrière : mieux vaut échouer vite et relancer.
 CHARGEMENT_LOCK_WAIT_TIMEOUT = _entier_positif("CHARGEMENT_LOCK_WAIT_TIMEOUT", 60)
+# Retirer les index secondaires pendant le chargement, puis les reconstruire en une passe.
+# Plus rapide, mais la reconstruction finale est un ALTER de plusieurs minutes sur 24 M de
+# lignes : gourmand, et muet — exposé à une coupure réseau pour inactivité. Par défaut les
+# index restent en place : insertion par petits lots, plus lente, sans instruction longue.
+CHARGEMENT_RETIRER_INDEX = os.getenv("CHARGEMENT_RETIRER_INDEX", "false").strip().lower() == "true"
 
 # Initialisation des clés de répartition (commande `init`).
 #
