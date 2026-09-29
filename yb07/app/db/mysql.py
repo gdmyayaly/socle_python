@@ -3,6 +3,7 @@ exécution de scripts SQL (fichiers .sql)."""
 
 import asyncio
 import logging
+import socket
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,7 +24,9 @@ from app.config import (
     MYSQL_USER_WRITE,
     MYSQL_USER_READ,
     MYSQL_POOL_RECYCLE,
+    MYSQL_TCP_KEEPALIVE,
     MYSQL_POOL_SIZE,
+    MYSQL_SUIVI_INSTRUCTION,
     SQL_SCRIPT_WARN_SIZE,
 )
 from app.db.sql_script import (
@@ -45,6 +48,66 @@ logger = logging.getLogger(__name__)
 #   None   -> se connecter SANS schéma sélectionné
 #   "xxx"  -> schéma explicite
 _CONFIGURED_DB = ""
+
+
+def _activer_keepalive(conn: Any) -> None:
+    """Active les sondes TCP keepalive sur la socket d'une connexion (une seule fois).
+
+    Sans elles, une instruction longue (ALTER de reconstruction d'index, INSERT … SELECT de
+    24 M de lignes) laisse la connexion muette de bout en bout : un équipement réseau à délai
+    d'inactivité la coupe (« Connection reset by peer », erreur 2013), alors que MySQL, lui,
+    travaillait encore. Les options absentes de la plateforme sont ignorées.
+    """
+    if getattr(conn, "_yb07_keepalive", False):
+        return
+    transport = getattr(conn, "_writer", None)
+    sock = transport.get_extra_info("socket") if transport is not None else None
+    if sock is None:
+        return
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        for nom, valeur in (
+            ("TCP_KEEPIDLE", MYSQL_TCP_KEEPALIVE),
+            ("TCP_KEEPINTVL", max(5, MYSQL_TCP_KEEPALIVE // 2)),
+            ("TCP_KEEPCNT", 5),
+        ):
+            option = getattr(socket, nom, None)
+            if option is not None:
+                sock.setsockopt(socket.IPPROTO_TCP, option, valeur)
+    except OSError as erreur:
+        logger.debug("Keepalive TCP non activé %s", ctx(motif=str(erreur)))
+        return
+    try:
+        conn._yb07_keepalive = True
+    except AttributeError:  # pragma: no cover - objet sans __dict__
+        pass
+
+
+# Suivi d'une instruction longue, lu sur une autre connexion que la sienne.
+# PROCESSLIST : état et durée côté serveur, toujours disponible pour ses propres sessions.
+SUIVI_ETAT_SQL = """
+SELECT STATE AS etat, TIME AS secondes_serveur
+  FROM information_schema.PROCESSLIST
+ WHERE ID = %s
+"""
+# performance_schema : phase et avancement d'un ALTER InnoDB (lecture, tri, insertion…).
+# Vide si les instruments `stage/innodb/alter%` ou le consommateur `events_stages_current`
+# sont désactivés — c'est un réglage du serveur, pas du batch.
+SUIVI_ETAPE_SQL = """
+SELECT s.EVENT_NAME AS etape, s.WORK_COMPLETED AS fait, s.WORK_ESTIMATED AS estime
+  FROM performance_schema.events_stages_current s
+  JOIN performance_schema.threads t ON t.THREAD_ID = s.THREAD_ID
+ WHERE t.PROCESSLIST_ID = %s
+"""
+
+
+def _thread_id(conn: Any) -> int | None:
+    """Identifiant MySQL de la session (celui de SHOW PROCESSLIST), ou None."""
+    lire = getattr(conn, "thread_id", None)
+    try:
+        return int(lire()) if callable(lire) else None
+    except Exception:  # noqa: BLE001 - connexion factice ou fermée : pas de suivi fin
+        return None
 
 
 def _init_command() -> str:
@@ -148,6 +211,7 @@ class Database:
         for attempt in range(1, max_retries + 1):
             try:
                 async with pool.acquire() as conn:
+                    _activer_keepalive(conn)
                     async with conn.cursor() as cur:
                         await cur.execute(query, params)
                         return cur.rowcount
@@ -166,6 +230,7 @@ class Database:
         """Exécute une requête SELECT et retourne une seule ligne sous forme de dict."""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
+            _activer_keepalive(conn)
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(query, params)
                 return await cur.fetchone()
@@ -176,6 +241,7 @@ class Database:
         """Exécute une requête SELECT et retourne toutes les lignes sous forme de list[dict]."""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
+            _activer_keepalive(conn)
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(query, params)
                 return await cur.fetchall()
@@ -192,6 +258,7 @@ class Database:
         """
         pool = await self._ensure_pool()
         conn = await pool.acquire()
+        _activer_keepalive(conn)
         try:
             await conn.begin()
             yield _TransactionCursor(conn)
@@ -400,6 +467,7 @@ class Database:
                     init_command=_init_command(),
                     autocommit=autocommit,
                 )
+                _activer_keepalive(conn)
                 break
             except Exception as e:
                 logger.warning(
@@ -417,6 +485,56 @@ class Database:
             yield conn
         finally:
             await conn.ensure_closed()
+
+    async def _executer_avec_suivi(
+        self, conn, sql: str, label: str, index: int, apercu: str
+    ) -> int:
+        """Exécute une instruction ; si elle écrit, journalise son avancement pendant qu'elle
+        tourne (`Avancement instruction SQL`, toutes les `MYSQL_SUIVI_INSTRUCTION` s)."""
+        if not is_write(sql):
+            return await self._run_statement(conn, sql)
+        suivi = asyncio.ensure_future(self._suivre(conn, label, index, apercu))
+        try:
+            return await self._run_statement(conn, sql)
+        finally:
+            suivi.cancel()
+            await asyncio.gather(suivi, return_exceptions=True)
+
+    async def _suivre(self, conn, label: str, index: int, apercu: str) -> None:
+        """Boucle de suivi d'une instruction en cours. Ne lève jamais : le suivi est un
+        confort, il ne doit pas faire échouer ce qu'il observe."""
+        debut = time.perf_counter()
+        session = _thread_id(conn)
+        etapes_lisibles = session is not None
+        while True:
+            await asyncio.sleep(MYSQL_SUIVI_INSTRUCTION)
+            infos: dict[str, Any] = {}
+            if session is not None:
+                try:
+                    ligne = await self.fetch_one(SUIVI_ETAT_SQL, (session,)) or {}
+                    infos["etat"] = ligne.get("etat")
+                except Exception:  # noqa: BLE001 - voir docstring
+                    pass
+            if etapes_lisibles:
+                try:
+                    etape = await self.fetch_one(SUIVI_ETAPE_SQL, (session,)) or {}
+                except Exception:  # noqa: BLE001 - droits absents : on n'insiste pas
+                    etapes_lisibles = False
+                    etape = {}
+                if etape.get("etape"):
+                    infos["phase"] = str(etape["etape"]).rsplit("/", 1)[-1]
+                    if etape.get("estime"):
+                        infos["pct"] = round(100 * etape["fait"] / etape["estime"], 1)
+            logger.info(
+                "Avancement instruction SQL %s",
+                ctx(
+                    source=label,
+                    index=index,
+                    apercu=apercu,
+                    **infos,
+                    duration_ms=round((time.perf_counter() - debut) * 1000, 1),
+                ),
+            )
 
     async def _run_statement(self, conn, sql: str) -> int:
         """Exécute une instruction unique sur la connexion du script."""
@@ -535,7 +653,9 @@ class Database:
 
                         t0 = time.perf_counter()
                         try:
-                            entry.rowcount = await self._run_statement(conn, sql)
+                            entry.rowcount = await self._executer_avec_suivi(
+                                conn, sql, label, i, entry.preview
+                            )
                         except Exception as e:
                             entry.error = str(e)
                             entry.duration_ms = (time.perf_counter() - t0) * 1000

@@ -203,11 +203,33 @@ async def reconstruire_index(
     debut = time.perf_counter()
     logger.info("Début reconstruction index %s", ctx(table=TABLE, ecarter=ecarter))
 
-    await executer_ddl(
-        f"ALTER TABLE {TABLE} ADD {INDEX_SECONDAIRES['idx_cr_ref_actif']}, "
-        f"ADD KEY `{INDEX_DOUBLONS}` (`id_pdi`)",
-        etape="index-construction",
-    )
+    # Reprenable : seul ce qui manque est construit. Après une coupure de connexion, MySQL a
+    # pu terminer un ALTER que le batch n'a pas vu finir — le refaire échouerait (1061).
+    presents = await index_presents()
+    if "uk_pdi_ref" in presents:
+        # L'index unique est déjà là : aucun doublon possible, il ne reste qu'à ranger.
+        operations = [f"DROP INDEX `{INDEX_DOUBLONS}`"] if INDEX_DOUBLONS in presents else []
+        if "idx_cr_ref_actif" not in presents:
+            operations.append(f"ADD {INDEX_SECONDAIRES['idx_cr_ref_actif']}")
+        if operations:
+            await executer_ddl(
+                f"ALTER TABLE {TABLE} " + ", ".join(operations), etape="index-fin"
+            )
+        logger.info(
+            "Fin reconstruction index %s",
+            ctx(table=TABLE, reprise="index unique déjà en place"),
+        )
+        return Doublons()
+
+    operations = []
+    if "idx_cr_ref_actif" not in presents:
+        operations.append(f"ADD {INDEX_SECONDAIRES['idx_cr_ref_actif']}")
+    if INDEX_DOUBLONS not in presents:
+        operations.append(f"ADD KEY `{INDEX_DOUBLONS}` (`id_pdi`)")
+    if operations:
+        await executer_ddl(
+            f"ALTER TABLE {TABLE} " + ", ".join(operations), etape="index-construction"
+        )
     _avancement("index secondaires et index temporaire construits", debut)
 
     doublons = Doublons()

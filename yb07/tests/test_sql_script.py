@@ -695,3 +695,105 @@ def test_plusieurs_scripts_une_connexion_une_transaction(monkeypatch):
     assert evenements[0] == "BEGIN" and evenements[-1] == "COMMIT"
     assert evenements.count("BEGIN") == 1 and evenements.count("COMMIT") == 1
     assert [s.source for s in resultat.statements] == ["v@0", "v@0", "v@1", "v@1", "v@2", "v@2"]
+
+
+# --- Suivi des instructions longues -------------------------------------------
+
+
+def _runner_lent(monkeypatch, *, duree=0.05, etape=None, etape_refusee=False):
+    """Runner réel dont l'instruction dure `duree` s ; suivi toutes les 10 ms."""
+    from app.db import mysql
+
+    monkeypatch.setattr(mysql, "MYSQL_SUIVI_INSTRUCTION", 0.01)
+    db = Database(host="h")
+
+    class Connexion:
+        def thread_id(self):
+            return 42
+
+    @asynccontextmanager
+    async def connexion(database, autocommit):
+        yield Connexion()
+
+    async def jouer(conn, sql):
+        await asyncio.sleep(duree)
+        return 1
+
+    async def lire(query, params=None):
+        assert params == (42,)  # la session suivie est celle qui exécute l'instruction
+        if "events_stages_current" in query:
+            if etape_refusee:
+                raise RuntimeError("SELECT command denied")
+            return etape
+        return {"etat": "altering table", "secondes_serveur": 12}
+
+    monkeypatch.setattr(db, "_script_connection", connexion)
+    monkeypatch.setattr(db, "_run_statement", jouer)
+    monkeypatch.setattr(db, "fetch_one", lire)
+    return db
+
+
+def _avancements(caplog):
+    return [r.getMessage() for r in caplog.records if "Avancement instruction SQL" in r.getMessage()]
+
+
+def test_suivi_d_un_alter_avec_son_avancement(monkeypatch, caplog):
+    etape = {"etape": "stage/innodb/alter table (merge sort)", "fait": 40, "estime": 160}
+    db = _runner_lent(monkeypatch, etape=etape)
+
+    with caplog.at_level(logging.INFO, logger="app.db.mysql"):
+        asyncio.run(
+            db.execute_sql_script(
+                "ALTER TABLE t ADD KEY k (a);", label="index", transactional=False
+            )
+        )
+
+    avancements = _avancements(caplog)
+    assert avancements
+    assert "etat=altering table" in avancements[0]
+    assert "phase=alter table (merge sort)" in avancements[0]
+    assert "pct=25.0" in avancements[0]
+    assert "source=index" in avancements[0]
+
+
+def test_suivi_sans_droits_sur_performance_schema(monkeypatch, caplog):
+    """Sans accès aux étapes, le suivi continue avec l'état et la durée."""
+    db = _runner_lent(monkeypatch, etape_refusee=True)
+
+    with caplog.at_level(logging.INFO, logger="app.db.mysql"):
+        resultat = asyncio.run(
+            db.execute_sql_script("INSERT INTO t VALUES (1);", label="s", transactional=False)
+        )
+
+    assert resultat.ok
+    avancements = _avancements(caplog)
+    assert avancements and "etat=altering table" in avancements[0]
+    assert "pct=" not in avancements[0]
+
+
+def test_pas_de_suivi_pour_une_instruction_qui_n_ecrit_pas(monkeypatch, caplog):
+    db = _runner_lent(monkeypatch)
+
+    with caplog.at_level(logging.INFO, logger="app.db.mysql"):
+        asyncio.run(db.execute_sql_script("SET @a := 1;", label="s", transactional=False))
+
+    assert _avancements(caplog) == []
+
+
+def test_le_suivi_s_arrete_avec_l_instruction(monkeypatch, caplog):
+    """Une instruction en erreur arrête son suivi : aucune tâche ne survit au script."""
+    db = _runner_lent(monkeypatch, duree=0.03)
+
+    async def echoue(conn, sql):
+        await asyncio.sleep(0.03)
+        raise RuntimeError("2013 Lost connection")
+
+    monkeypatch.setattr(db, "_run_statement", echoue)
+
+    async def jouer():
+        with pytest.raises(Exception):
+            await db.execute_sql_script("ALTER TABLE t ADD KEY k (a);", label="s", transactional=False)
+        restantes = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        assert restantes == []
+
+    asyncio.run(jouer())

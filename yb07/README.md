@@ -185,6 +185,8 @@ de vérité en cas de doute.
 | `SGBD_MAX_RETRIES` | `3` | Nombre de tentatives de connexion |
 | `SGBD_RETRY_DELAY` | `1.0` | Délai de base entre tentatives (backoff linéaire : `délai × tentative`) |
 | `SGBD_COLLATION` | `""` | Classement des connexions. Vide = celui de la base (`@@collation_database`). Évite l'erreur 1267 « Illegal mix of collations » : pymysql ouvre en `utf8mb4_general_ci`, les tables sont en `utf8mb4_0900_ai_ci`. |
+| `SGBD_TCP_KEEPALIVE` | `60` | Sondes TCP keepalive sur chaque connexion MySQL (secondes d'inactivité avant la première sonde). Pendant un `ALTER` ou un `INSERT … SELECT` de plusieurs minutes, MySQL n'envoie rien : un proxy, répartiteur ou pare-feu à délai d'inactivité (souvent 300 s) couperait la connexion (erreur 2013). À garder sous ce délai. |
+| `SGBD_SUIVI_INSTRUCTION` | `30` | Pendant une écriture longue d'un script (`ALTER`, `INSERT … SELECT`), une ligne `Avancement instruction SQL` toutes les N s : état MySQL (`etat=altering table`…) et, si `performance_schema` l'expose, phase et pourcentage de l'`ALTER` (`phase=alter table (merge sort)`, `pct=42.5`). Lu sur une autre connexion : ne protège pas de la coupure réseau (c'est `SGBD_TCP_KEEPALIVE`). |
 | `MYSQL_POOL_RECYCLE` | `600` | Âge maximal (s) d'une connexion inactive du pool avant renouvellement. À garder sous le `wait_timeout` du serveur : pendant une étape longue, la connexion de lecture reste inactive, et MySQL la couperait. |
 | `MYSQL_POOL_SIZE` | `10` | Taille maximale de chaque pool. Toute valeur inexploitable est ramenée au défaut : un batch d'exploitation ne refuse pas de démarrer pour une variable mal saisie. |
 | `SQL_SCRIPT_WARN_SIZE` | `10485760` | Taille (octets) au-delà de laquelle un script `.sql` déclenche un avertissement |
@@ -249,6 +251,7 @@ python -m app.main <commande> --help   # options d'une commande
 | `s3-check` | Configuration S3, test d'accès, et contenu du bucket | `--prefixe`, `--recursif`, `--limite` |
 | `charger-cles-repartition` | Charge `trppu_cles_repartition` depuis un CSV déposé sur S3 | `id_referentiel` (obligatoire), `--fichier` |
 | `charger-cles-repartition-local` | Même chargement, depuis un CSV du disque local | `id_referentiel`, `chemin` (obligatoires) |
+| `finaliser-chargement` | Reprend un chargement interrompu **après** l'insertion des lignes : index, doublons, sites à total nul, contrôles — sans relire le fichier | `id_referentiel`, `--skip-errors`, `--all` |
 | `init` | Enchaîne toute la chaîne d'initialisation des clés de répartition (DSR-696 à DSR-699) | `id_referentiel` (obligatoire), `--depuis`/`--etape`, `--fichier`, `--commentaire`, `--libelle`, `--dry-run`, `--sans-controles-longs` |
 
 Options communes à toutes les commandes :
@@ -549,6 +552,26 @@ ligne de localisation devient `Fichier '…' présent en local (… octets)`.
 
 En Docker, le fichier doit être visible dans le conteneur : monter son dossier en volume
 (`-v /chemin/hote:/data`) et passer `/data/cles.csv`.
+
+### `finaliser-chargement` — reprendre sans recharger
+
+```bash
+python -m app.main finaliser-chargement 1 --skip-errors --all
+```
+
+Une fois le fichier **entièrement** chargé, un échec de la suite (coupure de connexion pendant
+la reconstruction des index, verrou non obtenu, doublons en mode strict…) **ne vide plus la
+table** : le rapport l'indique (`REPRENDRE_PAR = finaliser-chargement`) et donne la commande,
+avec les mêmes options que le chargement interrompu. Elle reconstruit les index qui manquent
+— y compris quand MySQL a terminé un `ALTER` que le batch n'a pas vu finir —, traite les
+doublons (`--skip-errors`), écarte les sites à total nul (`--all`) et rejoue les contrôles
+finaux. Relancée sur un chargement complet, elle ne refait rien.
+
+Tant que le chargement n'est pas finalisé, `init --depuis migration` (et au-delà) refuse de
+démarrer.
+
+Un chargement interrompu **pendant** l'insertion, lui, vide la table et recrée ses index : un
+chargement partiel n'a pas de valeur, il se relance.
 
 ### `init` — initialiser les clés de répartition
 
@@ -883,7 +906,8 @@ métier vit donc dans `app_message`, sous la grammaire
   (`INSERT`, `UPDATE`, `DELETE`, DDL, `EXECUTE`) a sa ligne `Fin instruction SQL` avec
   `source`, `index`, `apercu`, `lignes` et `duration_ms` : le suivi de ce que la chaîne a
   réellement fait. `Fin script SQL` rappelle `sources`, le nombre d'instructions jouées,
-  les `selects_non_joues` et le `commit`.
+  les `selects_non_joues` et le `commit`. Pendant une écriture longue, `Avancement
+  instruction SQL` toutes les `SGBD_SUIVI_INSTRUCTION` secondes (état, phase, pourcentage).
 - Le chargement : purge, retrait des index (`Fin retrait index`), avancement tous les
   `CHARGEMENT_LOG_TOUTES_LES` lignes avec le débit, chaque ligne écartée par
   `--skip-errors` (`Rejet ligne clés de répartition`, plafonné), reconstruction des index

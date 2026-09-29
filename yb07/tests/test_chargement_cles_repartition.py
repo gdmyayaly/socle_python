@@ -20,7 +20,7 @@ import pytest
 from app.traitements import cles_repartition as module
 from app.erreurs import TraitementImpossible
 from app.traitements.rapport import ECHEC, SUCCES
-from tests.conftest import FausseBase
+from tests.conftest import FausseBase, Successives
 
 EN_TETE = ";".join(module.COLONNES_CSV)
 
@@ -56,12 +56,12 @@ def base_nominale(**surcharges) -> FausseBase:
         "SELECT COUNT(*) AS nb FROM trppu_cles_repartition": {"nb": 0},
         # Garde-fou du TRUNCATE : aucun autre référentiel dans la table.
         "WHERE id_referentiel <> %s LIMIT 1": None,
-        # Index présents avant le chargement : les deux index secondaires canoniques.
-        "FROM information_schema.STATISTICS": [
-            {"nom": "PRIMARY"},
-            {"nom": "uk_pdi_ref"},
-            {"nom": "idx_cr_ref_actif"},
-        ],
+        # Index présents : les canoniques avant le chargement, puis la seule clé primaire une
+        # fois les secondaires retirés.
+        "FROM information_schema.STATISTICS": Successives(
+            [{"nom": "PRIMARY"}, {"nom": "uk_pdi_ref"}, {"nom": "idx_cr_ref_actif"}],
+            [{"nom": "PRIMARY"}],
+        ),
         # Recherche des doublons avant de recréer l'index unique : aucun.
         "HAVING COUNT(*) > 1": [],
         # Sites à total nul (--skip-errors seulement) : aucun.
@@ -333,7 +333,8 @@ def test_le_traitement_ne_leve_jamais(monkeypatch, s3_bouchonne, brancher_base):
 
     assert rapport.statut == ECHEC
     assert "boom" in (rapport.erreur or "")
-    assert base.scripts_joues()[-1] == "chargement/purge"
+    # Chargement interrompu en cours de route : table vidée, index recréés.
+    assert base.scripts_joues()[-2:] == ["chargement/purge", "chargement/remise-en-etat"]
 
 
 # --- Source locale ----------------------------------------------------------
@@ -667,8 +668,9 @@ def test_doublon_identique_distingue_du_conflit(s3_bouchonne, brancher_base):
     assert any("doublon identique" in a for a in rapport.avertissements)
 
 
-def test_mode_strict_doublon_echoue_et_remet_la_table_en_etat(s3_bouchonne, brancher_base):
-    """Sans --skip-errors : échec, table vidée et index recréés — jamais laissée sans index."""
+def test_mode_strict_doublon_echoue_mais_conserve_les_donnees(s3_bouchonne, brancher_base):
+    """Fichier entièrement chargé : un échec ensuite ne vide plus la table, la reprise se
+    fait par finaliser-chargement, sans relire le fichier."""
     s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_CONFLIT_CHARGEMENT))
     base = brancher_base(
         base_avec_doublon_en_base(_ligne_en_base(1), _ligne_en_base(2, trafic="2.5"))
@@ -679,15 +681,18 @@ def test_mode_strict_doublon_echoue_et_remet_la_table_en_etat(s3_bouchonne, bran
     assert rapport.statut == ECHEC
     assert "1 PDI en doublon" in " ".join(rapport.motifs)
     assert not base.a_ecrit("DELETE FROM trppu_cles_repartition WHERE id IN")
-    # Retrait, construction, puis purge de remise en état ; jamais d'index unique posé.
+    # Pas de purge après coup : ni index unique posé, ni table vidée.
     assert base.scripts_joues() == [
         "chargement/purge",
         "chargement/index-retrait",
         "chargement/index-construction",
-        "chargement/purge",
     ]
-    assert rapport.etats["LIGNES_CHARGEES"] == 0
-    assert any("table a été vidée" in a for a in rapport.avertissements)
+    assert rapport.etats["LIGNES_CHARGEES"] == 2
+    assert rapport.etats["REPRENDRE_PAR"] == "finaliser-chargement"
+    assert any(
+        "données sont CONSERVÉES" in a and "finaliser-chargement 1" in a
+        for a in rapport.avertissements
+    )
 
 
 def test_erreur_en_cours_de_chargement_remet_la_table_en_etat(s3_bouchonne, brancher_base):
@@ -947,3 +952,139 @@ def test_option_all(commande):
     with pytest.raises(SystemExit) as sortie:
         main([*commande, "--all"])
     assert sortie.value.code == 2
+
+
+# --- Reprise : finaliser-chargement ------------------------------------------
+
+
+def finaliser(**kwargs):
+    return asyncio.run(module.finaliser_chargement(1, **kwargs))
+
+
+def base_a_finaliser(**surcharges) -> FausseBase:
+    """Lignes en base, index secondaires absents : un chargement coupé après l'insertion."""
+    return base_nominale(
+        **{
+            "FROM information_schema.STATISTICS": [{"nom": "PRIMARY"}],
+            "AS nb_actives": {"nb_lignes": 24, "nb_actives": 20},
+            **surcharges,
+        }
+    )
+
+
+@pytest.fixture
+def brancher(brancher_base):
+    def poser(base):
+        base.reponses["SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel"] = {
+            "ok": 1
+        }
+        return brancher_base(base)
+
+    return poser
+
+
+def test_finalisation_reconstruit_sans_relire_le_fichier(monkeypatch, brancher):
+    def interdit(*args, **kwargs):
+        raise AssertionError("le fichier ne doit pas être relu")
+
+    monkeypatch.setattr(module.s3, "ouvrir_objet", interdit)
+    base = brancher(base_a_finaliser())
+
+    rapport = finaliser()
+
+    assert rapport.statut == SUCCES, (rapport.motifs, rapport.erreur)
+    assert rapport.titre == module.TITRE_FINALISATION
+    assert base.scripts_joues() == ["chargement/index-construction", "chargement/index-unique"]
+    assert not base.a_ecrit("TRUNCATE")
+    assert rapport.etats["LIGNES_CHARGEES"] == 24  # la base fait foi
+    assert rapport.etats["LIGNES_ACTIVES"] == 20
+
+
+def test_finalisation_avec_all_ecarte_les_sites_nuls(brancher):
+    base = brancher(
+        base_a_finaliser(**{"HAVING SUM(trafic_colis) = 0": [_site_nul("122200")]})
+    )
+
+    rapport = finaliser(ignorer_erreurs=True, ecarter_sites_total_nul=True)
+
+    assert rapport.etats["SITES_TOTAL_NUL_ECARTES"] == 1
+    assert base.a_ecrit("co_regate_site IN")
+
+
+def test_finalisation_sans_ligne_en_base(brancher_base):
+    base = brancher_base(base_a_finaliser())
+    base.reponses["SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel"] = None
+
+    rapport = finaliser()
+
+    assert rapport.statut == ECHEC
+    assert "rien à finaliser" in " ".join(rapport.motifs)
+    assert base.scripts_joues() == []
+
+
+def test_finalisation_en_echec_rappelle_la_commande_de_reprise(brancher):
+    base = base_a_finaliser()
+    base.echecs_scripts = {
+        "index-construction": pymysql.err.OperationalError(2013, "Lost connection")
+    }
+    brancher(base)
+
+    rapport = finaliser(ignorer_erreurs=True, ecarter_sites_total_nul=True)
+
+    assert rapport.statut == ECHEC
+    assert any(
+        "finaliser-chargement 1 --skip-errors --all" in a for a in rapport.avertissements
+    )
+    assert not base.a_ecrit("TRUNCATE")
+
+
+def test_reconstruction_reprise_index_unique_deja_pose(brancher):
+    """MySQL a pu finir l'ALTER que le batch n'a pas vu terminer : rien à refaire, sauf
+    ranger l'index temporaire."""
+    base = brancher(
+        base_a_finaliser(
+            **{
+                "FROM information_schema.STATISTICS": [
+                    {"nom": "PRIMARY"},
+                    {"nom": "uk_pdi_ref"},
+                    {"nom": "idx_cr_ref_actif"},
+                    {"nom": "idx_cr_pdi_doublons"},
+                ]
+            }
+        )
+    )
+
+    rapport = finaliser()
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    assert base.scripts_joues() == ["chargement/index-fin"]
+    assert "DROP INDEX `idx_cr_pdi_doublons`" in base.texte_du_script("index-fin")
+
+
+def test_reconstruction_ne_refait_pas_un_index_deja_construit(brancher):
+    base = brancher(
+        base_a_finaliser(
+            **{
+                "FROM information_schema.STATISTICS": [
+                    {"nom": "PRIMARY"},
+                    {"nom": "idx_cr_ref_actif"},
+                ]
+            }
+        )
+    )
+
+    finaliser()
+
+    construction = base.texte_du_script("index-construction")
+    assert "idx_cr_ref_actif" not in construction
+    assert "idx_cr_pdi_doublons" in construction
+
+
+def test_commande_finaliser_chargement():
+    from app.main import build_parser, cmd_finaliser_chargement, main
+
+    args = build_parser().parse_args(["finaliser-chargement", "1", "--skip-errors", "--all"])
+    assert args.handler is cmd_finaliser_chargement
+    assert args.ignorer_erreurs and args.ecarter_sites_total_nul
+    with pytest.raises(SystemExit):
+        main(["finaliser-chargement", "1", "--all"])

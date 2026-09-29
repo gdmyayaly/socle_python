@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | `charger_cles_repartition` | `charger-cles-repartition` | Charge `trppu_cles_repartition` depuis un CSV déposé sur S3 |
 | `charger_cles_repartition(..., chemin_local=...)` | `charger-cles-repartition-local` | Idem, depuis un CSV du disque local |
+| `finaliser_chargement` | `finaliser-chargement` | Reprend un chargement interrompu après l'insertion des lignes, sans relire le fichier |
 | `initialiser_cles_repartition` | `init` | Enchaîne la chaîne DSR-696→699 : chargement, migration, agrégats, versions, clés |
 
 Chaque traitement retourne un `Rapport`. **Aucun ne lève ni n'écrit sur la sortie
@@ -12,7 +13,7 @@ qui en déduit le code de retour du processus.
 """
 
 from app.erreurs import TraitementImpossible
-from app.traitements.cles_repartition import charger_cles_repartition
+from app.traitements.cles_repartition import charger_cles_repartition, finaliser_chargement
 from app.traitements.initialisation import ETAPES, initialiser_cles_repartition
 from app.traitements.rapport import Controle, Rapport
 
@@ -22,5 +23,6 @@ __all__ = [
     "Rapport",
     "TraitementImpossible",
     "charger_cles_repartition",
+    "finaliser_chargement",
     "initialiser_cles_repartition",
 ]

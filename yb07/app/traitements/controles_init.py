@@ -58,6 +58,16 @@ LIGNES_PRESENTES_SQL = """
 SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel = %s LIMIT 1
 """
 
+# Chargement finalisé : l'index unique en place, l'index temporaire des doublons retiré. Un
+# chargement interrompu après l'insertion laisse la table sans eux ; poursuivre la chaîne
+# calculerait sur des doublons possibles (`finaliser-chargement` les traite).
+CHARGEMENT_FINALISE_SQL = """
+SELECT COALESCE(SUM(INDEX_NAME = 'uk_pdi_ref'), 0)          AS chargement_uk,
+       COALESCE(SUM(INDEX_NAME = 'idx_cr_pdi_doublons'), 0) AS chargement_tmp
+  FROM information_schema.STATISTICS
+ WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'trppu_cles_repartition'
+"""
+
 INDEX_PRESENTS_SQL = """
 SELECT DISTINCT INDEX_NAME AS nom
   FROM information_schema.STATISTICS
@@ -233,6 +243,15 @@ async def verifier_prerequis(
 async def _verifier_lignes(rapport: Rapport, db, id_referentiel: int) -> bool:
     presente = await db.fetch_one(LIGNES_PRESENTES_SQL, (id_referentiel,))
     if presente:
+        index = await db.fetch_one(CHARGEMENT_FINALISE_SQL) or {}
+        if not index.get("chargement_uk") or index.get("chargement_tmp"):
+            return _refuser(
+                rapport,
+                id_referentiel,
+                f"Chargement du référentiel {id_referentiel} non finalisé (index uk_pdi_ref "
+                "absent ou index temporaire des doublons encore présent) : lancer "
+                f"« finaliser-chargement {id_referentiel} » avant de poursuivre.",
+            )
         rapport.ok(f"Référentiel {id_referentiel} chargé")
         return True
     return _refuser(

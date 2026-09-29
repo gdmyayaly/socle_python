@@ -70,3 +70,49 @@ def test_classement_impose_par_la_configuration(monkeypatch):
 
     monkeypatch.setattr(mysql, "MYSQL_COLLATION", "utf8mb4_0900_ai_ci")
     assert mysql._init_command() == "SET collation_connection = 'utf8mb4_0900_ai_ci'"
+
+
+class _FausseSocket:
+    def __init__(self):
+        self.options = []
+
+    def setsockopt(self, niveau, option, valeur):
+        self.options.append((niveau, option, valeur))
+
+
+class _FausseConnexionReseau:
+    def __init__(self):
+        self.socket = _FausseSocket()
+
+        class Transport:
+            def get_extra_info(inner, nom):
+                return self.socket if nom == "socket" else None
+
+        self._writer = Transport()
+
+
+def test_keepalive_tcp_active_une_seule_fois():
+    """Sans sondes, un ALTER de plusieurs minutes laisse la connexion muette : un équipement
+    réseau à délai d'inactivité la coupe (erreur 2013), MySQL travaillant encore."""
+    import socket
+
+    from app.db import mysql
+
+    conn = _FausseConnexionReseau()
+    mysql._activer_keepalive(conn)
+    mysql._activer_keepalive(conn)  # idempotent
+
+    options = conn.socket.options
+    assert (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1) in options
+    assert options.count((socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)) == 1
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        assert (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, mysql.MYSQL_TCP_KEEPALIVE) in options
+
+
+def test_keepalive_ignore_une_connexion_sans_socket():
+    from app.db import mysql
+
+    class SansTransport:
+        _writer = None
+
+    mysql._activer_keepalive(SansTransport())  # ne lève pas

@@ -277,8 +277,24 @@ client MySQL avec yb05/db/suivi.sql.
 5. EN CAS D'ECHEC
 ------------------------------------------------------------------------
 
-Le rapport indique "REPRENDRE_A = <etape>". Corriger la cause, puis
-reprendre a cette etape et enchainer les suivantes :
+Si le rapport indique "REPRENDRE_PAR = finaliser-chargement" : le
+fichier est entierement charge, seule la suite a echoue (index,
+doublons, sites a total nul). Les donnees sont CONSERVEES. Reprendre
+sans recharger, avec les memes options que le chargement :
+
+      command:
+        - python
+        - '-m'
+        - app.main
+        - finaliser-chargement
+        - '1'
+        - '--skip-errors'
+        - '--all'
+
+puis reprendre la chaine : init 1 --depuis migration.
+
+Sinon, le rapport indique "REPRENDRE_A = <etape>". Corriger la cause,
+puis reprendre a cette etape et enchainer les suivantes :
 
       command:
         - python

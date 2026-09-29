@@ -39,7 +39,9 @@ def _lectures(**surcharges) -> FausseBase:
     surcharges permettent à un test de casser un seul point de la chaîne.
     """
     reponses = {
-        # Prérequis
+        # Prérequis. « Chargement finalisé » en premier : sa requête contient aussi le
+        # fragment des index présents, la doublure rend la première réponse qui correspond.
+        "AS chargement_uk": {"chargement_uk": 2, "chargement_tmp": 0},
         "SELECT 1 AS ok FROM trppu_cles_repartition": {"ok": 1},
         "FROM information_schema.STATISTICS": [
             {"nom": "uq_site_trafic"},
@@ -958,3 +960,16 @@ def test_all_transmis_au_chargement(monkeypatch):
     _lancer(etape="chargement", ignorer_erreurs=True, ecarter_sites_total_nul=True)
 
     assert recu == {"ignorer": True, "ecarter": True}
+
+
+def test_chaine_refusee_si_le_chargement_n_est_pas_finalise():
+    """Lignes en base mais index unique absent : poursuivre calculerait sur des doublons
+    possibles. La reprise passe par finaliser-chargement."""
+    lectures = _lectures(**{"AS chargement_uk": {"chargement_uk": 0, "chargement_tmp": 1}})
+    ecritures = _ecritures(lecture_seule=True)
+
+    rapport = _lancer(db_lecture=lectures, db_ecriture=ecritures, depuis="migration")
+
+    assert not rapport.reussi
+    assert "finaliser-chargement 1" in " ".join(rapport.motifs)
+    assert ecritures.scripts_joues() == []

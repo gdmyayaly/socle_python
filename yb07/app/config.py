@@ -54,6 +54,15 @@ MYSQL_COLLATION = _collation if _collation.replace("_", "").isalnum() else ""
 # étape longue, la connexion de lecture reste inactive : si MySQL la coupe (`wait_timeout`),
 # la requête suivante échouerait (« server has gone away »). À garder sous `wait_timeout`.
 MYSQL_POOL_RECYCLE = _entier_positif("MYSQL_POOL_RECYCLE", 600)
+# Keepalive TCP (secondes d'inactivité avant la première sonde). Pendant un ALTER ou un
+# INSERT … SELECT de plusieurs minutes, MySQL n'envoie rien : un équipement réseau entre le
+# pod et la base (proxy, répartiteur, pare-feu) peut juger la connexion morte et la couper
+# — typiquement au bout de 300 s. Les sondes la maintiennent visible. À garder sous ce délai.
+MYSQL_TCP_KEEPALIVE = _entier_positif("SGBD_TCP_KEEPALIVE", 60)
+# Suivi des instructions longues des scripts (secondes entre deux lignes d'avancement) :
+# état MySQL de l'instruction et, si performance_schema l'expose, avancement de l'ALTER.
+# Lu sur une autre connexion : il ne maintient PAS en vie celle qui exécute l'instruction.
+MYSQL_SUIVI_INSTRUCTION = _entier_positif("SGBD_SUIVI_INSTRUCTION", 30)
 
 # Requêtes utilitaires pour les checks
 HEALTH_CHECK_QUERY = "SELECT 1 AS ok"
