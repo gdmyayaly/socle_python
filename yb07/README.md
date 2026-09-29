@@ -222,7 +222,7 @@ acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
 | `CSV_ENCODAGE` | `utf-8-sig` | Décode aussi l'UTF-8 nu et absorbe le BOM |
 | `CHARGEMENT_TAILLE_LOT` | `5000` | Nombre de lignes par lot inséré — chaque lot est commité séparément |
 | `CHARGEMENT_LOG_TOUTES_LES` | `100000` | Fréquence des lignes de log d'avancement, en lignes chargées |
-| `CHARGEMENT_LOCK_WAIT_TIMEOUT` | `60` | Attente maximale (s) d'un verrou pour le `TRUNCATE` et les `ALTER` d'index du chargement. Au-delà, échec lisible plutôt que de bloquer les requêtes de l'API derrière lui. |
+| `CHARGEMENT_LOCK_WAIT_TIMEOUT` | `60` | Attente maximale (s) d'un verrou pour tout le DDL de `yb07` : `TRUNCATE` et index du chargement, index des clés, scripts `migration` et `correctif`. Au-delà, échec lisible plutôt que de bloquer les requêtes de l'API derrière lui. |
 | `CHARGEMENT_MAX_REJETS_DETAILLES` | `100` | Avec `--skip-errors` : lignes écartées détaillées dans le rapport et les logs ; au-delà, elles sont seulement comptées |
 | `INIT_LOG_TOUS_LES_SITES` | `50` | `init`, étape `versions` : fréquence des lignes d'avancement, en sites traités |
 | `INIT_MAX_ANOMALIES_LOGUEES` | `50` | `init`, étape `cles` : plafond des sommes de clés hors tolérance journalisées une à une. Le compte total est toujours rendu. |

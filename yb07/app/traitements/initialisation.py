@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.config import INIT_LOG_TOUS_LES_SITES
+from app.config import CHARGEMENT_LOCK_WAIT_TIMEOUT, INIT_LOG_TOUS_LES_SITES
 from app.db.mysql import db_read, db_write
 from app.db.sql_parametres import injecter_parametres
 from app.db.sql_script import SqlScriptError, statement_preview
@@ -75,6 +75,9 @@ SCRIPTS: dict[str, tuple[str, bool]] = {
     VERSIONS: ("DSR-698_version_cle.sql", True),
     CLES: ("DSR-699_cles_calculees.sql", True),
 }
+
+#: Étapes dont le script modifie le schéma (ALTER) : leur attente de verrou est bornée.
+SCRIPTS_DDL = frozenset({MIGRATION, CORRECTIF})
 
 #: Prérequis à vérifier selon l'étape de **départ**. Ils ne portent que sur le point d'entrée :
 #: les prérequis des étapes suivantes sont produits par les précédentes au cours du même passage.
@@ -338,10 +341,18 @@ def _message_script(erreur: SqlScriptError) -> str:
     et les logs vers Kibana. On s'en tient à l'aperçu tronqué, comme le socle le fait lui-même.
     """
     apercu = statement_preview(erreur.statement) if erreur.statement else ""
+    args = getattr(erreur.original, "args", ())
+    conseil = (
+        f" — verrou non obtenu en {CHARGEMENT_LOCK_WAIT_TIMEOUT} s : une autre session "
+        "(client SQL resté en transaction, API) utilise la table. La libérer "
+        "(SHOW FULL PROCESSLIST), puis relancer l'étape."
+        if args and args[0] == 1205
+        else ""
+    )
     return (
         f"Échec de {erreur.source}, instruction {erreur.index}"
         + (f" [{apercu}]" if apercu else "")
-        + f" : {erreur.original}"
+        + f" : {erreur.original}{conseil}"
     )
 
 
@@ -361,6 +372,11 @@ async def _executer_script(
     """
     fichier, transactional = SCRIPTS[nom]
     texte = injecter_parametres(etat.scripts[nom], parametres)
+    if nom in SCRIPTS_DDL:
+        # Un ALTER qui attend un verrou (client SQL resté en transaction sur la table, API)
+        # attendrait jusqu'à un an, et toutes les requêtes des autres sessions sur la table
+        # s'empileraient derrière lui. Borné, il échoue en clair et se rejoue.
+        texte = f"SET SESSION lock_wait_timeout = {CHARGEMENT_LOCK_WAIT_TIMEOUT};\n{texte}"
     return await etat.db_ecriture.execute_sql_script(
         texte,
         label=f"db/{fichier}{suffixe_label}",

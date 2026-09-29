@@ -621,8 +621,10 @@ def test_dry_run_decoupe_bien_les_cinq_scripts(chargement_reussi):
     instructions = {
         script["label"]: script["resultat"].total_count for script in ecritures.scripts
     }
-    assert instructions["db/DSR-696-699_migration.sql"] == 17
-    assert instructions["db/fix_error.sql"] == 9
+    # + 1 pour migration et correctif : le `SET SESSION lock_wait_timeout` injecté en tête des
+    # scripts de schéma (les fichiers eux-mêmes gardent 17 et 9 instructions).
+    assert instructions["db/DSR-696-699_migration.sql"] == 18
+    assert instructions["db/fix_error.sql"] == 10
     assert instructions["db/DSR-696_site_trafic.sql"] == 9
     assert instructions["db/DSR-699_cles_calculees.sql"] == 11
 
@@ -837,3 +839,38 @@ def test_les_scripts_de_la_chaine_ne_jouent_pas_leurs_select_d_affichage(
     assert non_joues and all(apercu.upper().startswith("SELECT") for apercu in non_joues)
     joues = [st.preview for st in cles["resultat"].statements if not st.skipped]
     assert any(apercu.startswith("INSERT INTO trppu_cles_repartition_calcule") for apercu in joues)
+
+
+def test_scripts_de_schema_attente_de_verrou_bornee():
+    """Un ALTER bloqué par une transaction ouverte (client SQL) attendrait jusqu'à un an."""
+    ecritures = _ecritures()
+
+    _lancer(db_ecriture=ecritures, etape="correctif")
+
+    assert ecritures.texte_du_script("fix_error").startswith("SET SESSION lock_wait_timeout = ")
+
+
+def test_scripts_de_donnees_sans_injection():
+    ecritures = _ecritures()
+
+    _lancer(db_ecriture=ecritures, etape="agregats")
+
+    assert not ecritures.texte_du_script("DSR-696_site").startswith("SET SESSION lock_wait")
+
+
+def test_verrou_non_obtenu_explique_dans_le_rapport():
+    import pymysql
+
+    echec = SqlScriptError(
+        "boum",
+        source="db/fix_error.sql",
+        index=7,
+        statement="EXECUTE stmt",
+        original=pymysql.err.OperationalError(1205, "Lock wait timeout exceeded"),
+    )
+    ecritures = _ecritures(echecs_scripts={"fix_error": echec})
+
+    rapport = _lancer(db_ecriture=ecritures, etape="correctif")
+
+    assert not rapport.reussi
+    assert "SHOW FULL PROCESSLIST" in (rapport.erreur or "")

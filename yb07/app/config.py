@@ -91,8 +91,8 @@ CHARGEMENT_LOG_TOUTES_LES = _entier_positif("CHARGEMENT_LOG_TOUTES_LES", 100_000
 # Au-delà, elles sont seulement comptées — un fichier entièrement faux ne doit pas produire
 # un rapport de 22 M de lignes.
 CHARGEMENT_MAX_REJETS_DETAILLES = _entier_positif("CHARGEMENT_MAX_REJETS_DETAILLES", 100)
-# Attente maximale (secondes) d'un verrou de métadonnées pour le TRUNCATE et les ALTER du
-# chargement. Sans borne, MySQL attend jusqu'à un an, et toutes les requêtes des autres
+# Attente maximale (secondes) d'un verrou de métadonnées pour tout le DDL de yb07 : TRUNCATE
+# et index du chargement, index des clés, scripts `migration` et `correctif`. Sans borne, MySQL attend jusqu'à un an, et toutes les requêtes des autres
 # sessions (API) s'empilent derrière : mieux vaut échouer vite et relancer.
 CHARGEMENT_LOCK_WAIT_TIMEOUT = _entier_positif("CHARGEMENT_LOCK_WAIT_TIMEOUT", 60)
 
