@@ -64,11 +64,9 @@ def base_nominale(**surcharges) -> FausseBase:
         ],
         # Recherche des doublons avant de recréer l'index unique : aucun.
         "HAVING COUNT(*) > 1": [],
-        "nb_pdi_distincts": {
+        "AS nb_actives": {
             "nb_lignes": 1,
-            "nb_pdi_distincts": 1,
             "nb_actives": 1,
-            "debut_validite_min": date(2026, 7, 21),
         },
     }
     reponses.update(surcharges)
@@ -250,11 +248,9 @@ def test_decoupage_en_lots(monkeypatch, s3_bouchonne, brancher_base):
     base = brancher_base(
         base_nominale(
             **{
-                "nb_pdi_distincts": {
+                "AS nb_actives": {
                     "nb_lignes": 5,
-                    "nb_pdi_distincts": 5,
                     "nb_actives": 5,
-                    "debut_validite_min": date(2026, 7, 21),
                 }
             }
         )
@@ -288,11 +284,9 @@ def test_volumetrie_incoherente_signalee(s3_bouchonne, brancher_base):
     brancher_base(
         base_nominale(
             **{
-                "nb_pdi_distincts": {
+                "AS nb_actives": {
                     "nb_lignes": 3,
-                    "nb_pdi_distincts": 3,
                     "nb_actives": 3,
-                    "debut_validite_min": date(2026, 7, 21),
                 }
             }
         )
@@ -794,3 +788,40 @@ def test_dates_invalides_refusees(valeur):
     ligne["date_debut_validite"] = valeur
     with pytest.raises(TraitementImpossible):
         module.convertir(ligne, 2, id_referentiel=1)
+
+
+# --- Contrôles finaux -------------------------------------------------------
+
+
+def test_aucune_lecture_sur_l_instance_de_lecture(monkeypatch, s3_bouchonne, brancher_base):
+    """Garde-fous et contrôles finaux sur l'instance d'écriture : une réplique en retard sur
+    22 M d'insertions et deux ALTER attendrait, ou compterait une table incomplète."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    brancher_base(base_nominale())
+    # Toute requête sur la lecture lève KeyError (aucune réponse déclarée).
+    monkeypatch.setattr(module, "db_read", FausseBase({}, lecture_seule=True))
+
+    rapport = charger(id_referentiel=1, fichier="f.csv")
+
+    assert rapport.statut == SUCCES, (rapport.motifs, rapport.erreur)
+
+
+def test_date_debut_min_calculee_a_la_lecture(s3_bouchonne, brancher_base):
+    plus_ancienne = LIGNE_TROUEE.replace("2026-07-21", "2025-01-01", 1)
+    s3_bouchonne(csv_de(LIGNE_PLEINE, plus_ancienne))
+    brancher_base(
+        base_nominale(**{"AS nb_actives": {"nb_lignes": 2, "nb_actives": 2}})
+    )
+
+    rapport = charger(id_referentiel=1, fichier="f.csv")
+
+    assert rapport.statut == SUCCES, rapport.motifs
+    assert rapport.etats["DATE_DEBUT_VALIDITE_MIN"] == date(2025, 1, 1)
+
+
+def test_controle_final_sans_comptage_distinct_ni_lecture_de_table():
+    """`COUNT(DISTINCT)` sur 22 M de lignes = table temporaire géante ; `MIN(date_debut)`
+    = lecture de toute la table. Ni l'un ni l'autre ne doit revenir."""
+    sql = " ".join(module.CONTROLE_FINAL_SQL.split()).upper()
+    assert "DISTINCT" not in sql
+    assert "DATE_DEBUT_VALIDITE" not in sql

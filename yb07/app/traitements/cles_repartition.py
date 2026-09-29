@@ -127,11 +127,13 @@ LIGNES_PRESENTES_SQL = (
 # (connexion, verrou, droits) arrête le chargement, même avec --skip-errors.
 CODES_ERREUR_LIGNE = frozenset({1062, 1264, 1292, 1366, 1406})
 
+# Couverte par `idx_cr_ref_actif` (id_referentiel, date_fin_validite, …) : un parcours
+# d'index, sans lire les 22 M de lignes de la table. Ni `COUNT(DISTINCT id_pdi)` — il
+# exigeait une table temporaire de 22 M de valeurs, alors que `uk_pdi_ref`, qui vient d'être
+# recréé, garantit déjà l'unicité — ni `MIN(date_debut_validite)`, calculé à la lecture.
 CONTROLE_FINAL_SQL = """
 SELECT COUNT(*)                             AS nb_lignes,
-       COUNT(DISTINCT id_pdi)               AS nb_pdi_distincts,
-       SUM(date_fin_validite IS NULL)       AS nb_actives,
-       MIN(date_debut_validite)             AS debut_validite_min
+       SUM(date_fin_validite IS NULL)       AS nb_actives
   FROM trppu_cles_repartition
  WHERE id_referentiel = %s
 """
@@ -413,12 +415,14 @@ async def charger_cles_repartition(
         #
         # Pas de contrôle sur `trppu_referentiel` : la table est vouée à disparaître. Le seul
         # garde-fou sur le référentiel est la concordance ligne à ligne avec le fichier (RG1).
-        presentes = await db_read.fetch_one(LIGNES_PRESENTES_SQL, (id_referentiel,))
+        presentes = await db_write.fetch_one(LIGNES_PRESENTES_SQL, (id_referentiel,))
         nb_presentes = int(presentes["nb"]) if presentes else 0
 
         # Avant la localisation du fichier et toute écriture : la purge est un TRUNCATE,
-        # qui ne se rattrape pas et ne doit jamais emporter un autre référentiel.
-        autre = await db_read.fetch_one(AUTRE_REFERENTIEL_SQL, (id_referentiel,))
+        # qui ne se rattrape pas et ne doit jamais emporter un autre référentiel. Lu sur
+        # l'instance d'écriture, comme le comptage ci-dessus : une réplique en retard ne doit
+        # pas décider d'un TRUNCATE.
+        autre = await db_write.fetch_one(AUTRE_REFERENTIEL_SQL, (id_referentiel,))
         if autre:
             raise TraitementImpossible(
                 f"Chargement refusé : la table porte aussi le référentiel "
@@ -453,7 +457,9 @@ async def charger_cles_repartition(
             )
 
         # --- Lecture en streaming et insertion par lots ---------------------
-        lignes_inserees, lots = await _charger(ouvrir, cle, id_referentiel, debut, rejets)
+        lignes_inserees, lots, date_debut_min = await _charger(
+            ouvrir, cle, id_referentiel, debut, rejets
+        )
 
         # --- Doublons, puis index reconstruits en une passe -----------------
         if index_a_restaurer:
@@ -518,7 +524,7 @@ async def charger_cles_repartition(
             f"Aucune ligne conforme : les {rejets.total} ligne(s) du fichier ont été "
             "écartées.",
         )
-    await _controles_finaux(rapport, id_referentiel, lignes_inserees)
+    await _controles_finaux(rapport, id_referentiel, lignes_inserees, date_debut_min)
 
     rapport.etats["LIGNES_CHARGEES"] = lignes_inserees
     rapport.etats["LIGNES_PRECEDENTES"] = nb_presentes
@@ -577,6 +583,7 @@ async def _charger(
     """
     lignes_inserees = 0
     lots = 0
+    date_debut_min: date | None = None
     prochain_jalon = CHARGEMENT_LOG_TOUTES_LES
 
     with ouvrir(cle, encodage=CSV_ENCODAGE) as flux:
@@ -597,9 +604,11 @@ async def _charger(
                 if lot is None:
                     break
                 suivant = preparer()
-                valeurs, numeros, premiere = lot
+                valeurs, numeros, premiere, min_du_lot = lot
                 if not valeurs:
                     continue
+                if date_debut_min is None or min_du_lot < date_debut_min:
+                    date_debut_min = min_du_lot
                 lignes_inserees += await _inserer_lot(valeurs, numeros, premiere, rejets)
                 lots += 1
 
@@ -612,13 +621,17 @@ async def _charger(
             # sans objet puisqu'on sort).
             await asyncio.gather(suivant, return_exceptions=True)
 
-    return lignes_inserees, lots
+    return lignes_inserees, lots, date_debut_min
 
 
 def _preparer_lot(
     lecteur: Iterator[dict[str, str]], id_referentiel: int, rejets: _Rejets | None
-) -> tuple[list[tuple[Any, ...]], list[int], int] | None:
-    """Lit et convertit un lot (appelé dans un thread). None en fin de fichier."""
+) -> tuple[list[tuple[Any, ...]], list[int], int, date | None] | None:
+    """Lit et convertit un lot (appelé dans un thread). None en fin de fichier.
+
+    Rend aussi la plus petite `date_debut_validite` du lot : la calculer ici, sur des valeurs
+    déjà en mémoire, évite une relecture complète de la table en fin de chargement.
+    """
     brutes = _lire_lot(lecteur, CHARGEMENT_TAILLE_LOT)
     if not brutes:
         return None
@@ -637,7 +650,8 @@ def _preparer_lot(
             rejets.ajouter(numero, str(erreur))
             continue
         numeros.append(numero)
-    return valeurs, numeros, premiere
+    min_du_lot = min((v[16] for v in valeurs), default=None)  # date_debut_validite
+    return valeurs, numeros, premiere, min_du_lot
 
 
 async def _inserer_lot(
@@ -727,20 +741,32 @@ def _message_erreur(erreur: Exception) -> str:
 
 
 async def _controles_finaux(
-    rapport: Rapport, id_referentiel: int, lignes_inserees: int
+    rapport: Rapport, id_referentiel: int, lignes_inserees: int, date_debut_min: date | None
 ) -> None:
     """Relit la table pour confirmer ce qui a été écrit.
 
-    Les doublons `(id_pdi, id_referentiel)` ne sont pas comptés : `uk_pdi_ref` les rejette
-    déjà au moment de l'insertion, les recompter sur 22 M de lignes ne dirait rien de plus.
+    Sur l'instance d'**écriture** : une réplique aurait du retard sur 22 M d'insertions et
+    deux ALTER — elle attendrait d'avoir rejoué l'ALTER, ou compterait une table incomplète
+    et conclurait à tort à une volumétrie incohérente.
+
+    Les doublons `(id_pdi, id_referentiel)` ne sont pas recomptés : `uk_pdi_ref` est en place
+    (recréé en fin de chargement, ou conservé), il les rend impossibles.
     """
-    controle = await db_read.fetch_one(CONTROLE_FINAL_SQL, (id_referentiel,))
+    debut = time.perf_counter()
+    logger.info("Début contrôles finaux chargement %s", ctx(id_referentiel=id_referentiel))
+    controle = await db_write.fetch_one(CONTROLE_FINAL_SQL, (id_referentiel,))
+    logger.info(
+        "Fin contrôles finaux chargement %s",
+        ctx(
+            id_referentiel=id_referentiel,
+            duration_ms=round((time.perf_counter() - debut) * 1000, 1),
+        ),
+    )
     if not controle:
         rapport.ko("Contrôle final impossible : aucune ligne relue.")
         return
 
     nb_lignes = int(controle["nb_lignes"] or 0)
-    nb_pdi = int(controle["nb_pdi_distincts"] or 0)
     nb_actives = int(controle["nb_actives"] or 0)
 
     rapport.ajouter(
@@ -749,13 +775,9 @@ async def _controles_finaux(
         f"Volumétrie incohérente : {nb_lignes} ligne(s) en base pour "
         f"{lignes_inserees} insérée(s).",
     )
-    rapport.ajouter(
-        nb_pdi == nb_lignes,
-        f"PDI distincts : {nb_pdi}",
-        f"{nb_lignes - nb_pdi} ligne(s) en doublon de PDI dans le référentiel.",
-    )
+    rapport.ok("Unicité (PDI, référentiel) garantie par l'index uk_pdi_ref")
     rapport.ok(f"Lignes actives (date_fin_validite NULL) : {nb_actives}")
     # Conservé, et pas seulement affiché : c'est le nombre de clés que DSR-699 devra produire.
     # La commande `init` s'en sert pour vérifier son CA1 sans recompter 24 M de lignes.
     rapport.etats["LIGNES_ACTIVES"] = nb_actives
-    rapport.etats["DATE_DEBUT_VALIDITE_MIN"] = controle["debut_validite_min"]
+    rapport.etats["DATE_DEBUT_VALIDITE_MIN"] = date_debut_min

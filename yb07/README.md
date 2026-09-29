@@ -501,7 +501,7 @@ Référentiel : 1
 [OK] 22395341 ligne(s) insérée(s) en 4480 lot(s)
 [OK] Index secondaires reconstruits
 [OK] Volumétrie en base : 22395341 ligne(s)
-[OK] PDI distincts : 22395341
+[OK] Unicité (PDI, référentiel) garantie par l'index uk_pdi_ref
 [OK] Lignes actives (date_fin_validite NULL) : 22395341
 
 LIGNES_CHARGEES = 22395341

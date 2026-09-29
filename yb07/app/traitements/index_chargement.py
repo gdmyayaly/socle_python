@@ -165,6 +165,19 @@ async def retirer_index() -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _avancement(phase: str, debut: float, **contexte: Any) -> None:
+    """Jalon entre deux ALTER : chacun dure des minutes sur 22 M de lignes sans rien
+    émettre, ces lignes distinguent une reconstruction lente d'une reconstruction bloquée."""
+    logger.info(
+        "Avancement reconstruction index %s",
+        ctx(
+            phase=phase,
+            **contexte,
+            duration_ms=round((time.perf_counter() - debut) * 1000, 1),
+        ),
+    )
+
+
 @dataclass
 class Doublons:
     """Doublons de PDI trouvés au moment de recréer `uk_pdi_ref`."""
@@ -194,6 +207,7 @@ async def reconstruire_index(
         f"ADD KEY `{INDEX_DOUBLONS}` (`id_pdi`)",
         etape="index-construction",
     )
+    _avancement("index secondaires et index temporaire construits", debut)
 
     doublons = Doublons()
     dernier: int | None = None
@@ -211,6 +225,7 @@ async def reconstruire_index(
         if len(page) < TAILLE_PAGE_DOUBLONS:
             break
 
+    _avancement("recherche des doublons terminée", debut, pdi_en_doublon=doublons.pdi)
     if doublons.pdi and not ecarter:
         logger.warning(
             "Rejet reconstruction index %s",
