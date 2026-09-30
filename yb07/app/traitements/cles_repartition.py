@@ -27,9 +27,14 @@ Deux écarts assumés avec ce script, tous deux dus au format de fichier, qui a 
   vrai risque. Un échec laisse donc un chargement partiel : c'est la purge (RG6) qui rend
   la commande rejouable, et le rapport dit combien de lignes étaient passées.
 
-Performance (cf. `index_chargement.py`) : les index secondaires sont retirés pendant le
-chargement puis reconstruits en une passe triée, les doublons étant traités juste avant de
-recréer l'index unique ; le lot suivant est lu et converti pendant l'insertion du courant.
+Index (cf. `index_chargement.py`) : par défaut ils restent en place et les lignes sont
+insérées par lots — plus lent, mais sans instruction longue. `CHARGEMENT_RETIRER_INDEX=true`
+les retire le temps du chargement et les reconstruit en une passe triée, les doublons étant
+traités juste avant de recréer l'index unique. Dans les deux cas, le lot suivant est lu et
+converti pendant l'insertion du courant.
+
+Sites dont un total de trafic est nul : ils sont chargés comme les autres ; le calcul des
+clés (DSR-699) leur enregistre des clés à 0 et le rapport de `init` les liste.
 
 La purge RG6 est un `TRUNCATE TABLE`, quasi instantané là où un `DELETE` de 22 M de lignes
 prend longtemps. Il vide **toute** la table et ne s'annule pas (DDL, commit implicite) : il
@@ -42,13 +47,8 @@ au lieu d'arrêter le chargement. Elle figure dans les avertissements du rapport
 dans `LIGNES_IGNOREES`. Un en-tête faux ou une panne technique (connexion, verrou, droits)
 restent bloquants : ce ne sont pas des défauts d'une ligne.
 
-Avec `ecarter_sites_total_nul` (option `--all`, qui exige `--skip-errors`), les **sites
-dont un total de trafic est nul** sont aussi écartés après le chargement : leurs PDI rendraient le calcul des clés impossible (division par zéro,
-DSR-699). Même formule que l'étape `agregats`, sur la table chargée ; chaque site est listé
-dans les avertissements du rapport.
-
 Reprise : une fois le fichier entièrement chargé, un échec de la suite (reconstruction
-des index, doublons, sites à total nul, contrôles — typiquement une coupure de connexion
+des index, doublons, contrôles — typiquement une coupure de connexion
 pendant un ALTER de plusieurs minutes) **ne vide plus la table**. Les lignes restent, et
 `finaliser_chargement` (commande `finaliser-chargement`) reprend là où le chargement s'est
 arrêté, sans relire le fichier.
@@ -144,34 +144,6 @@ LIGNES_PRESENTES_SQL = (
 # invalide (1292), valeur incorrecte (1366), texte trop long (1406). Toute autre erreur
 # (connexion, verrou, droits) arrête le chargement, même avec --skip-errors.
 CODES_ERREUR_LIGNE = frozenset({1062, 1264, 1292, 1366, 1406})
-
-# Sites dont un total serait nul à l'étape `agregats` — même formule, mêmes lignes (PDI
-# actifs). Une lecture séquentielle de la table : c'est le seul plan qui reste rapide avec un
-# petit cache InnoDB. Joué seulement avec --skip-errors.
-SITES_TOTAL_NUL_SQL = """
-SELECT co_regate_site,
-       COUNT(*)                            AS nb_pdi_actifs,
-       SUM(trafic_colis) = 0               AS colis,
-       SUM(trafic_oo) = 0                  AS oo,
-       SUM(trafic_3s) = 0                  AS t3s,
-       SUM(COALESCE(potentielip, 0)) = 0   AS potentielip
-  FROM trppu_cles_repartition IGNORE INDEX (idx_cr_ref_actif)
- WHERE id_referentiel = %s AND date_fin_validite IS NULL
- GROUP BY co_regate_site
-HAVING SUM(trafic_colis) = 0 OR SUM(trafic_oo) = 0 OR SUM(trafic_3s) = 0
-    OR SUM(COALESCE(potentielip, 0)) = 0
- ORDER BY co_regate_site
-"""
-# Deux suppressions pour que chacune suive `idx_cr_ref_actif` (id_referentiel,
-# date_fin_validite, co_regate_site) : PDI actifs, puis inactifs des mêmes sites.
-SUPPRESSION_SITES_ACTIFS_SQL = """
-DELETE FROM trppu_cles_repartition
- WHERE id_referentiel = %s AND date_fin_validite IS NULL AND co_regate_site IN ({sites})
-"""
-SUPPRESSION_SITES_INACTIFS_SQL = """
-DELETE FROM trppu_cles_repartition
- WHERE id_referentiel = %s AND date_fin_validite IS NOT NULL AND co_regate_site IN ({sites})
-"""
 
 # Couverte par `idx_cr_ref_actif` (id_referentiel, date_fin_validite, …) : un parcours
 # d'index, sans lire les 22 M de lignes de la table. Ni `COUNT(DISTINCT id_pdi)` — il
@@ -405,15 +377,13 @@ async def charger_cles_repartition(
     *,
     chemin_local: str | None = None,
     ignorer_erreurs: bool = False,
-    ecarter_sites_total_nul: bool = False,
 ) -> Rapport:
     """Charge `trppu_cles_repartition` depuis le CSV du bucket S3, ou d'un fichier local.
 
     `fichier` surcharge `CSV_CLES_REPARTITION` pour un rechargement ponctuel depuis S3.
     `chemin_local`, s'il est renseigné, désigne un fichier du disque : S3 n'est alors pas
     sollicité et `fichier` est ignoré. `ignorer_erreurs` écarte les lignes non conformes
-    au lieu d'échouer ; `ecarter_sites_total_nul` écarte en plus les sites dont un total de
-    trafic est nul (cf. docstring du module).
+    au lieu d'échouer (cf. docstring du module).
     """
     debut = time.perf_counter()
     nom_fichier = chemin_local or fichier or CSV_CLES_REPARTITION
@@ -431,7 +401,6 @@ async def charger_cles_repartition(
             source="local" if chemin_local else "s3",
             bucket=None if chemin_local else S3_BUCKET,
             skip_errors=ignorer_erreurs or None,
-            all=ecarter_sites_total_nul or None,
         ),
     )
     rejets = _Rejets(id_referentiel) if ignorer_erreurs else None
@@ -524,12 +493,11 @@ async def charger_cles_repartition(
         )
         donnees_chargees = True
 
-        # --- Index, doublons, sites à total nul ------------------------------
+        # --- Index et doublons (si les index avaient été retirés) ------------
         lignes_inserees -= await _finaliser(
             rapport,
             id_referentiel,
             rejets=rejets,
-            ecarter_sites_total_nul=ecarter_sites_total_nul,
             index_retires=index_a_restaurer,
         )
         index_a_restaurer = False
@@ -553,7 +521,6 @@ async def charger_cles_repartition(
             lignes_inserees,
             donnees_chargees=donnees_chargees,
             ignorer_erreurs=ignorer_erreurs,
-            ecarter_sites_total_nul=ecarter_sites_total_nul,
         )
         _reporter_rejets(rapport, rejets)
         return rapport
@@ -571,7 +538,6 @@ async def charger_cles_repartition(
             lignes_inserees,
             donnees_chargees=donnees_chargees,
             ignorer_erreurs=ignorer_erreurs,
-            ecarter_sites_total_nul=ecarter_sites_total_nul,
         )
         _reporter_rejets(rapport, rejets)
         return rapport
@@ -609,86 +575,9 @@ async def charger_cles_repartition(
     return rapport
 
 
-async def _ecarter_sites_total_nul(rapport: Rapport, id_referentiel: int) -> int:
-    """Retire les sites dont un total est nul. Rend le nombre de lignes supprimées.
-
-    Leurs PDI rendraient le calcul des clés impossible (division par zéro) : avec
-    --skip-errors, on les écarte ici plutôt que de bloquer la chaîne trois étapes plus loin.
-    Le site entier est retiré, PDI inactifs compris, comme le fait
-    `scripts/extraire_sites_totaux_zero.py` — le contenu en base reste celui de son fichier
-    « bon ».
-    """
-    debut = time.perf_counter()
-    logger.info("Début recherche sites à total nul %s", ctx(id_referentiel=id_referentiel))
-    sites = await db_write.fetch_all(SITES_TOTAL_NUL_SQL, (id_referentiel,))
-    if not sites:
-        logger.info(
-            "Fin recherche sites à total nul %s",
-            ctx(
-                id_referentiel=id_referentiel,
-                sites=0,
-                duration_ms=round((time.perf_counter() - debut) * 1000, 1),
-            ),
-        )
-        rapport.ok("Aucun site à total de trafic nul")
-        return 0
-
-    codes = [ligne["co_regate_site"] for ligne in sites]
-    marqueurs = ", ".join(["%s"] * len(codes))
-    parametres = (id_referentiel, *codes)
-    async with db_write.transaction() as tx:
-        supprimees = await tx.execute(
-            SUPPRESSION_SITES_ACTIFS_SQL.format(sites=marqueurs), parametres
-        )
-        supprimees += await tx.execute(
-            SUPPRESSION_SITES_INACTIFS_SQL.format(sites=marqueurs), parametres
-        )
-
-    for ligne in sites[:CHARGEMENT_MAX_REJETS_DETAILLES]:
-        nuls = ",".join(
-            nom
-            for nom, colonne in (
-                ("colis", "colis"),
-                ("oo", "oo"),
-                ("3s", "t3s"),
-                ("potentielip", "potentielip"),
-            )
-            if ligne[colonne]
-        )
-        rapport.avertissements.append(
-            f"Site {ligne['co_regate_site']} écarté : total {nuls} nul — "
-            f"{ligne['nb_pdi_actifs']} PDI actif(s) sans clé possible (division par zéro)."
-        )
-    if len(sites) > CHARGEMENT_MAX_REJETS_DETAILLES:
-        rapport.avertissements.append(
-            f"… et {len(sites) - CHARGEMENT_MAX_REJETS_DETAILLES} autre(s) site(s) écarté(s), "
-            f"non détaillé(s) (CHARGEMENT_MAX_REJETS_DETAILLES = "
-            f"{CHARGEMENT_MAX_REJETS_DETAILLES})."
-        )
-    rapport.ok(
-        f"{len(sites)} site(s) à total de trafic nul écarté(s) (--all) : "
-        f"{supprimees} ligne(s) retirée(s)"
-    )
-    rapport.etats["SITES_TOTAL_NUL_ECARTES"] = len(sites)
-    rapport.etats["LIGNES_SITES_TOTAL_NUL"] = supprimees
-    logger.warning(
-        "Rejet sites à total nul %s",
-        ctx(
-            id_referentiel=id_referentiel,
-            sites=len(sites),
-            lignes=supprimees,
-            premiers=",".join(codes[:20]),
-            duration_ms=round((time.perf_counter() - debut) * 1000, 1),
-        ),
-    )
-    return supprimees
-
-
-def commande_finalisation(
-    id_referentiel: int, ignorer_erreurs: bool, ecarter_sites_total_nul: bool
-) -> str:
+def commande_finalisation(id_referentiel: int, ignorer_erreurs: bool) -> str:
     """Commande de reprise, avec les mêmes options que le chargement interrompu."""
-    options = " --skip-errors" * ignorer_erreurs + " --all" * ecarter_sites_total_nul
+    options = " --skip-errors" * ignorer_erreurs
     return f"python -m app.main finaliser-chargement {id_referentiel}{options}"
 
 
@@ -700,7 +589,6 @@ async def _apres_echec(
     *,
     donnees_chargees: bool,
     ignorer_erreurs: bool,
-    ecarter_sites_total_nul: bool,
 ) -> int:
     """Suite à donner à un échec. Retourne les lignes restant en base.
 
@@ -713,7 +601,7 @@ async def _apres_echec(
         rapport.avertissements.append(
             f"Fichier entièrement chargé ({lignes} ligne(s)) : les données sont CONSERVÉES. "
             "Une fois la cause corrigée, reprendre sans recharger : "
-            + commande_finalisation(id_referentiel, ignorer_erreurs, ecarter_sites_total_nul)
+            + commande_finalisation(id_referentiel, ignorer_erreurs)
         )
         rapport.etats["REPRENDRE_PAR"] = "finaliser-chargement"
         return lignes
@@ -737,13 +625,12 @@ async def _finaliser(
     id_referentiel: int,
     *,
     rejets: _Rejets | None,
-    ecarter_sites_total_nul: bool,
     index_retires: bool,
 ) -> int:
     """Tout ce qui suit le chargement des lignes. Rend le nombre de lignes retirées.
 
     Commun au chargement et à sa reprise (`finaliser_chargement`) : index reconstruits et
-    doublons traités si les index avaient été retirés, puis sites à total nul avec --all.
+    doublons traités si les index avaient été retirés.
     Chaque étape est reprenable — elle ne refait pas ce qui est déjà fait.
     """
     retirees = 0
@@ -768,8 +655,6 @@ async def _finaliser(
                 f"{doublons.lignes_en_trop} doublon(s) de PDI écarté(s) — "
                 f"{doublons.identiques} identique(s), {doublons.conflits} en conflit"
             )
-    if ecarter_sites_total_nul:
-        retirees += await _ecarter_sites_total_nul(rapport, id_referentiel)
     return retirees
 
 
@@ -777,12 +662,11 @@ async def finaliser_chargement(
     id_referentiel: int,
     *,
     ignorer_erreurs: bool = False,
-    ecarter_sites_total_nul: bool = False,
 ) -> Rapport:
     """Reprend un chargement dont les lignes sont en base mais la suite a échoué.
 
-    Reconstruit les index qui manquent, traite les doublons, écarte les sites à total nul
-    (--all), puis joue les contrôles finaux — sans relire le fichier. Sans effet nuisible sur
+    Reconstruit les index qui manquent, traite les doublons, puis joue les contrôles
+    finaux — sans relire le fichier. Sans effet nuisible sur
     un chargement déjà complet : chaque étape ne fait que ce qui manque.
     """
     debut = time.perf_counter()
@@ -797,7 +681,6 @@ async def finaliser_chargement(
         ctx(
             id_referentiel=id_referentiel,
             skip_errors=ignorer_erreurs or None,
-            all=ecarter_sites_total_nul or None,
         ),
     )
     try:
@@ -811,7 +694,6 @@ async def finaliser_chargement(
             rapport,
             id_referentiel,
             rejets=rejets,
-            ecarter_sites_total_nul=ecarter_sites_total_nul,
             index_retires=True,
         )
     except TraitementImpossible as erreur:
@@ -831,7 +713,7 @@ async def finaliser_chargement(
         rapport.statut = ECHEC
         rapport.avertissements.append(
             "Les données restent en base. Relancer, une fois la cause corrigée : "
-            + commande_finalisation(id_referentiel, ignorer_erreurs, ecarter_sites_total_nul)
+            + commande_finalisation(id_referentiel, ignorer_erreurs)
         )
         _reporter_rejets(rapport, rejets)
         return rapport

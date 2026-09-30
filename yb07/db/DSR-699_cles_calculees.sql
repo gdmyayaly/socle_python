@@ -5,6 +5,8 @@
 -- total de son site pour produire les clés de `trppu_cles_repartition_calcule`.
 --
 --   clé colis = trafic_colis du PDI / trafic_colis_total du site
+--   règle métier (30/09/2026) : si le total du site vaut 0, la clé est enregistrée à 0
+--   au lieu d'une division par zéro. `init` liste ces sites dans son rapport final.
 --
 -- Le numérateur vient de `trppu_cles_repartition` (DSR-696 source), le dénominateur de
 -- `trppu_trafic_site` (DSR-696 cible), et la version de rattachement de `trppu_version_cle`
@@ -163,10 +165,12 @@ SELECT STRAIGHT_JOIN
        c.id_referentiel,
        c.id_pdi,
        c.co_regate_site,
-       c.trafic_colis / s.trafic_colis_total,
-       c.trafic_oo    / s.trafic_oo_total,
-       c.trafic_3s    / s.trafic_3s_total,
-       CAST(COALESCE(c.potentielip, 0) AS DECIMAL(24,18)) / s.potentielip_total
+       -- Total de site nul : clé à 0 (règle métier), jamais de division par zéro.
+       IF(s.trafic_colis_total = 0, 0, c.trafic_colis / s.trafic_colis_total),
+       IF(s.trafic_oo_total    = 0, 0, c.trafic_oo    / s.trafic_oo_total),
+       IF(s.trafic_3s_total    = 0, 0, c.trafic_3s    / s.trafic_3s_total),
+       IF(s.potentielip_total  = 0, 0,
+          CAST(COALESCE(c.potentielip, 0) AS DECIMAL(24,18)) / s.potentielip_total)
   FROM trppu_cles_repartition c IGNORE INDEX (idx_cr_ref_actif)
   JOIN trppu_trafic_site  s ON s.id_referentiel = c.id_referentiel
                            AND s.co_regate_site = c.co_regate_site
@@ -227,12 +231,15 @@ SELECT k.co_regate_site,
        SUM(k.cle_oo)           AS somme_oo,
        SUM(k.cle_3s)           AS somme_3s,
        SUM(k.cle_potentielip)  AS somme_potentielip,
-       IF(SUM(k.cle_colis)       BETWEEN 0.9999 AND 1.0001
-      AND SUM(k.cle_oo)          BETWEEN 0.9999 AND 1.0001
-      AND SUM(k.cle_3s)          BETWEEN 0.9999 AND 1.0001
-      AND SUM(k.cle_potentielip) BETWEEN 0.9999 AND 1.0001,
+       -- Somme attendue : 1, ou 0 pour une composante dont le total de site est nul.
+       IF(ABS(SUM(k.cle_colis)       - IF(MAX(s.trafic_colis_total) = 0, 0, 1)) <= 0.0001
+      AND ABS(SUM(k.cle_oo)          - IF(MAX(s.trafic_oo_total)    = 0, 0, 1)) <= 0.0001
+      AND ABS(SUM(k.cle_3s)          - IF(MAX(s.trafic_3s_total)    = 0, 0, 1)) <= 0.0001
+      AND ABS(SUM(k.cle_potentielip) - IF(MAX(s.potentielip_total)  = 0, 0, 1)) <= 0.0001,
           'OK', 'ANOMALIE')   AS verdict
   FROM trppu_cles_repartition_calcule k
+  JOIN trppu_trafic_site s ON s.id_referentiel = k.id_referentiel
+                          AND s.co_regate_site = k.co_regate_site
  WHERE k.id_referentiel = @id_referentiel
    AND (@co_regate IS NULL OR k.co_regate_site = @co_regate)
  GROUP BY k.co_regate_site

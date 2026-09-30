@@ -72,8 +72,6 @@ def base_nominale(**surcharges) -> FausseBase:
         ),
         # Recherche des doublons avant de recréer l'index unique : aucun.
         "HAVING COUNT(*) > 1": [],
-        # Sites à total nul (--skip-errors seulement) : aucun.
-        "HAVING SUM(trafic_colis) = 0": [],
         "AS nb_actives": {
             "nb_lignes": 1,
             "nb_actives": 1,
@@ -402,7 +400,6 @@ def test_commande_locale_transmet_le_chemin(monkeypatch):
         *,
         chemin_local=None,
         ignorer_erreurs=False,
-        ecarter_sites_total_nul=False,
     ):
         recu.update(id_referentiel=id_referentiel, chemin_local=chemin_local)
         return module.Rapport(titre="T", id_traitement=id_referentiel)
@@ -850,116 +847,27 @@ def test_controle_final_sans_comptage_distinct_ni_lecture_de_table():
 
 
 
-# --- Sites à total nul écartés par --skip-errors ------------------------------
+# --- Sites à total nul ----------------------------------------------------------------
 
 
-def _site_nul(code="122200", nb=2, **nuls):
-    ligne = {"co_regate_site": code, "nb_pdi_actifs": nb}
-    ligne.update({"colis": 0, "oo": 0, "t3s": 0, "potentielip": 0, **nuls})
-    return ligne
+def test_sites_a_total_nul_charges_comme_les_autres(s3_bouchonne, brancher_base):
+    """Règle métier : un site à total nul reste en base, ses clés vaudront 0 à l'étape
+    `cles`. Le chargement ne le recherche ni ne le supprime, même avec --skip-errors."""
+    s3_bouchonne(csv_de(LIGNE_PLEINE))
+    base = brancher_base(base_nominale())
 
-
-def test_all_ecarte_les_sites_a_total_nul(s3_bouchonne, brancher_base):
-    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_TROUEE))
-    base = brancher_base(
-        base_nominale(
-            **{
-                "HAVING SUM(trafic_colis) = 0": [_site_nul("833280", nb=1, potentielip=1)],
-                "AS nb_actives": {"nb_lignes": 1, "nb_actives": 1},
-            }
-        )
-    )
-    # Le PDI actif du site est supprimé ; il n'a pas de PDI inactif.
-    base.rowcounts = {
-        "date_fin_validite IS NULL AND co_regate_site IN": 1,
-        "date_fin_validite IS NOT NULL AND co_regate_site IN": 0,
-    }
-
-    rapport = charger(
-        id_referentiel=1, fichier="f.csv", ignorer_erreurs=True, ecarter_sites_total_nul=True
-    )
+    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
 
     assert rapport.statut == SUCCES, rapport.motifs
-    # Actifs puis inactifs du site, dans une même transaction, paramétrés.
-    suppressions = [sql for sql in base.ecritures() if sql.startswith("DELETE")]
-    assert len(suppressions) == 2
-    assert "date_fin_validite IS NULL" in suppressions[0]
-    assert "date_fin_validite IS NOT NULL" in suppressions[1]
-    assert base.parametres_de("date_fin_validite IS NULL AND co_regate_site IN") == (1, "833280")
-    assert rapport.etats["SITES_TOTAL_NUL_ECARTES"] == 1
-    assert rapport.etats["LIGNES_SITES_TOTAL_NUL"] == 1
-    assert rapport.etats["LIGNES_CHARGEES"] == 1  # 2 insérées - 1 retirée
-    assert any(
-        "Site 833280 écarté : total potentielip nul" in a for a in rapport.avertissements
-    )
-
-
-def test_sans_skip_errors_les_sites_a_total_nul_ne_sont_pas_touches(
-    s3_bouchonne, brancher_base
-):
-    """En mode strict, c'est le calcul des clés qui bloque, avec sa question métier."""
-    s3_bouchonne(csv_de(LIGNE_PLEINE))
-    base = brancher_base(base_nominale())
-
-    charger(id_referentiel=1, fichier="f.csv")
-
-    lues = [sql for genre, sql, _ in base.journal if genre == "fetch"]
-    assert not any("HAVING SUM(trafic_colis) = 0" in sql for sql in lues)
     assert not base.a_ecrit("co_regate_site IN")
+    assert "SITES_TOTAL_NUL_ECARTES" not in rapport.etats
 
 
-def test_aucun_site_a_total_nul(s3_bouchonne, brancher_base):
-    s3_bouchonne(csv_de(LIGNE_PLEINE))
-    base = brancher_base(base_nominale())
+def test_option_all_retiree():
+    from app.main import main
 
-    rapport = charger(
-        id_referentiel=1, fichier="f.csv", ignorer_erreurs=True, ecarter_sites_total_nul=True
-    )
-
-    assert rapport.statut == SUCCES, rapport.motifs
-    assert any("Aucun site à total de trafic nul" in c.libelle for c in rapport.controles)
-    assert not base.a_ecrit("co_regate_site IN")
-
-
-def test_recherche_des_sites_nuls_en_lecture_sequentielle():
-    """Conditions minimales : un seul parcours séquentiel, pas 22 M lectures aléatoires."""
-    sql = " ".join(module.SITES_TOTAL_NUL_SQL.split())
-    assert "IGNORE INDEX (idx_cr_ref_actif)" in sql
-    assert "date_fin_validite IS NULL" in sql
-
-
-
-def test_skip_errors_seul_ne_touche_pas_aux_sites(s3_bouchonne, brancher_base):
-    """--skip-errors n'écarte que les lignes incomplètes ; les sites, c'est --all."""
-    s3_bouchonne(csv_de(LIGNE_PLEINE))
-    base = brancher_base(base_nominale())
-
-    charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
-
-    lues = [sql for genre, sql, _ in base.journal if genre == "fetch"]
-    assert not any("HAVING SUM(trafic_colis) = 0" in sql for sql in lues)
-    assert not base.a_ecrit("co_regate_site IN")
-
-
-@pytest.mark.parametrize(
-    "commande",
-    [
-        ["charger-cles-repartition", "1"],
-        ["charger-cles-repartition-local", "1", "f.csv"],
-        ["init", "1"],
-    ],
-)
-def test_option_all(commande):
-    from app.main import build_parser, main
-
-    args = build_parser().parse_args([*commande, "--skip-errors", "--all"])
-    assert args.ignorer_erreurs and args.ecarter_sites_total_nul
-    assert build_parser().parse_args(commande).ecarter_sites_total_nul is False
-
-    # --all étend --skip-errors : seul, il est refusé plutôt qu'activé en silence.
-    with pytest.raises(SystemExit) as sortie:
-        main([*commande, "--all"])
-    assert sortie.value.code == 2
+    with pytest.raises(SystemExit):
+        main(["init", "1", "--skip-errors", "--all"])
 
 
 # --- Reprise : finaliser-chargement ------------------------------------------
@@ -1008,17 +916,6 @@ def test_finalisation_reconstruit_sans_relire_le_fichier(monkeypatch, brancher):
     assert rapport.etats["LIGNES_ACTIVES"] == 20
 
 
-def test_finalisation_avec_all_ecarte_les_sites_nuls(brancher):
-    base = brancher(
-        base_a_finaliser(**{"HAVING SUM(trafic_colis) = 0": [_site_nul("122200")]})
-    )
-
-    rapport = finaliser(ignorer_erreurs=True, ecarter_sites_total_nul=True)
-
-    assert rapport.etats["SITES_TOTAL_NUL_ECARTES"] == 1
-    assert base.a_ecrit("co_regate_site IN")
-
-
 def test_finalisation_sans_ligne_en_base(brancher_base):
     base = brancher_base(base_a_finaliser())
     base.reponses["SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel"] = None
@@ -1037,11 +934,11 @@ def test_finalisation_en_echec_rappelle_la_commande_de_reprise(brancher):
     }
     brancher(base)
 
-    rapport = finaliser(ignorer_erreurs=True, ecarter_sites_total_nul=True)
+    rapport = finaliser(ignorer_erreurs=True)
 
     assert rapport.statut == ECHEC
     assert any(
-        "finaliser-chargement 1 --skip-errors --all" in a for a in rapport.avertissements
+        a.endswith("finaliser-chargement 1 --skip-errors") for a in rapport.avertissements
     )
     assert not base.a_ecrit("TRUNCATE")
 
@@ -1091,9 +988,9 @@ def test_reconstruction_ne_refait_pas_un_index_deja_construit(brancher):
 def test_commande_finaliser_chargement():
     from app.main import build_parser, cmd_finaliser_chargement, main
 
-    args = build_parser().parse_args(["finaliser-chargement", "1", "--skip-errors", "--all"])
+    args = build_parser().parse_args(["finaliser-chargement", "1", "--skip-errors"])
     assert args.handler is cmd_finaliser_chargement
-    assert args.ignorer_erreurs and args.ecarter_sites_total_nul
+    assert args.ignorer_erreurs
     with pytest.raises(SystemExit):
         main(["finaliser-chargement", "1", "--all"])
 

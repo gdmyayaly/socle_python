@@ -252,7 +252,7 @@ python -m app.main <commande> --help   # options d'une commande
 | `s3-check` | Configuration S3, test d'accès, et contenu du bucket | `--prefixe`, `--recursif`, `--limite` |
 | `charger-cles-repartition` | Charge `trppu_cles_repartition` depuis un CSV déposé sur S3 | `id_referentiel` (obligatoire), `--fichier` |
 | `charger-cles-repartition-local` | Même chargement, depuis un CSV du disque local | `id_referentiel`, `chemin` (obligatoires) |
-| `finaliser-chargement` | Reprend un chargement interrompu **après** l'insertion des lignes : index, doublons, sites à total nul, contrôles — sans relire le fichier | `id_referentiel`, `--skip-errors`, `--all` |
+| `finaliser-chargement` | Reprend un chargement interrompu **après** l'insertion des lignes : index, doublons, contrôles — sans relire le fichier | `id_referentiel`, `--skip-errors` |
 | `init` | Enchaîne toute la chaîne d'initialisation des clés de répartition (DSR-696 à DSR-699) | `id_referentiel` (obligatoire), `--depuis`/`--etape`, `--fichier`, `--commentaire`, `--libelle`, `--dry-run`, `--sans-controles-longs` |
 
 Options communes à toutes les commandes :
@@ -374,7 +374,6 @@ demandé.
 | `id_referentiel` | **Obligatoire.** Référentiel à charger : il cible la purge, et toute ligne du fichier portant un autre référentiel fait échouer le chargement. |
 | `--fichier` | Nom du fichier dans le bucket, à défaut de `CSV_CLES_REPARTITION`. Pour un rechargement ponctuel sans toucher au `.env`. |
 | `--skip-errors` | Écarte les lignes non conformes au lieu d'arrêter le chargement (voir ci-dessous). |
-| `--all` | Avec `--skip-errors` seulement : écarte **aussi** les sites dont un total de trafic est nul. |
 
 **Purge par `TRUNCATE TABLE`** — la table est vidée par `TRUNCATE`, quasi instantané là où
 un `DELETE` de 22 M de lignes prend longtemps. Trois contreparties :
@@ -399,13 +398,9 @@ Avec, elle est écartée et le chargement continue :
   unique (voir « Performance ») : la première occurrence du fichier est conservée, et ils
   sont signalés par PDI (`PDI 123 : doublon identique` / `en CONFLIT`), sans numéro de
   ligne — `scripts/nettoyer_csv_cles.py` les donne si besoin ;
-- **sites à total nul, avec `--all` en plus** (`--skip-errors --all` ; `--all` seul est
-  refusé) : après le chargement, les sites dont un total de trafic (colis, OO,
-  3S ou potentiel IP, sur les PDI actifs) vaut 0 sont retirés en entier — leurs clés
-  diviseraient par zéro. Même règle que `scripts/extraire_sites_totaux_zero.py` : la table
-  contient alors ce que contiendrait son fichier « bon ». Chaque site est listé dans les
-  avertissements (`Site 122200 écarté : total potentielip nul — …`), les totaux dans
-  `SITES_TOTAL_NUL_ECARTES` et `LIGNES_SITES_TOTAL_NUL`. Coût : une lecture séquentielle ;
+- **sites à total nul** : ils ne sont pas écartés — ils sont chargés, et leurs clés valent 0
+  à l'étape `cles` (règle métier). `scripts/extraire_sites_totaux_zero.py` permet de les
+  isoler dans un fichier à part si besoin ;
 - toujours bloquants : en-tête inattendu, fichier absent, panne technique (connexion,
   verrou, droits), et un fichier dont **aucune** ligne n'est conforme ;
 - le rapport compte les lignes écartées (`LIGNES_IGNOREES`) et détaille les
@@ -555,7 +550,7 @@ pour un fichier transmis hors bucket.
 |---|---|
 | `id_referentiel` | **Obligatoire.** Comme pour le chargement S3. |
 | `chemin` | **Obligatoire.** Chemin du fichier, absolu ou relatif au dossier courant. Un `.gz` est décompressé à la volée. |
-| `--skip-errors`, `--all` | Comme pour le chargement S3. |
+| `--skip-errors` | Comme pour le chargement S3. |
 
 Le fichier est localisé (existence, lisibilité) **avant** la purge. `CSV_CLES_REPARTITION`
 n'est pas utilisé ; `CSV_DELIMITEUR` et `CSV_ENCODAGE` s'appliquent. Dans le rapport, la
@@ -567,7 +562,7 @@ En Docker, le fichier doit être visible dans le conteneur : monter son dossier 
 ### `finaliser-chargement` — reprendre sans recharger
 
 ```bash
-python -m app.main finaliser-chargement 1 --skip-errors --all
+python -m app.main finaliser-chargement 1 --skip-errors
 ```
 
 Une fois le fichier **entièrement** chargé, un échec de la suite (coupure de connexion pendant
@@ -575,7 +570,7 @@ la reconstruction des index, verrou non obtenu, doublons en mode strict…) **ne
 table** : le rapport l'indique (`REPRENDRE_PAR = finaliser-chargement`) et donne la commande,
 avec les mêmes options que le chargement interrompu. Elle reconstruit les index qui manquent
 — y compris quand MySQL a terminé un `ALTER` que le batch n'a pas vu finir —, traite les
-doublons (`--skip-errors`), écarte les sites à total nul (`--all`) et rejoue les contrôles
+doublons (`--skip-errors`) et rejoue les contrôles
 finaux. Relancée sur un chargement complet, elle ne refait rien.
 
 Tant que le chargement n'est pas finalisé, `init --depuis migration` (et au-delà) refuse de
@@ -610,6 +605,14 @@ python -m app.main init 1 --depuis versions     # reprend ici et enchaîne
 | `--skip-errors` | Transmis à l'étape `chargement` : les lignes non conformes du CSV sont écartées, et listées dans les avertissements du rapport final de `init`. Sans effet sur les autres étapes. |
 
 Étapes, dans l'ordre : `chargement`, `migration`, `correctif`, `agregats`, `versions`, `cles`.
+
+**Total de site nul** (règle métier du 30/09/2026) — quand un total de trafic d'un site vaut
+0, la clé correspondante de ses PDI est **enregistrée à 0** au lieu d'une division par zéro
+(`db/DSR-699_cles_calculees.sql`). Le calcul n'est plus bloqué ; le rapport final liste
+chaque site concerné (`SITES_CLE_A_ZERO`, `PDI_CLE_A_ZERO`, avertissements
+`Site 122200 : total potentielip nul — clé(s) potentielip enregistrée(s) à 0 pour ses 57 PDI
+actif(s).`), et le contrôle CA3 attend une somme de 0, et non de 1, pour ces composantes.
+Ce script diverge sur ce point de sa copie `yb05/db/`.
 
 **Charge sur la base** — les scripts de `db/` sont écrits pour être aussi joués à la main :
 ils affichent des constats (`SELECT`) avant et après chaque écriture. Joués par `init`, leurs

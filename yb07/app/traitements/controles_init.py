@@ -177,20 +177,35 @@ SELECT COUNT(*) AS nb
  WHERE id_referentiel = %s AND date_fin_validite IS NULL
 """
 
+# Somme attendue par composante : 1 — ou 0 quand le total du site est nul, la règle métier
+# enregistrant alors des clés à 0 (DSR-699, 30/09/2026). Sans ce cas, ces sites seraient
+# déclarés en anomalie à tort.
+ECART_TOLERE = "0.0001"
 SOMMES_HORS_TOLERANCE_SQL = f"""
-SELECT co_regate_site,
-       SUM(cle_colis)       AS somme_colis,
-       SUM(cle_oo)          AS somme_oo,
-       SUM(cle_3s)          AS somme_3s,
-       SUM(cle_potentielip) AS somme_potentielip
-  FROM trppu_cles_repartition_calcule
- WHERE id_referentiel = %s
+SELECT k.co_regate_site,
+       SUM(k.cle_colis)       AS somme_colis,
+       SUM(k.cle_oo)          AS somme_oo,
+       SUM(k.cle_3s)          AS somme_3s,
+       SUM(k.cle_potentielip) AS somme_potentielip
+  FROM trppu_cles_repartition_calcule k
+  JOIN trppu_trafic_site s ON s.id_referentiel = k.id_referentiel
+                          AND s.co_regate_site = k.co_regate_site
+ WHERE k.id_referentiel = %s
+ GROUP BY k.co_regate_site
+HAVING ABS(SUM(k.cle_colis)       - IF(MAX(s.trafic_colis_total) = 0, 0, 1)) > {ECART_TOLERE}
+    OR ABS(SUM(k.cle_oo)          - IF(MAX(s.trafic_oo_total)    = 0, 0, 1)) > {ECART_TOLERE}
+    OR ABS(SUM(k.cle_3s)          - IF(MAX(s.trafic_3s_total)    = 0, 0, 1)) > {ECART_TOLERE}
+    OR ABS(SUM(k.cle_potentielip) - IF(MAX(s.potentielip_total)  = 0, 0, 1)) > {ECART_TOLERE}
+ ORDER BY k.co_regate_site
+"""
+
+# Nombre de PDI actifs des sites à total nul — ceux dont une clé sera enregistrée à 0.
+# Servi par `idx_cr_ref_actif` (id_referentiel, date_fin_validite, co_regate_site).
+PDI_ACTIFS_DES_SITES_SQL = """
+SELECT co_regate_site, COUNT(*) AS nb
+  FROM trppu_cles_repartition
+ WHERE id_referentiel = %s AND date_fin_validite IS NULL AND co_regate_site IN ({sites})
  GROUP BY co_regate_site
-HAVING SUM(cle_colis)       NOT BETWEEN {TOLERANCE_BASSE} AND {TOLERANCE_HAUTE}
-    OR SUM(cle_oo)          NOT BETWEEN {TOLERANCE_BASSE} AND {TOLERANCE_HAUTE}
-    OR SUM(cle_3s)          NOT BETWEEN {TOLERANCE_BASSE} AND {TOLERANCE_HAUTE}
-    OR SUM(cle_potentielip) NOT BETWEEN {TOLERANCE_BASSE} AND {TOLERANCE_HAUTE}
- ORDER BY co_regate_site
 """
 
 
@@ -339,19 +354,64 @@ async def _verifier_versions(rapport: Rapport, db, id_referentiel: int) -> bool:
 
 
 async def _verifier_denominateurs(rapport: Rapport, db, id_referentiel: int) -> bool:
+    """Sites dont un total est nul : leurs clés seront enregistrées à 0 (règle métier).
+
+    Ne bloque plus : le calcul n'y divise pas, il écrit 0. Chaque site est porté au rapport
+    final — composantes concernées et nombre de PDI — pour que le métier sache quelles clés
+    valent 0 par convention et non par calcul.
+    """
     nuls = await db.fetch_all(DENOMINATEURS_NULS_SQL, (id_referentiel,))
     if not nuls:
-        rapport.ok("Aucun dénominateur nul")
+        rapport.ok("Aucun total de site nul")
         return True
 
-    sites = ", ".join(str(ligne["co_regate_site"]) for ligne in nuls[:5])
-    suite = "…" if len(nuls) > 5 else ""
-    return _refuser(
-        rapport,
-        id_referentiel,
-        f"{len(nuls)} site(s) ont un total de trafic à zéro ({sites}{suite}) : le calcul "
-        f"échouerait en division par zéro. Question métier avant d'aller plus loin.",
+    codes = [ligne["co_regate_site"] for ligne in nuls]
+    marqueurs = ", ".join(["%s"] * len(codes))
+    comptes = {
+        ligne["co_regate_site"]: int(ligne["nb"])
+        for ligne in await db.fetch_all(
+            PDI_ACTIFS_DES_SITES_SQL.format(sites=marqueurs), (id_referentiel, *codes)
+        )
+    }
+    nb_pdi = sum(comptes.values())
+    rapport.ok(
+        f"{len(nuls)} site(s) à total de trafic nul : clés enregistrées à 0 pour "
+        f"{nb_pdi} PDI actif(s) (règle métier, voir avertissements)"
     )
+    rapport.etats["SITES_CLE_A_ZERO"] = len(nuls)
+    rapport.etats["PDI_CLE_A_ZERO"] = nb_pdi
+
+    for ligne in nuls[:INIT_MAX_ANOMALIES_LOGUEES]:
+        composantes = ", ".join(
+            nom
+            for nom, colonne in (
+                ("colis", "trafic_colis_total"),
+                ("oo", "trafic_oo_total"),
+                ("3s", "trafic_3s_total"),
+                ("potentielip", "potentielip_total"),
+            )
+            if not ligne[colonne]
+        )
+        code = ligne["co_regate_site"]
+        rapport.avertissements.append(
+            f"Site {code} : total {composantes} nul — clé(s) {composantes} enregistrée(s) à 0 "
+            f"pour ses {comptes.get(code, 0)} PDI actif(s)."
+        )
+    if len(nuls) > INIT_MAX_ANOMALIES_LOGUEES:
+        rapport.avertissements.append(
+            f"… et {len(nuls) - INIT_MAX_ANOMALIES_LOGUEES} autre(s) site(s) à total nul, non "
+            f"détaillé(s) (INIT_MAX_ANOMALIES_LOGUEES = {INIT_MAX_ANOMALIES_LOGUEES})."
+        )
+    logger.warning(
+        "Rejet division par zéro, clés à 0 %s",
+        ctx(
+            id_referentiel=id_referentiel,
+            sites=len(nuls),
+            pdi=nb_pdi,
+            premiers=",".join(str(c) for c in codes[:20]),
+        ),
+    )
+    return True
 
 
 async def _verifier_non_calcule(rapport: Rapport, db, id_referentiel: int) -> bool:

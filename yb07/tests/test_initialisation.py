@@ -71,7 +71,7 @@ def _lectures(**surcharges) -> FausseBase:
         "%s AND EXISTS": {"nb": 0},
         "v.actif <> 'O'": {"nb": 0},
         "AND date_fin_validite IS NULL": {"nb": 120},
-        "HAVING SUM(cle_colis)": [],
+        "AS somme_colis": [],
     }
     reponses.update(surcharges)
     return FausseBase(reponses)
@@ -103,7 +103,7 @@ def chargement_reussi(monkeypatch):
     appels = []
 
     async def _faux(
-        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+        id_referentiel, fichier=None, *, ignorer_erreurs=False
     ):
         appels.append((id_referentiel, fichier))
         return _rapport_chargement()
@@ -168,7 +168,7 @@ def test_les_scripts_de_donnees_sont_joues_en_transaction(chargement_reussi):
 
 def test_le_chargement_en_echec_arrete_la_chaine(monkeypatch):
     async def _echec(
-        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+        id_referentiel, fichier=None, *, ignorer_erreurs=False
     ):
         rapport = Rapport(titre="CHARGEMENT", id_traitement=id_referentiel)
         rapport.ko("Fichier introuvable sur S3.")
@@ -411,18 +411,60 @@ def test_un_avancement_est_journalise_pendant_la_boucle(monkeypatch, caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_un_denominateur_nul_bloque_avant_le_calcul():
-    """Il annonce l'ERROR 1365, et évite des heures de calcul pour rien."""
+def test_un_total_nul_ne_bloque_plus_et_remonte_au_rapport():
+    """Règle métier : clé à 0 quand le total du site est nul. Le calcul se joue, et chaque
+    site concerné est porté au rapport final avec ses composantes et son nombre de PDI."""
     lectures = _lectures(
-        **{"trafic_colis_total = 0": [{"co_regate_site": "000002"}]}
+        **{
+            "trafic_colis_total = 0": [
+                {
+                    "co_regate_site": "000002",
+                    "trafic_colis_total": 5,
+                    "trafic_oo_total": 3,
+                    "trafic_3s_total": 1,
+                    "potentielip_total": 0,
+                }
+            ],
+        }
     )
-    ecritures = _ecritures(lecture_seule=True)
+    # En tête : la requête contient aussi le fragment du comptage des PDI actifs (CA1), et
+    # la doublure rend la première réponse qui correspond.
+    lectures.reponses = {
+        "co_regate_site IN (": [{"co_regate_site": "000002", "nb": 57}],
+        **lectures.reponses,
+    }
+    ecritures = _ecritures()
 
     rapport = _lancer(db_lecture=lectures, db_ecriture=ecritures, etape="cles")
 
-    assert not rapport.reussi
-    assert "division par zéro" in " ".join(rapport.motifs)
-    assert ecritures.scripts_joues() == []
+    assert rapport.reussi, rapport.motifs
+    assert "db/DSR-699_cles_calculees.sql" in ecritures.scripts_joues()
+    assert rapport.etats["SITES_CLE_A_ZERO"] == 1
+    assert rapport.etats["PDI_CLE_A_ZERO"] == 57
+    assert any(
+        "Site 000002 : total potentielip nul — clé(s) potentielip enregistrée(s) à 0 "
+        "pour ses 57 PDI actif(s)" in a
+        for a in rapport.avertissements
+    )
+
+
+def test_le_calcul_ecrit_zero_au_lieu_de_diviser_par_zero():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parent.parent / "db" / "DSR-699_cles_calculees.sql")
+    texte = " ".join(script.read_text(encoding="utf-8-sig").split())
+    for total in ("trafic_colis_total", "trafic_oo_total", "trafic_3s_total",
+                  "potentielip_total"):
+        assert f"IF(s.{total} = 0, 0," in texte
+
+
+def test_controle_des_sommes_attend_zero_pour_un_total_nul():
+    """Sans ce cas, les sites à clé 0 seraient déclarés hors tolérance à tort (CA3)."""
+    from app.traitements import controles_init
+
+    sql = " ".join(controles_init.SOMMES_HORS_TOLERANCE_SQL.split())
+    assert "IF(MAX(s.potentielip_total) = 0, 0, 1)" in sql
+    assert "JOIN trppu_trafic_site s" in sql
 
 
 def test_un_perimetre_deja_calcule_bloque_avant_le_calcul():
@@ -459,7 +501,7 @@ def test_zero_cle_ecrite_fait_echouer_l_etape():
 def test_une_somme_de_cles_hors_tolerance_fait_echouer_l_etape():
     lectures = _lectures(
         **{
-            "HAVING SUM(cle_colis)": [
+            "AS somme_colis": [
                 {
                     "co_regate_site": "000002",
                     "somme_colis": "0.87",
@@ -481,7 +523,7 @@ def test_une_somme_hors_tolerance_est_journalisee_en_warning(caplog):
     """DSR-699 demande une alerte dans les logs ; le SQL ne sait pas journaliser."""
     lectures = _lectures(
         **{
-            "HAVING SUM(cle_colis)": [
+            "AS somme_colis": [
                 {
                     "co_regate_site": "000002",
                     "somme_colis": "0.87",
@@ -514,7 +556,7 @@ def test_le_nombre_d_anomalies_journalisees_est_borne(monkeypatch, caplog):
         }
         for n in range(10)
     ]
-    lectures = _lectures(**{"HAVING SUM(cle_colis)": anomalies})
+    lectures = _lectures(**{"AS somme_colis": anomalies})
 
     with caplog.at_level(logging.WARNING, logger="app.traitements.controles_init"):
         _lancer(db_lecture=lectures, etape="cles")
@@ -543,7 +585,7 @@ def test_sans_controles_longs_ne_joue_pas_la_somme_des_cles():
 
     assert rapport.reussi, rapport.motifs
     lues = [sql for genre, sql, _ in lectures.journal if genre == "fetch"]
-    assert not any("HAVING SUM(cle_colis)" in sql for sql in lues)
+    assert not any("AS somme_colis" in sql for sql in lues)
     assert "non joué" in " ".join(c.libelle for c in rapport.controles)
 
 
@@ -715,7 +757,7 @@ def test_skip_errors_transmis_au_chargement_et_avertissements_remontes(monkeypat
     recu = {}
 
     async def _faux(
-        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+        id_referentiel, fichier=None, *, ignorer_erreurs=False
     ):
         recu["ignorer_erreurs"] = ignorer_erreurs
         rapport = _rapport_chargement()
@@ -737,7 +779,7 @@ def test_sans_skip_errors_le_chargement_reste_strict(monkeypatch):
     recu = {}
 
     async def _faux(
-        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
+        id_referentiel, fichier=None, *, ignorer_erreurs=False
     ):
         recu["ignorer_erreurs"] = ignorer_erreurs
         return _rapport_chargement()
@@ -944,22 +986,6 @@ def test_un_lot_n_est_pas_rejoue_si_tout_passe():
     assert ecritures.lots_annules == 0
     assert len(ecritures.scripts_joues()) == len(SITES)
 
-
-
-def test_all_transmis_au_chargement(monkeypatch):
-    recu = {}
-
-    async def _faux(
-        id_referentiel, fichier=None, *, ignorer_erreurs=False, ecarter_sites_total_nul=False
-    ):
-        recu.update(ignorer=ignorer_erreurs, ecarter=ecarter_sites_total_nul)
-        return _rapport_chargement()
-
-    monkeypatch.setattr(initialisation, "charger_cles_repartition", _faux)
-
-    _lancer(etape="chargement", ignorer_erreurs=True, ecarter_sites_total_nul=True)
-
-    assert recu == {"ignorer": True, "ecarter": True}
 
 
 def test_chaine_refusee_si_le_chargement_n_est_pas_finalise():

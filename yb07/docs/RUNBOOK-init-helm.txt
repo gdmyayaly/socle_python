@@ -163,10 +163,10 @@ dans le rapport final) :
 A verifier : LIGNES_CHARGEES, LIGNES_ACTIVES, et en mode tolerant
 LIGNES_IGNOREES et la section "Avertissements :".
 --skip-errors n'ecarte que les lignes incompletes (et les doublons).
-Pour ecarter AUSSI les sites dont un total de trafic vaut 0 (sinon
-division par zero a l'etape 7), ajouter "- '--all'" apres
-"- '--skip-errors'" : voir SITES_TOTAL_NUL_ECARTES et les
-avertissements "Site ... ecarte". --all seul est refuse.
+Sites dont un total de trafic vaut 0 : par defaut ils sont charges,
+et leurs cles valent 0 a l'etape 7 (regle metier), listees dans le
+rapport final (SITES_CLE_A_ZERO, PDI_CLE_A_ZERO, avertissements
+"Site ... enregistree(s) a 0").
 ATTENTION : un PDI ecarte n'aura PAS de cle calculee a l'etape 7.
 Faire valider la liste des lignes ecartees avant de continuer.
 
@@ -280,7 +280,7 @@ client MySQL avec yb05/db/suivi.sql.
 
 Si le rapport indique "REPRENDRE_PAR = finaliser-chargement" : le
 fichier est entierement charge, seule la suite a echoue (index,
-doublons, sites a total nul). Les donnees sont CONSERVEES. Reprendre
+doublons, controles). Les donnees sont CONSERVEES. Reprendre
 sans recharger, avec les memes options que le chargement :
 
       command:
@@ -290,7 +290,6 @@ sans recharger, avec les memes options que le chargement :
         - finaliser-chargement
         - '1'
         - '--skip-errors'
-        - '--all'
 
 puis reprendre la chaine : init 1 --depuis migration.
 
