@@ -1,20 +1,16 @@
-"""Index secondaires de `trppu_cles_repartition` pendant un chargement de masse.
+"""Purge et index de `trppu_cles_repartition` autour d'un chargement.
 
-Pourquoi les retirer. Insérer 22 M de lignes dans une table indexée oblige MySQL à maintenir
-chaque index ligne à ligne. Pour l'index **unique** `uk_pdi_ref`, c'est ruineux : l'unicité
-se vérifie immédiatement, sans tampon de modifications, et les PDI arrivent dans le désordre.
-Dès que l'index dépasse le cache InnoDB (`innodb_buffer_pool_size`, 128 Mo par défaut),
-chaque insertion lit une page sur disque — le débit tombe vers 1 000 lignes/s et continue de
-baisser à mesure que l'index grossit.
+Les index secondaires restent **toujours en place** pendant le chargement : les lignes sont
+insérées par petits lots, chacun commité seul, et `uk_pdi_ref` rejette un doublon dès son
+insertion. C'est plus lent qu'un chargement sans index suivi d'une reconstruction, mais
+aucune instruction ne dure : une reconstruction finale était un ALTER de plusieurs minutes
+sur 24 M de lignes, muet côté réseau, et un équipement à délai d'inactivité le coupait.
 
-Charger sans index secondaires puis les reconstruire en une passe triée (« sorted index
-build » d'InnoDB) coûte quelques minutes au lieu de plusieurs heures. C'est possible parce
-que la table est vidée par TRUNCATE et ne porte qu'un référentiel : pendant le chargement,
-elle n'a de toute façon rien d'utilisable à servir.
+Ce module ne fait donc plus que deux choses, avant la première ligne :
 
-Les doublons, que `uk_pdi_ref` rejetait à l'insertion, sont traités **avant** de le recréer :
-un index temporaire sur `id_pdi` permet de les trouver par un parcours ordonné, page par page
-— la mémoire du batch reste bornée quel que soit leur nombre.
+* vider la table (TRUNCATE) ;
+* recréer, sur la table vide — donc instantanément —, un index qu'un essai précédent aurait
+  laissé absent, et retirer l'index temporaire `idx_cr_pdi_doublons` d'une ancienne version.
 
 Tout le DDL passe par une connexion dédiée avec `lock_wait_timeout` borné : un ALTER ou un
 TRUNCATE qui attend un verrou bloque derrière lui toutes les requêtes des autres sessions
@@ -24,11 +20,8 @@ TRUNCATE qui attend un verrou bloque derrière lui toutes les requêtes des autr
 from __future__ import annotations
 
 import logging
-import time
-from dataclasses import dataclass, field
-from typing import Any, Callable
 
-from app.config import CHARGEMENT_LOCK_WAIT_TIMEOUT, CHARGEMENT_MAX_REJETS_DETAILLES
+from app.config import CHARGEMENT_LOCK_WAIT_TIMEOUT
 from app.db.mysql import db_write
 from app.db.sql_script import SqlScriptError
 from app.erreurs import TraitementImpossible
@@ -38,49 +31,27 @@ logger = logging.getLogger(__name__)
 
 TABLE = "trppu_cles_repartition"
 
-#: Index secondaires retirés pendant le chargement, recréés à l'identique à la fin.
-#: Source : `yb05/db/database.sql` et `db/DSR-696-699_migration.sql`.
+#: Index secondaires attendus sur la table. Source : `yb05/db/database.sql` et
+#: `db/DSR-696-699_migration.sql`.
 INDEX_SECONDAIRES = {
     "uk_pdi_ref": "UNIQUE KEY `uk_pdi_ref` (`id_pdi`, `id_referentiel`)",
     "idx_cr_ref_actif": (
         "KEY `idx_cr_ref_actif` (`id_referentiel`, `date_fin_validite`, `co_regate_site`)"
     ),
 }
-#: Index temporaire de recherche des doublons, supprimé avant la fin.
+#: Index temporaire laissé par une ancienne version (reconstruction des index en fin de
+#: chargement, abandonnée) : retiré s'il est encore là.
 INDEX_DOUBLONS = "idx_cr_pdi_doublons"
-
-#: Groupes de doublons traités par page : borne la mémoire du batch.
-TAILLE_PAGE_DOUBLONS = 1000
 
 INDEX_PRESENTS_SQL = """
 SELECT DISTINCT INDEX_NAME AS nom
   FROM information_schema.STATISTICS
  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'trppu_cles_repartition'
 """
-# Parcours ordonné de l'index temporaire : pas de table temporaire, et la page suivante
-# reprend là où la précédente s'est arrêtée.
-PREMIERE_PAGE_DOUBLONS_SQL = """
-SELECT id_pdi, COUNT(*) AS nb_occurrences FROM trppu_cles_repartition
- GROUP BY id_pdi HAVING COUNT(*) > 1 ORDER BY id_pdi LIMIT %s
-"""
-PAGE_SUIVANTE_DOUBLONS_SQL = """
-SELECT id_pdi, COUNT(*) AS nb_occurrences FROM trppu_cles_repartition
- WHERE id_pdi > %s GROUP BY id_pdi HAVING COUNT(*) > 1 ORDER BY id_pdi LIMIT %s
-"""
-COLONNES_DONNEES = (
-    "id_pdi, pdi_rattache, trafic_colis, trafic_oo, trafic_3s, nature, co_regate_site, "
-    "type_site, lb_regate, co_regate_etablissement, lb_etablissement, co_regate_dex, lb_dex, "
-    "nb_pre, potentielip, id_referentiel, date_debut_validite, date_fin_validite"
-)
 
 
 class DroitManquant(TraitementImpossible):
     """Le compte d'écriture n'a pas le droit exigé par l'instruction (erreur 1142)."""
-
-
-# ---------------------------------------------------------------------------
-# DDL sur connexion dédiée
-# ---------------------------------------------------------------------------
 
 
 def _code_mysql(erreur: BaseException) -> int | None:
@@ -125,212 +96,16 @@ async def index_presents() -> set[str]:
     return {ligne["nom"] for ligne in lignes}
 
 
-# ---------------------------------------------------------------------------
-# Avant le chargement
-# ---------------------------------------------------------------------------
-
-
 async def vider_table() -> None:
     await executer_ddl(f"TRUNCATE TABLE {TABLE}", etape="purge")
-
-
-async def retirer_index() -> bool:
-    """Retire les index secondaires connus. Rend False s'ils doivent rester en place.
-
-    Sans le droit ALTER, le chargement se fait quand même, index en place : plus lent, mais
-    correct. Un index inconnu est laissé tel quel — il sera maintenu pendant le chargement.
-    """
-    presents = await index_presents()
-    a_retirer = [nom for nom in (*INDEX_SECONDAIRES, INDEX_DOUBLONS) if nom in presents]
-    inconnus = presents - {"PRIMARY", *INDEX_SECONDAIRES, INDEX_DOUBLONS}
-    if inconnus:
-        logger.warning(
-            "Rejet retrait index inconnus %s",
-            ctx(index=",".join(sorted(inconnus)), motif="maintenus pendant le chargement"),
-        )
-    if a_retirer:
-        try:
-            await executer_ddl(
-                f"ALTER TABLE {TABLE} " + ", ".join(f"DROP INDEX `{n}`" for n in a_retirer),
-                etape="index-retrait",
-            )
-        except DroitManquant as erreur:
-            logger.warning("Rejet retrait index %s", ctx(motif=str(erreur)))
-            return False
-    logger.info("Fin retrait index %s", ctx(index=",".join(a_retirer) or None))
-    return True
-
-
-# ---------------------------------------------------------------------------
-# Après le chargement
-# ---------------------------------------------------------------------------
-
-
-def _avancement(phase: str, debut: float, **contexte: Any) -> None:
-    """Jalon entre deux ALTER : chacun dure des minutes sur 22 M de lignes sans rien
-    émettre, ces lignes distinguent une reconstruction lente d'une reconstruction bloquée."""
-    logger.info(
-        "Avancement reconstruction index %s",
-        ctx(
-            phase=phase,
-            **contexte,
-            duration_ms=round((time.perf_counter() - debut) * 1000, 1),
-        ),
-    )
-
-
-@dataclass
-class Doublons:
-    """Doublons de PDI trouvés au moment de recréer `uk_pdi_ref`."""
-
-    pdi: int = 0
-    lignes_en_trop: int = 0
-    identiques: int = 0
-    conflits: int = 0
-    details: list[str] = field(default_factory=list)
-
-
-async def reconstruire_index(
-    *, ecarter: bool, signaler: Callable[[str], None] | None = None
-) -> Doublons:
-    """Recrée les index secondaires ; traite d'abord les doublons de PDI.
-
-    `ecarter=True` (--skip-errors) : la première occurrence chargée (plus petit `id`, donc
-    première du fichier) est conservée, les autres sont supprimées et signalées. Sinon les
-    doublons sont seulement comptés, l'index unique n'est **pas** recréé, et c'est à
-    l'appelant d'échouer (puis de remettre la table en état).
-    """
-    debut = time.perf_counter()
-    logger.info("Début reconstruction index %s", ctx(table=TABLE, ecarter=ecarter))
-
-    # Reprenable : seul ce qui manque est construit. Après une coupure de connexion, MySQL a
-    # pu terminer un ALTER que le batch n'a pas vu finir — le refaire échouerait (1061).
-    presents = await index_presents()
-    if "uk_pdi_ref" in presents:
-        # L'index unique est déjà là : aucun doublon possible, il ne reste qu'à ranger.
-        operations = [f"DROP INDEX `{INDEX_DOUBLONS}`"] if INDEX_DOUBLONS in presents else []
-        if "idx_cr_ref_actif" not in presents:
-            operations.append(f"ADD {INDEX_SECONDAIRES['idx_cr_ref_actif']}")
-        if operations:
-            await executer_ddl(
-                f"ALTER TABLE {TABLE} " + ", ".join(operations), etape="index-fin"
-            )
-        logger.info(
-            "Fin reconstruction index %s",
-            ctx(table=TABLE, reprise="index unique déjà en place"),
-        )
-        return Doublons()
-
-    operations = []
-    if "idx_cr_ref_actif" not in presents:
-        operations.append(f"ADD {INDEX_SECONDAIRES['idx_cr_ref_actif']}")
-    if INDEX_DOUBLONS not in presents:
-        operations.append(f"ADD KEY `{INDEX_DOUBLONS}` (`id_pdi`)")
-    if operations:
-        await executer_ddl(
-            f"ALTER TABLE {TABLE} " + ", ".join(operations), etape="index-construction"
-        )
-    _avancement("index secondaires et index temporaire construits", debut)
-
-    doublons = Doublons()
-    dernier: int | None = None
-    while True:
-        if dernier is None:
-            page = await db_write.fetch_all(PREMIERE_PAGE_DOUBLONS_SQL, (TAILLE_PAGE_DOUBLONS,))
-        else:
-            page = await db_write.fetch_all(
-                PAGE_SUIVANTE_DOUBLONS_SQL, (dernier, TAILLE_PAGE_DOUBLONS)
-            )
-        if not page:
-            break
-        await _traiter_page(page, doublons, ecarter=ecarter, signaler=signaler)
-        dernier = page[-1]["id_pdi"]
-        if len(page) < TAILLE_PAGE_DOUBLONS:
-            break
-
-    _avancement("recherche des doublons terminée", debut, pdi_en_doublon=doublons.pdi)
-    if doublons.pdi and not ecarter:
-        logger.warning(
-            "Rejet reconstruction index %s",
-            ctx(pdi_en_doublon=doublons.pdi, lignes_en_trop=doublons.lignes_en_trop),
-        )
-        return doublons
-
-    await executer_ddl(
-        f"ALTER TABLE {TABLE} ADD {INDEX_SECONDAIRES['uk_pdi_ref']}, "
-        f"DROP INDEX `{INDEX_DOUBLONS}`",
-        etape="index-unique",
-    )
-    logger.info(
-        "Fin reconstruction index %s",
-        ctx(
-            table=TABLE,
-            pdi_en_doublon=doublons.pdi or None,
-            lignes_ecartees=doublons.lignes_en_trop or None,
-            duration_ms=round((time.perf_counter() - debut) * 1000, 1),
-        ),
-    )
-    return doublons
-
-
-async def _traiter_page(
-    page: list[dict[str, Any]],
-    doublons: Doublons,
-    *,
-    ecarter: bool,
-    signaler: Callable[[str], None] | None,
-) -> None:
-    pdis = [ligne["id_pdi"] for ligne in page]
-    marqueurs = ", ".join(["%s"] * len(pdis))
-    lignes = await db_write.fetch_all(
-        f"SELECT id, {COLONNES_DONNEES} FROM {TABLE} WHERE id_pdi IN ({marqueurs}) "
-        "ORDER BY id_pdi, id",
-        tuple(pdis),
-    )
-
-    a_supprimer: list[int] = []
-    conservee: dict[str, Any] | None = None
-    for ligne in lignes:
-        donnees = {k: v for k, v in ligne.items() if k != "id"}
-        if conservee is None or conservee["id_pdi"] != ligne["id_pdi"]:
-            conservee = donnees
-            doublons.pdi += 1
-            continue
-        identique = donnees == conservee
-        doublons.lignes_en_trop += 1
-        if identique:
-            doublons.identiques += 1
-        else:
-            doublons.conflits += 1
-        a_supprimer.append(ligne["id"])
-        nature = "identique" if identique else "en CONFLIT (données différentes)"
-        suite = " — la première occurrence du fichier est conservée." if ecarter else "."
-        motif = f"PDI {ligne['id_pdi']} : doublon {nature}{suite}"
-        if signaler:
-            signaler(motif)
-        elif len(doublons.details) < CHARGEMENT_MAX_REJETS_DETAILLES:
-            doublons.details.append(motif)
-
-    if ecarter:
-        for debut in range(0, len(a_supprimer), 1000):
-            tranche = a_supprimer[debut : debut + 1000]
-            await db_write.execute(
-                f"DELETE FROM {TABLE} WHERE id IN ({', '.join(['%s'] * len(tranche))})",
-                tuple(tranche),
-            )
-
-
-# ---------------------------------------------------------------------------
-# Après un échec
-# ---------------------------------------------------------------------------
 
 
 async def completer_index(*, etape: str = "index-completion") -> list[str]:
     """Recrée les index canoniques absents et retire l'index temporaire. Rend les opérations.
 
-    Destiné à une table vide (juste après le TRUNCATE) : l'ALTER est alors instantané. C'est
-    ce qui garantit qu'un chargement index conservés ne tourne jamais sans `uk_pdi_ref`,
-    même après un chargement précédent interrompu qui l'aurait laissé absent.
+    Joué sur la table vide, juste après le TRUNCATE : l'ALTER est alors instantané. C'est ce
+    qui garantit que le chargement ne tourne jamais sans `uk_pdi_ref`, même après un essai
+    précédent interrompu qui l'aurait laissé absent.
     """
     presents = await index_presents()
     operations = [f"DROP INDEX `{INDEX_DOUBLONS}`"] if INDEX_DOUBLONS in presents else []
@@ -341,22 +116,8 @@ async def completer_index(*, etape: str = "index-completion") -> list[str]:
     ]
     if operations:
         await executer_ddl(f"ALTER TABLE {TABLE} " + ", ".join(operations), etape=etape)
+        logger.info(
+            "Fin remise en place des index %s",
+            ctx(table=TABLE, operations=", ".join(operations)),
+        )
     return operations
-
-
-async def remettre_table_vide() -> bool:
-    """Table vidée et index canoniques en place — un état propre, obtenu instantanément.
-
-    Joué quand un chargement échoue alors que les index étaient retirés : reconstruire les
-    index sur des millions de lignes partielles prendrait des minutes pour un contenu de
-    toute façon à recharger. Ne lève jamais : un échec ici est journalisé, et le chargement
-    suivant retire puis recrée les index de lui-même.
-    """
-    try:
-        await vider_table()
-        await completer_index(etape="remise-en-etat")
-    except Exception:  # noqa: BLE001 - dernier filet, l'échec d'origine prime
-        logger.exception("Erreur remise en état table %s", ctx(table=TABLE))
-        return False
-    logger.info("Fin remise en état table %s", ctx(table=TABLE))
-    return True

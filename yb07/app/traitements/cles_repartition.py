@@ -27,11 +27,12 @@ Deux écarts assumés avec ce script, tous deux dus au format de fichier, qui a 
   vrai risque. Un échec laisse donc un chargement partiel : c'est la purge (RG6) qui rend
   la commande rejouable, et le rapport dit combien de lignes étaient passées.
 
-Index (cf. `index_chargement.py`) : par défaut ils restent en place et les lignes sont
-insérées par lots — plus lent, mais sans instruction longue. `CHARGEMENT_RETIRER_INDEX=true`
-les retire le temps du chargement et les reconstruit en une passe triée, les doublons étant
-traités juste avant de recréer l'index unique. Dans les deux cas, le lot suivant est lu et
-converti pendant l'insertion du courant.
+Index (cf. `index_chargement.py`) : ils restent **toujours en place**. Les lignes sont
+insérées par lots de `CHARGEMENT_TAILLE_LOT`, chacun commité seul — plus lent qu'un
+chargement sans index, mais aucune instruction longue (une reconstruction finale était un
+ALTER de plusieurs minutes, coupé par le réseau pour inactivité). Un doublon est rejeté dès
+son insertion par `uk_pdi_ref`, avec son numéro de ligne. Le lot suivant est lu et converti
+pendant l'insertion du courant.
 
 Sites dont un total de trafic est nul : ils sont chargés comme les autres ; le calcul des
 clés (DSR-699) leur enregistre des clés à 0 et le rapport de `init` les liste.
@@ -46,12 +47,6 @@ vide, valeur mal formée, autre référentiel, doublon ou valeur refusée par My
 au lieu d'arrêter le chargement. Elle figure dans les avertissements du rapport, et le total
 dans `LIGNES_IGNOREES`. Un en-tête faux ou une panne technique (connexion, verrou, droits)
 restent bloquants : ce ne sont pas des défauts d'une ligne.
-
-Reprise : une fois le fichier entièrement chargé, un échec de la suite (reconstruction
-des index, doublons, contrôles — typiquement une coupure de connexion
-pendant un ALTER de plusieurs minutes) **ne vide plus la table**. Les lignes restent, et
-`finaliser_chargement` (commande `finaliser-chargement`) reprend là où le chargement s'est
-arrêté, sans relire le fichier.
 
 Le traitement **ne lève pas** : il rend un `Rapport` dont `reussi` vaut `False`. C'est la
 CLI qui en déduit le code de retour du processus.
@@ -72,7 +67,6 @@ from typing import Any, Iterator
 from app.config import (
     CHARGEMENT_LOG_TOUTES_LES,
     CHARGEMENT_MAX_REJETS_DETAILLES,
-    CHARGEMENT_RETIRER_INDEX,
     CHARGEMENT_TAILLE_LOT,
     CSV_CLES_REPARTITION,
     CSV_DELIMITEUR,
@@ -89,7 +83,6 @@ from app.traitements.rapport import ECHEC, SUCCES, Rapport
 logger = logging.getLogger(__name__)
 
 TITRE = "CHARGEMENT DES CLES DE REPARTITION"
-TITRE_FINALISATION = "FINALISATION DU CHARGEMENT DES CLES DE REPARTITION"
 
 # En-tête attendu, dans l'ordre du fichier. Le vérifier au premier enregistrement fait
 # échouer un fichier au mauvais format tout de suite, et non à la millionième ligne.
@@ -132,11 +125,6 @@ AUTRE_REFERENTIEL_SQL = """
 SELECT id_referentiel FROM trppu_cles_repartition WHERE id_referentiel <> %s LIMIT 1
 """
 
-# Existence d'au moins une ligne : sans index, s'arrête à la première ligne trouvée.
-REFERENTIEL_CHARGE_SQL = (
-    "SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel = %s LIMIT 1"
-)
-
 LIGNES_PRESENTES_SQL = (
     "SELECT COUNT(*) AS nb FROM trppu_cles_repartition WHERE id_referentiel = %s"
 )
@@ -147,8 +135,9 @@ CODES_ERREUR_LIGNE = frozenset({1062, 1264, 1292, 1366, 1406})
 
 # Couverte par `idx_cr_ref_actif` (id_referentiel, date_fin_validite, …) : un parcours
 # d'index, sans lire les 22 M de lignes de la table. Ni `COUNT(DISTINCT id_pdi)` — il
-# exigeait une table temporaire de 22 M de valeurs, alors que `uk_pdi_ref`, qui vient d'être
-# recréé, garantit déjà l'unicité — ni `MIN(date_debut_validite)`, calculé à la lecture.
+# exigeait une table temporaire de 22 M de valeurs, alors que `uk_pdi_ref`, en place pendant
+# tout le chargement, garantit déjà l'unicité — ni `MIN(date_debut_validite)`, calculé à la
+# lecture.
 CONTROLE_FINAL_SQL = """
 SELECT COUNT(*)                             AS nb_lignes,
        SUM(date_fin_validite IS NULL)       AS nb_actives
@@ -424,12 +413,6 @@ async def charger_cles_repartition(
         libelle_source = "sur S3"
     lignes_inserees = 0
     lots = 0
-    # Vrai tant que les index secondaires sont retirés : un échec doit alors remettre la
-    # table dans un état propre (vide, index en place) plutôt que la laisser sans index.
-    index_a_restaurer = False
-    # Vrai dès que le fichier est entièrement en base : un échec ensuite ne vide plus la
-    # table, 45 minutes de chargement valent mieux qu'une remise à zéro.
-    donnees_chargees = False
 
     try:
         # --- Garde-fous, avant toute écriture -----------------------------
@@ -467,40 +450,19 @@ async def charger_cles_repartition(
         )
         rapport.ok(f"Purge (TRUNCATE) : {supprimees} ligne(s) supprimée(s)")
 
-        # --- Index : conservés (défaut) ou retirés le temps du chargement ------
-        if CHARGEMENT_RETIRER_INDEX:
-            index_a_restaurer = await index_chargement.retirer_index()
-            if index_a_restaurer:
-                rapport.ok("Index secondaires retirés pendant le chargement")
-            else:
-                rapport.avertissements.append(
-                    "Index secondaires conservés pendant le chargement (droit ALTER "
-                    "manquant) : chargement nettement plus lent."
-                )
-        else:
-            # Table vide : recréer un index absent (chargement précédent interrompu) est
-            # instantané, et garantit que l'unicité est contrôlée dès la première ligne.
-            recrees = await index_chargement.completer_index()
-            rapport.ok(
-                "Index conservés pendant le chargement (insertion par lots, sans "
-                "reconstruction finale)"
-                + (f" — {len(recrees)} opération(s) de remise en place" if recrees else "")
-            )
+        # --- Index en place ------------------------------------------------
+        # Table vide : recréer un index absent (essai précédent interrompu) est instantané,
+        # et garantit que l'unicité est contrôlée dès la première ligne.
+        recrees = await index_chargement.completer_index()
+        rapport.ok(
+            "Index en place pendant le chargement"
+            + (f" — {len(recrees)} opération(s) de remise en place" if recrees else "")
+        )
 
         # --- Lecture en streaming et insertion par lots ---------------------
         lignes_inserees, lots, date_debut_min = await _charger(
             ouvrir, cle, id_referentiel, debut, rejets
         )
-        donnees_chargees = True
-
-        # --- Index et doublons (si les index avaient été retirés) ------------
-        lignes_inserees -= await _finaliser(
-            rapport,
-            id_referentiel,
-            rejets=rejets,
-            index_retires=index_a_restaurer,
-        )
-        index_a_restaurer = False
 
     except TraitementImpossible as erreur:
         logger.warning(
@@ -514,14 +476,7 @@ async def charger_cles_repartition(
         )
         rapport.ko(str(erreur))
         rapport.statut = ECHEC
-        rapport.etats["LIGNES_CHARGEES"] = await _apres_echec(
-            rapport,
-            id_referentiel,
-            index_a_restaurer,
-            lignes_inserees,
-            donnees_chargees=donnees_chargees,
-            ignorer_erreurs=ignorer_erreurs,
-        )
+        rapport.etats["LIGNES_CHARGEES"] = lignes_inserees
         _reporter_rejets(rapport, rejets)
         return rapport
     except Exception as erreur:  # noqa: BLE001 - la CLI ne doit jamais rendre de stacktrace
@@ -531,14 +486,7 @@ async def charger_cles_repartition(
         )
         rapport.erreur = _message_erreur(erreur)
         rapport.statut = ECHEC
-        rapport.etats["LIGNES_CHARGEES"] = await _apres_echec(
-            rapport,
-            id_referentiel,
-            index_a_restaurer,
-            lignes_inserees,
-            donnees_chargees=donnees_chargees,
-            ignorer_erreurs=ignorer_erreurs,
-        )
+        rapport.etats["LIGNES_CHARGEES"] = lignes_inserees
         _reporter_rejets(rapport, rejets)
         return rapport
 
@@ -570,163 +518,6 @@ async def charger_cles_repartition(
             lignes_ignorees=rejets.total if rejets else None,
             verdict=rapport.statut,
             duration_ms=duration_ms,
-        ),
-    )
-    return rapport
-
-
-def commande_finalisation(id_referentiel: int, ignorer_erreurs: bool) -> str:
-    """Commande de reprise, avec les mêmes options que le chargement interrompu."""
-    options = " --skip-errors" * ignorer_erreurs
-    return f"python -m app.main finaliser-chargement {id_referentiel}{options}"
-
-
-async def _apres_echec(
-    rapport: Rapport,
-    id_referentiel: int,
-    index_a_restaurer: bool,
-    lignes: int,
-    *,
-    donnees_chargees: bool,
-    ignorer_erreurs: bool,
-) -> int:
-    """Suite à donner à un échec. Retourne les lignes restant en base.
-
-    Fichier entièrement chargé : les lignes sont conservées et la reprise se fait par
-    `finaliser-chargement`, sans relire le fichier. Chargement interrompu en cours de route,
-    index retirés : la table est vidée et ses index recréés (instantané), un chargement
-    partiel n'ayant aucune valeur.
-    """
-    if donnees_chargees:
-        rapport.avertissements.append(
-            f"Fichier entièrement chargé ({lignes} ligne(s)) : les données sont CONSERVÉES. "
-            "Une fois la cause corrigée, reprendre sans recharger : "
-            + commande_finalisation(id_referentiel, ignorer_erreurs)
-        )
-        rapport.etats["REPRENDRE_PAR"] = "finaliser-chargement"
-        return lignes
-    if not index_a_restaurer:
-        return lignes
-    if await index_chargement.remettre_table_vide():
-        rapport.avertissements.append(
-            "Chargement interrompu : la table a été vidée et ses index recréés. Relancer le "
-            "chargement une fois la cause corrigée."
-        )
-        return 0
-    rapport.avertissements.append(
-        "Chargement interrompu ET remise en état impossible : la table peut être sans ses "
-        "index secondaires. Relancer le chargement, qui les recrée."
-    )
-    return lignes
-
-
-async def _finaliser(
-    rapport: Rapport,
-    id_referentiel: int,
-    *,
-    rejets: _Rejets | None,
-    index_retires: bool,
-) -> int:
-    """Tout ce qui suit le chargement des lignes. Rend le nombre de lignes retirées.
-
-    Commun au chargement et à sa reprise (`finaliser_chargement`) : index reconstruits et
-    doublons traités si les index avaient été retirés.
-    Chaque étape est reprenable — elle ne refait pas ce qui est déjà fait.
-    """
-    retirees = 0
-    if index_retires:
-        doublons = await index_chargement.reconstruire_index(
-            ecarter=rejets is not None,
-            signaler=(lambda motif: rejets.ajouter(None, motif)) if rejets else None,
-        )
-        if doublons.pdi and rejets is None:
-            rapport.avertissements.extend(doublons.details)
-            raise TraitementImpossible(
-                f"{doublons.pdi} PDI en doublon dans le fichier "
-                f"({doublons.lignes_en_trop} ligne(s) en trop, dont {doublons.conflits} "
-                "aux données différentes). Dédoublonner le fichier "
-                "(scripts/nettoyer_csv_cles.py), ou finaliser avec --skip-errors pour ne "
-                "garder que la première occurrence."
-            )
-        retirees += doublons.lignes_en_trop
-        rapport.ok("Index secondaires reconstruits")
-        if doublons.pdi:
-            rapport.ok(
-                f"{doublons.lignes_en_trop} doublon(s) de PDI écarté(s) — "
-                f"{doublons.identiques} identique(s), {doublons.conflits} en conflit"
-            )
-    return retirees
-
-
-async def finaliser_chargement(
-    id_referentiel: int,
-    *,
-    ignorer_erreurs: bool = False,
-) -> Rapport:
-    """Reprend un chargement dont les lignes sont en base mais la suite a échoué.
-
-    Reconstruit les index qui manquent, traite les doublons, puis joue les contrôles
-    finaux — sans relire le fichier. Sans effet nuisible sur
-    un chargement déjà complet : chaque étape ne fait que ce qui manque.
-    """
-    debut = time.perf_counter()
-    rapport = Rapport(
-        titre=TITRE_FINALISATION,
-        id_traitement=id_referentiel,
-        libelle_identifiant="Référentiel",
-    )
-    rejets = _Rejets(id_referentiel) if ignorer_erreurs else None
-    logger.info(
-        "Début finalisation chargement %s",
-        ctx(
-            id_referentiel=id_referentiel,
-            skip_errors=ignorer_erreurs or None,
-        ),
-    )
-    try:
-        if not await db_write.fetch_one(REFERENTIEL_CHARGE_SQL, (id_referentiel,)):
-            raise TraitementImpossible(
-                f"Aucune ligne du référentiel {id_referentiel} en base : il n'y a rien à "
-                "finaliser, relancer le chargement."
-            )
-        rapport.ok(f"Lignes du référentiel {id_referentiel} présentes en base")
-        await _finaliser(
-            rapport,
-            id_referentiel,
-            rejets=rejets,
-            index_retires=True,
-        )
-    except TraitementImpossible as erreur:
-        logger.warning(
-            "Rejet finalisation chargement %s",
-            ctx(id_referentiel=id_referentiel, motif=str(erreur)),
-        )
-        rapport.ko(str(erreur))
-        rapport.statut = ECHEC
-        _reporter_rejets(rapport, rejets)
-        return rapport
-    except Exception as erreur:  # noqa: BLE001 - la CLI ne doit jamais rendre de stacktrace
-        logger.exception(
-            "Erreur finalisation chargement %s", ctx(id_referentiel=id_referentiel)
-        )
-        rapport.erreur = _message_erreur(erreur)
-        rapport.statut = ECHEC
-        rapport.avertissements.append(
-            "Les données restent en base. Relancer, une fois la cause corrigée : "
-            + commande_finalisation(id_referentiel, ignorer_erreurs)
-        )
-        _reporter_rejets(rapport, rejets)
-        return rapport
-
-    await _controles_finaux(rapport, id_referentiel, None, None)
-    _reporter_rejets(rapport, rejets)
-    rapport.statut = SUCCES if rapport.reussi else ECHEC
-    logger.info(
-        "Fin finalisation chargement %s",
-        ctx(
-            id_referentiel=id_referentiel,
-            verdict=rapport.statut,
-            duration_ms=round((time.perf_counter() - debut) * 1000, 1),
         ),
     )
     return rapport
@@ -834,9 +625,8 @@ async def _inserer_lot(
         if rejets is None or _code_mysql(erreur) not in CODES_ERREUR_LIGNE:
             raise _traduire_erreur_insertion(erreur, premiere) from erreur
         # Le lot a été annulé en bloc : on le rejoue ligne à ligne pour n'écarter que la ou
-        # les lignes fautives. Sans index unique (cas nominal), un doublon ne fait plus
-        # échouer de lot : ce chemin ne sert qu'aux valeurs refusées par MySQL, ou quand
-        # les index n'ont pas pu être retirés.
+        # les lignes fautives : un doublon (rejeté par `uk_pdi_ref`) ou une valeur refusée
+        # par MySQL.
         return await _inserer_ligne_a_ligne(valeurs, numeros, rejets)
 
 
@@ -911,17 +701,16 @@ def _message_erreur(erreur: Exception) -> str:
 async def _controles_finaux(
     rapport: Rapport,
     id_referentiel: int,
-    lignes_inserees: int | None,
+    lignes_inserees: int,
     date_debut_min: date | None,
 ) -> None:
     """Relit la table pour confirmer ce qui a été écrit.
 
-    Sur l'instance d'**écriture** : une réplique aurait du retard sur 22 M d'insertions et
-    deux ALTER — elle attendrait d'avoir rejoué l'ALTER, ou compterait une table incomplète
-    et conclurait à tort à une volumétrie incohérente.
+    Sur l'instance d'**écriture** : une réplique aurait du retard sur 22 M d'insertions, et
+    compterait une table incomplète — elle conclurait à tort à une volumétrie incohérente.
 
-    Les doublons `(id_pdi, id_referentiel)` ne sont pas recomptés : `uk_pdi_ref` est en place
-    (recréé en fin de chargement, ou conservé), il les rend impossibles.
+    Les doublons `(id_pdi, id_referentiel)` ne sont pas recomptés : `uk_pdi_ref`, en place
+    pendant tout le chargement, les rend impossibles.
     """
     debut = time.perf_counter()
     logger.info("Début contrôles finaux chargement %s", ctx(id_referentiel=id_referentiel))
@@ -940,17 +729,12 @@ async def _controles_finaux(
     nb_lignes = int(controle["nb_lignes"] or 0)
     nb_actives = int(controle["nb_actives"] or 0)
 
-    if lignes_inserees is None:
-        # Reprise : le nombre de lignes lues n'est plus connu, la base fait foi.
-        rapport.ok(f"Volumétrie en base : {nb_lignes} ligne(s)")
-        rapport.etats["LIGNES_CHARGEES"] = nb_lignes
-    else:
-        rapport.ajouter(
-            nb_lignes == lignes_inserees,
-            f"Volumétrie en base : {nb_lignes} ligne(s)",
-            f"Volumétrie incohérente : {nb_lignes} ligne(s) en base pour "
-            f"{lignes_inserees} insérée(s).",
-        )
+    rapport.ajouter(
+        nb_lignes == lignes_inserees,
+        f"Volumétrie en base : {nb_lignes} ligne(s)",
+        f"Volumétrie incohérente : {nb_lignes} ligne(s) en base pour "
+        f"{lignes_inserees} insérée(s).",
+    )
     rapport.ok("Unicité (PDI, référentiel) garantie par l'index uk_pdi_ref")
     rapport.ok(f"Lignes actives (date_fin_validite NULL) : {nb_actives}")
     # Conservé, et pas seulement affiché : c'est le nombre de clés que DSR-699 devra produire.

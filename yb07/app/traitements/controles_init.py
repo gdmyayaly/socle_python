@@ -58,9 +58,9 @@ LIGNES_PRESENTES_SQL = """
 SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel = %s LIMIT 1
 """
 
-# Chargement finalisé : l'index unique en place, l'index temporaire des doublons retiré. Un
-# chargement interrompu après l'insertion laisse la table sans eux ; poursuivre la chaîne
-# calculerait sur des doublons possibles (`finaliser-chargement` les traite).
+# Index du chargement en place : l'index unique présent, l'index temporaire d'une ancienne
+# version absent. Sans `uk_pdi_ref`, poursuivre la chaîne calculerait sur des doublons
+# possibles ; relancer le chargement le recrée avant la première ligne.
 CHARGEMENT_FINALISE_SQL = """
 SELECT COALESCE(SUM(INDEX_NAME = 'uk_pdi_ref'), 0)          AS chargement_uk,
        COALESCE(SUM(INDEX_NAME = 'idx_cr_pdi_doublons'), 0) AS chargement_tmp
@@ -263,9 +263,9 @@ async def _verifier_lignes(rapport: Rapport, db, id_referentiel: int) -> bool:
             return _refuser(
                 rapport,
                 id_referentiel,
-                f"Chargement du référentiel {id_referentiel} non finalisé (index uk_pdi_ref "
-                "absent ou index temporaire des doublons encore présent) : lancer "
-                f"« finaliser-chargement {id_referentiel} » avant de poursuivre.",
+                f"Index du chargement du référentiel {id_referentiel} incomplets (uk_pdi_ref "
+                "absent ou index temporaire idx_cr_pdi_doublons présent) : relancer "
+                "l'étape « chargement », qui les remet en place avant la première ligne.",
             )
         rapport.ok(f"Référentiel {id_referentiel} chargé")
         return True

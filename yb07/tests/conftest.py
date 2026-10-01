@@ -41,20 +41,6 @@ def _normaliser(sql: str) -> str:
     return " ".join(sql.split())
 
 
-class Successives:
-    """Réponse qui change d'un appel à l'autre : la dernière est rendue ensuite à chaque fois.
-
-    Pour une requête dont la réponse évolue pendant le traitement — les index présents avant
-    et après leur retrait, par exemple.
-    """
-
-    def __init__(self, *reponses: Any) -> None:
-        self._reponses = list(reponses)
-
-    def suivante(self) -> Any:
-        return self._reponses.pop(0) if len(self._reponses) > 1 else self._reponses[0]
-
-
 @pytest.fixture(autouse=True)
 def _aucune_connexion_reelle(monkeypatch):
     """Filet de sécurité : aucun test ne doit joindre une vraie base.
@@ -297,7 +283,7 @@ class FausseBase:
         normalisee = _normaliser(query)
         for fragment, reponse in self.reponses.items():
             if fragment in normalisee:
-                return reponse.suivante() if isinstance(reponse, Successives) else reponse
+                return reponse
         raise KeyError(f"aucune réponse déclarée pour : {normalisee[:120]}")
 
     def ecritures(self) -> list[str]:

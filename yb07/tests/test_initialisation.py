@@ -990,12 +990,12 @@ def test_un_lot_n_est_pas_rejoue_si_tout_passe():
 
 def test_chaine_refusee_si_le_chargement_n_est_pas_finalise():
     """Lignes en base mais index unique absent : poursuivre calculerait sur des doublons
-    possibles. La reprise passe par finaliser-chargement."""
+    possibles. Relancer le chargement remet l'index en place avant la première ligne."""
     lectures = _lectures(**{"AS chargement_uk": {"chargement_uk": 0, "chargement_tmp": 1}})
     ecritures = _ecritures(lecture_seule=True)
 
     rapport = _lancer(db_lecture=lectures, db_ecriture=ecritures, depuis="migration")
 
     assert not rapport.reussi
-    assert "finaliser-chargement 1" in " ".join(rapport.motifs)
+    assert "relancer l'étape « chargement »" in " ".join(rapport.motifs)
     assert ecritures.scripts_joues() == []

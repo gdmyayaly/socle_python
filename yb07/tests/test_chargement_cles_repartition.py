@@ -20,19 +20,11 @@ import pytest
 from app.traitements import cles_repartition as module
 from app.erreurs import TraitementImpossible
 from app.traitements.rapport import ECHEC, SUCCES
-from tests.conftest import FausseBase, Successives
+from tests.conftest import FausseBase
 
 EN_TETE = ";".join(module.COLONNES_CSV)
 
 
-@pytest.fixture(autouse=True)
-def _mode_retrait_des_index(monkeypatch):
-    """Les tests historiques décrivent le mode « index retirés puis reconstruits »
-    (CHARGEMENT_RETIRER_INDEX=true). Le mode par défaut, index conservés, a ses propres
-    tests en fin de fichier, qui repassent ce réglage à False."""
-    monkeypatch.setattr(module, "CHARGEMENT_RETIRER_INDEX", True)
-
-# Une ligne complète, telle qu'elle sort du fichier métier.
 LIGNE_PLEINE = (
     "100005554;6105149;1.0196987815888434;0.0;0.6444216483320571;BPF;372920;PDC1;"
     "SORIGNY PDC1;372900;CHARGE AMBOISE PPDC;750558;PARIS CENTRE VAL DE LOIRE DEXC;"
@@ -45,13 +37,8 @@ LIGNE_TROUEE = (
 )
 
 
-#: DDL d'un chargement nominal, dans l'ordre (labels des scripts sur connexion dédiée).
-SCRIPTS_NOMINAUX = [
-    "chargement/purge",
-    "chargement/index-retrait",
-    "chargement/index-construction",
-    "chargement/index-unique",
-]
+#: DDL d'un chargement nominal : la purge seule, les index étant déjà en place.
+SCRIPTS_NOMINAUX = ["chargement/purge"]
 
 
 def csv_de(*lignes: str) -> str:
@@ -64,14 +51,12 @@ def base_nominale(**surcharges) -> FausseBase:
         "SELECT COUNT(*) AS nb FROM trppu_cles_repartition": {"nb": 0},
         # Garde-fou du TRUNCATE : aucun autre référentiel dans la table.
         "WHERE id_referentiel <> %s LIMIT 1": None,
-        # Index présents : les canoniques avant le chargement, puis la seule clé primaire une
-        # fois les secondaires retirés.
-        "FROM information_schema.STATISTICS": Successives(
-            [{"nom": "PRIMARY"}, {"nom": "uk_pdi_ref"}, {"nom": "idx_cr_ref_actif"}],
-            [{"nom": "PRIMARY"}],
-        ),
-        # Recherche des doublons avant de recréer l'index unique : aucun.
-        "HAVING COUNT(*) > 1": [],
+        # Index présents : les canoniques — rien à remettre en place après la purge.
+        "FROM information_schema.STATISTICS": [
+            {"nom": "PRIMARY"},
+            {"nom": "uk_pdi_ref"},
+            {"nom": "idx_cr_ref_actif"},
+        ],
         "AS nb_actives": {
             "nb_lignes": 1,
             "nb_actives": 1,
@@ -331,16 +316,14 @@ def test_le_traitement_ne_leve_jamais(monkeypatch, s3_bouchonne, brancher_base):
     def explose(*args, **kwargs):
         raise RuntimeError("boom")
 
-    # Panne au moment d'insérer, index retirés : l'erreur est rendue ET la table remise
-    # en état, sans qu'aucune exception ne remonte.
+    # Panne au moment d'insérer : l'erreur est rendue, sans qu'aucune exception ne remonte.
     monkeypatch.setattr(base, "transaction", explose)
 
     rapport = charger(id_referentiel=1, fichier="f.csv")
 
     assert rapport.statut == ECHEC
     assert "boom" in (rapport.erreur or "")
-    # Chargement interrompu en cours de route : table vidée, index recréés.
-    assert base.scripts_joues()[-2:] == ["chargement/purge", "chargement/remise-en-etat"]
+    assert base.scripts_joues() == ["chargement/purge"]
 
 
 # --- Source locale ----------------------------------------------------------
@@ -477,32 +460,6 @@ def test_sans_skip_errors_la_meme_ligne_fait_echouer(s3_bouchonne, brancher_base
     assert "LIGNES_IGNOREES" not in rapport.etats
 
 
-def test_index_conserves_sans_droit_alter_doublon_rejoue_ligne_a_ligne(
-    s3_bouchonne, brancher_base
-):
-    """Sans droit ALTER, le chargement se fait index en place : plus lent, mais correct."""
-    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_PLEINE))
-    base = brancher_base(
-        BaseAvecDoublon(
-            base_nominale().reponses,
-            echecs_scripts={
-                "index-retrait": pymysql.err.OperationalError(1142, "ALTER command denied")
-            },
-        )
-    )
-
-    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
-
-    assert rapport.statut == SUCCES, rapport.motifs
-    assert rapport.etats["LIGNES_CHARGEES"] == 1
-    assert rapport.etats["LIGNES_IGNOREES"] == 1
-    assert any("droit ALTER manquant" in a for a in rapport.avertissements)
-    doublon = next(a for a in rapport.avertissements if "doublon de PDI" in a)
-    assert "Ligne 3" in doublon
-    assert base.pdi_inseres == {100005554}
-    assert "chargement/index-construction" not in base.scripts_joues()
-
-
 def test_skip_errors_ne_masque_pas_une_panne_technique(s3_bouchonne, brancher_base):
     """Une connexion perdue (2013) n'est pas un défaut de ligne : le chargement s'arrête."""
     s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_PLEINE))
@@ -606,117 +563,7 @@ def test_option_truncate_retiree():
         build_parser().parse_args(["init", "1", "--truncate"])
 
 
-# --- Index retirés pendant le chargement, doublons traités avant l'index unique -------
-
-
-def _ligne_en_base(id_, trafic="1.0196987815888434"):
-    """Ligne telle que relue en base par la recherche des doublons."""
-    return {
-        "id": id_,
-        "id_pdi": 100005554,
-        "pdi_rattache": 6105149,
-        "trafic_colis": Decimal(trafic),
-        "trafic_oo": Decimal("0.0"),
-        "trafic_3s": Decimal("0.6444216483320571"),
-        "nature": "BPF",
-        "co_regate_site": "372920",
-        "type_site": "PDC1",
-        "lb_regate": "SORIGNY PDC1",
-        "co_regate_etablissement": "372900",
-        "lb_etablissement": "CHARGE AMBOISE PPDC",
-        "co_regate_dex": "750558",
-        "lb_dex": "PARIS CENTRE VAL DE LOIRE DEXC",
-        "nb_pre": 1,
-        "potentielip": 0,
-        "id_referentiel": 1,
-        "date_debut_validite": date(2026, 7, 21),
-        "date_fin_validite": None,
-    }
-
-
-def base_avec_doublon_en_base(*lignes_en_base) -> FausseBase:
-    return base_nominale(
-        **{
-            # Même clé que `base_nominale` : la doublure rend le premier fragment trouvé.
-            "HAVING COUNT(*) > 1": [
-                {"id_pdi": 100005554, "nb_occurrences": len(lignes_en_base)}
-            ],
-            "WHERE id_pdi IN (": list(lignes_en_base),
-        }
-    )
-
-
-def test_skip_errors_doublon_ecarte_avant_l_index_unique(s3_bouchonne, brancher_base):
-    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_CONFLIT_CHARGEMENT))
-    base = brancher_base(
-        base_avec_doublon_en_base(_ligne_en_base(1), _ligne_en_base(2, trafic="2.5"))
-    )
-
-    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
-
-    assert rapport.statut == SUCCES, rapport.motifs
-    assert base.scripts_joues() == SCRIPTS_NOMINAUX
-    # La seconde occurrence (id 2) est supprimée, la première conservée.
-    assert base.parametres_de("DELETE FROM trppu_cles_repartition WHERE id IN") == (2,)
-    assert rapport.etats["LIGNES_CHARGEES"] == 1
-    assert rapport.etats["LIGNES_IGNOREES"] == 1
-    assert any("PDI 100005554 : doublon en CONFLIT" in a for a in rapport.avertissements)
-    assert any("1 doublon(s) de PDI écarté(s)" in c.libelle for c in rapport.controles)
-
-
-def test_doublon_identique_distingue_du_conflit(s3_bouchonne, brancher_base):
-    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_PLEINE))
-    brancher_base(base_avec_doublon_en_base(_ligne_en_base(1), _ligne_en_base(2)))
-
-    rapport = charger(id_referentiel=1, fichier="f.csv", ignorer_erreurs=True)
-
-    assert any("doublon identique" in a for a in rapport.avertissements)
-
-
-def test_mode_strict_doublon_echoue_mais_conserve_les_donnees(s3_bouchonne, brancher_base):
-    """Fichier entièrement chargé : un échec ensuite ne vide plus la table, la reprise se
-    fait par finaliser-chargement, sans relire le fichier."""
-    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_CONFLIT_CHARGEMENT))
-    base = brancher_base(
-        base_avec_doublon_en_base(_ligne_en_base(1), _ligne_en_base(2, trafic="2.5"))
-    )
-
-    rapport = charger(id_referentiel=1, fichier="f.csv")
-
-    assert rapport.statut == ECHEC
-    assert "1 PDI en doublon" in " ".join(rapport.motifs)
-    assert not base.a_ecrit("DELETE FROM trppu_cles_repartition WHERE id IN")
-    # Pas de purge après coup : ni index unique posé, ni table vidée.
-    assert base.scripts_joues() == [
-        "chargement/purge",
-        "chargement/index-retrait",
-        "chargement/index-construction",
-    ]
-    assert rapport.etats["LIGNES_CHARGEES"] == 2
-    assert rapport.etats["REPRENDRE_PAR"] == "finaliser-chargement"
-    assert any(
-        "données sont CONSERVÉES" in a and "finaliser-chargement 1" in a
-        for a in rapport.avertissements
-    )
-
-
-def test_erreur_en_cours_de_chargement_remet_la_table_en_etat(s3_bouchonne, brancher_base):
-    s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_MAL_FORMEE))
-    # Index absents à la relecture : la remise en état doit les recréer.
-    base = brancher_base(
-        base_nominale(**{"FROM information_schema.STATISTICS": [{"nom": "PRIMARY"}]})
-    )
-
-    rapport = charger(id_referentiel=1, fichier="f.csv")
-
-    assert rapport.statut == ECHEC
-    assert base.scripts_joues() == [
-        "chargement/purge",
-        "chargement/purge",
-        "chargement/remise-en-etat",
-    ]
-    remise = base.texte_du_script("remise-en-etat")
-    assert "ADD UNIQUE KEY `uk_pdi_ref`" in remise
+# --- Index en place et DDL ---------------------------------------------------------
 
 
 def test_verrou_non_obtenu_echoue_vite_avec_message(s3_bouchonne, brancher_base):
@@ -745,21 +592,8 @@ def test_ddl_borne_l_attente_de_verrou(s3_bouchonne, brancher_base):
         assert texte.startswith("SET SESSION lock_wait_timeout = ")
 
 
-def test_index_deja_absents_apres_un_crash(s3_bouchonne, brancher_base):
-    """Un chargement tué à mi-course laisse la table sans index : le suivant les recrée."""
-    s3_bouchonne(csv_de(LIGNE_PLEINE))
-    base = brancher_base(
-        base_nominale(**{"FROM information_schema.STATISTICS": [{"nom": "PRIMARY"}]})
-    )
-
-    rapport = charger(id_referentiel=1, fichier="f.csv")
-
-    assert rapport.statut == SUCCES, rapport.motifs
-    assert "chargement/index-retrait" not in base.scripts_joues()
-    assert "chargement/index-unique" in base.scripts_joues()
-
-
 def test_index_inconnu_laisse_en_place(s3_bouchonne, brancher_base):
+    """Un index ajouté par le DBA n'est ni retiré ni touché ; seul le manquant est recréé."""
     s3_bouchonne(csv_de(LIGNE_PLEINE))
     base = brancher_base(
         base_nominale(
@@ -775,9 +609,10 @@ def test_index_inconnu_laisse_en_place(s3_bouchonne, brancher_base):
 
     charger(id_referentiel=1, fichier="f.csv")
 
-    retrait = base.texte_du_script("index-retrait")
-    assert "DROP INDEX `uk_pdi_ref`" in retrait
-    assert "idx_ajoute_par_le_dba" not in retrait
+    completion = base.texte_du_script("index-completion")
+    assert "ADD KEY `idx_cr_ref_actif`" in completion
+    assert "uk_pdi_ref" not in completion
+    assert "idx_ajoute_par_le_dba" not in completion
 
 
 # --- Conversions ------------------------------------------------------------
@@ -870,138 +705,17 @@ def test_option_all_retiree():
         main(["init", "1", "--skip-errors", "--all"])
 
 
-# --- Reprise : finaliser-chargement ------------------------------------------
+# --- Commande retirée ----------------------------------------------------------------
 
 
-def finaliser(**kwargs):
-    return asyncio.run(module.finaliser_chargement(1, **kwargs))
+def test_commande_finaliser_chargement_retiree():
+    from app.main import main
 
-
-def base_a_finaliser(**surcharges) -> FausseBase:
-    """Lignes en base, index secondaires absents : un chargement coupé après l'insertion."""
-    return base_nominale(
-        **{
-            "FROM information_schema.STATISTICS": [{"nom": "PRIMARY"}],
-            "AS nb_actives": {"nb_lignes": 24, "nb_actives": 20},
-            **surcharges,
-        }
-    )
-
-
-@pytest.fixture
-def brancher(brancher_base):
-    def poser(base):
-        base.reponses["SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel"] = {
-            "ok": 1
-        }
-        return brancher_base(base)
-
-    return poser
-
-
-def test_finalisation_reconstruit_sans_relire_le_fichier(monkeypatch, brancher):
-    def interdit(*args, **kwargs):
-        raise AssertionError("le fichier ne doit pas être relu")
-
-    monkeypatch.setattr(module.s3, "ouvrir_objet", interdit)
-    base = brancher(base_a_finaliser())
-
-    rapport = finaliser()
-
-    assert rapport.statut == SUCCES, (rapport.motifs, rapport.erreur)
-    assert rapport.titre == module.TITRE_FINALISATION
-    assert base.scripts_joues() == ["chargement/index-construction", "chargement/index-unique"]
-    assert not base.a_ecrit("TRUNCATE")
-    assert rapport.etats["LIGNES_CHARGEES"] == 24  # la base fait foi
-    assert rapport.etats["LIGNES_ACTIVES"] == 20
-
-
-def test_finalisation_sans_ligne_en_base(brancher_base):
-    base = brancher_base(base_a_finaliser())
-    base.reponses["SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel"] = None
-
-    rapport = finaliser()
-
-    assert rapport.statut == ECHEC
-    assert "rien à finaliser" in " ".join(rapport.motifs)
-    assert base.scripts_joues() == []
-
-
-def test_finalisation_en_echec_rappelle_la_commande_de_reprise(brancher):
-    base = base_a_finaliser()
-    base.echecs_scripts = {
-        "index-construction": pymysql.err.OperationalError(2013, "Lost connection")
-    }
-    brancher(base)
-
-    rapport = finaliser(ignorer_erreurs=True)
-
-    assert rapport.statut == ECHEC
-    assert any(
-        a.endswith("finaliser-chargement 1 --skip-errors") for a in rapport.avertissements
-    )
-    assert not base.a_ecrit("TRUNCATE")
-
-
-def test_reconstruction_reprise_index_unique_deja_pose(brancher):
-    """MySQL a pu finir l'ALTER que le batch n'a pas vu terminer : rien à refaire, sauf
-    ranger l'index temporaire."""
-    base = brancher(
-        base_a_finaliser(
-            **{
-                "FROM information_schema.STATISTICS": [
-                    {"nom": "PRIMARY"},
-                    {"nom": "uk_pdi_ref"},
-                    {"nom": "idx_cr_ref_actif"},
-                    {"nom": "idx_cr_pdi_doublons"},
-                ]
-            }
-        )
-    )
-
-    rapport = finaliser()
-
-    assert rapport.statut == SUCCES, rapport.motifs
-    assert base.scripts_joues() == ["chargement/index-fin"]
-    assert "DROP INDEX `idx_cr_pdi_doublons`" in base.texte_du_script("index-fin")
-
-
-def test_reconstruction_ne_refait_pas_un_index_deja_construit(brancher):
-    base = brancher(
-        base_a_finaliser(
-            **{
-                "FROM information_schema.STATISTICS": [
-                    {"nom": "PRIMARY"},
-                    {"nom": "idx_cr_ref_actif"},
-                ]
-            }
-        )
-    )
-
-    finaliser()
-
-    construction = base.texte_du_script("index-construction")
-    assert "idx_cr_ref_actif" not in construction
-    assert "idx_cr_pdi_doublons" in construction
-
-
-def test_commande_finaliser_chargement():
-    from app.main import build_parser, cmd_finaliser_chargement, main
-
-    args = build_parser().parse_args(["finaliser-chargement", "1", "--skip-errors"])
-    assert args.handler is cmd_finaliser_chargement
-    assert args.ignorer_erreurs
     with pytest.raises(SystemExit):
-        main(["finaliser-chargement", "1", "--all"])
+        main(["finaliser-chargement", "1"])
 
 
-
-# --- Mode par défaut : index conservés, insertion par petits lots ----------------------
-
-
-@pytest.fixture
-def index_conserves(monkeypatch):
-    monkeypatch.setattr(module, "CHARGEMENT_RETIRER_INDEX", False)
+# --- Index en place pendant tout le chargement ----------------------
 
 
 def base_index_en_place(**surcharges) -> FausseBase:
@@ -1017,7 +731,7 @@ def base_index_en_place(**surcharges) -> FausseBase:
     )
 
 
-def test_index_conserves_aucune_reconstruction(index_conserves, s3_bouchonne, brancher_base):
+def test_index_conserves_aucune_reconstruction(s3_bouchonne, brancher_base):
     """Aucun ALTER long : pas de retrait, pas de reconstruction en fin de chargement."""
     s3_bouchonne(csv_de(LIGNE_PLEINE))
     base = brancher_base(base_index_en_place())
@@ -1026,10 +740,10 @@ def test_index_conserves_aucune_reconstruction(index_conserves, s3_bouchonne, br
 
     assert rapport.statut == SUCCES, rapport.motifs
     assert base.scripts_joues() == ["chargement/purge"]
-    assert any("Index conservés pendant le chargement" in c.libelle for c in rapport.controles)
+    assert any("Index en place pendant le chargement" in c.libelle for c in rapport.controles)
 
 
-def test_index_absent_recree_sur_table_vide(index_conserves, s3_bouchonne, brancher_base):
+def test_index_absent_recree_sur_table_vide(s3_bouchonne, brancher_base):
     """Un chargement précédent interrompu a laissé uk_pdi_ref absent : il est recréé juste
     après le TRUNCATE (instantané), avant la première ligne."""
     s3_bouchonne(csv_de(LIGNE_PLEINE))
@@ -1055,7 +769,7 @@ def test_index_absent_recree_sur_table_vide(index_conserves, s3_bouchonne, branc
 
 
 def test_index_conserves_doublon_avec_son_numero_de_ligne(
-    index_conserves, s3_bouchonne, brancher_base
+    s3_bouchonne, brancher_base
 ):
     """Index unique en place : le doublon est rejeté à l'insertion, ligne à ligne, avec son
     numéro de ligne — plus précis que la détection en fin de chargement."""
@@ -1071,7 +785,7 @@ def test_index_conserves_doublon_avec_son_numero_de_ligne(
 
 
 def test_index_conserves_echec_en_cours_ne_touche_pas_aux_index(
-    index_conserves, s3_bouchonne, brancher_base
+    s3_bouchonne, brancher_base
 ):
     """Index jamais retirés : un échec n'appelle aucune remise en état."""
     s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_MAL_FORMEE))

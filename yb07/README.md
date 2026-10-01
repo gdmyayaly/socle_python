@@ -223,9 +223,8 @@ acceptent pour la signature (et, sur AWS, S3 redirige vers la bonne région).
 | `CSV_CLES_REPARTITION` | `""` | Nom du fichier des clés de répartition dans le bucket. Il change à chaque livraison du métier, d'où sa présence ici. `--fichier` le surcharge ponctuellement. |
 | `CSV_DELIMITEUR` | `;` | Séparateur de champs |
 | `CSV_ENCODAGE` | `utf-8-sig` | Décode aussi l'UTF-8 nu et absorbe le BOM |
-| `CHARGEMENT_TAILLE_LOT` | `5000` | Nombre de lignes par lot inséré — chaque lot est commité séparément |
+| `CHARGEMENT_TAILLE_LOT` | `1000` | Nombre de lignes par lot inséré — chaque lot est commité séparément. Petit : chaque transaction reste courte, index en place |
 | `CHARGEMENT_LOG_TOUTES_LES` | `100000` | Fréquence des lignes de log d'avancement, en lignes chargées |
-| `CHARGEMENT_RETIRER_INDEX` | `false` | `false` : index conservés pendant le chargement (lent, sans instruction longue). `true` : index retirés puis reconstruits en une passe (rapide, mais `ALTER` final de plusieurs minutes). Voir « Index : deux modes ». |
 | `CHARGEMENT_LOCK_WAIT_TIMEOUT` | `60` | Attente maximale (s) d'un verrou pour tout le DDL de `yb07` : `TRUNCATE` et index du chargement, index des clés, scripts `migration` et `correctif`. Au-delà, échec lisible plutôt que de bloquer les requêtes de l'API derrière lui. |
 | `CHARGEMENT_MAX_REJETS_DETAILLES` | `100` | Avec `--skip-errors` : lignes écartées détaillées dans le rapport et les logs ; au-delà, elles sont seulement comptées |
 | `INIT_LOG_TOUS_LES_SITES` | `50` | `init`, étape `versions` : fréquence des lignes d'avancement, en sites traités (arrondie au lot) |
@@ -252,7 +251,6 @@ python -m app.main <commande> --help   # options d'une commande
 | `s3-check` | Configuration S3, test d'accès, et contenu du bucket | `--prefixe`, `--recursif`, `--limite` |
 | `charger-cles-repartition` | Charge `trppu_cles_repartition` depuis un CSV déposé sur S3 | `id_referentiel` (obligatoire), `--fichier` |
 | `charger-cles-repartition-local` | Même chargement, depuis un CSV du disque local | `id_referentiel`, `chemin` (obligatoires) |
-| `finaliser-chargement` | Reprend un chargement interrompu **après** l'insertion des lignes : index, doublons, contrôles — sans relire le fichier | `id_referentiel`, `--skip-errors` |
 | `init` | Enchaîne toute la chaîne d'initialisation des clés de répartition (DSR-696 à DSR-699) | `id_referentiel` (obligatoire), `--depuis`/`--etape`, `--fichier`, `--commentaire`, `--libelle`, `--dry-run`, `--sans-controles-longs` |
 
 Options communes à toutes les commandes :
@@ -394,10 +392,9 @@ Avec, elle est écartée et le chargement continue :
 - lignes écartées : colonne obligatoire vide, nombre ou date mal formé, ligne portant un
   autre référentiel, doublon de PDI, valeur refusée par MySQL (hors bornes, texte trop
   long). Un lot refusé par MySQL est rejoué ligne à ligne pour n'écarter que la ligne
-  fautive. Les doublons sont traités **après** le chargement, avant de recréer l'index
-  unique (voir « Performance ») : la première occurrence du fichier est conservée, et ils
-  sont signalés par PDI (`PDI 123 : doublon identique` / `en CONFLIT`), sans numéro de
-  ligne — `scripts/nettoyer_csv_cles.py` les donne si besoin ;
+  fautive. Les doublons sont rejetés à l'insertion par l'index unique : la première
+  occurrence du fichier est conservée, les suivantes signalées avec leur numéro de ligne
+  (`Ligne 1841 : doublon de PDI …`) ;
 - **sites à total nul** : ils ne sont pas écartés — ils sont chargés, et leurs clés valent 0
   à l'étape `cles` (règle métier). `scripts/extraire_sites_totaux_zero.py` permet de les
   isoler dans un fichier à part si besoin ;
@@ -454,51 +451,39 @@ table étant auto-incrémentée. Un en-tête différent fait échouer la command
   `trppu_referentiel`, vouée à disparaître, n'est **pas** consultée : le chargement ne
   vérifie pas que le référentiel y est déclaré.
 
-**Déroulé** — garde-fous (autre référentiel, fichier présent), purge (`TRUNCATE`), retrait
-des index secondaires, lecture en streaming et insertion par lots de `CHARGEMENT_TAILLE_LOT`
-lignes, traitement des doublons, reconstruction des index, contrôles finaux. Le fichier n'est
-ni téléchargé sur disque ni chargé en mémoire.
+**Déroulé** — garde-fous (autre référentiel, fichier présent), purge (`TRUNCATE`), remise
+en place des index manquants sur la table vide, lecture en streaming et insertion par lots de
+`CHARGEMENT_TAILLE_LOT` lignes, contrôles finaux. Le fichier n'est ni téléchargé sur disque
+ni chargé en mémoire.
 
-**Index : deux modes** (`CHARGEMENT_RETIRER_INDEX`).
+**Index toujours en place** — les lignes sont insérées par lots de `CHARGEMENT_TAILLE_LOT`
+(1 000 par défaut), chacun commité seul, sans jamais retirer les index. Aucune instruction
+ne dure : une reconstruction finale des index aurait été un `ALTER` de plusieurs minutes sur
+24 M de lignes, muet côté réseau, que l'infrastructure coupait pour inactivité. Un index
+absent au départ (essai précédent interrompu) est recréé sur la table vide, juste après le
+`TRUNCATE` : instantané. Contrepartie : plus lent qu'un chargement sans index — maintenir
+l'index unique ligne à ligne, PDI dans le désordre, lit le disque dès que l'index dépasse le
+cache InnoDB. Côté batch : le lot suivant est lu et converti pendant l'insertion du courant,
+et la mémoire reste bornée (deux lots, quelle que soit la taille du fichier — compatible
+avec un conteneur de 356 Mo).
 
-- **Par défaut, index conservés** : insertion par lots de `CHARGEMENT_TAILLE_LOT` lignes,
-  chacun commité seul. Aucune instruction longue : pas d'`ALTER` final de plusieurs minutes
-  sur 24 M de lignes, gourmand et muet — donc exposé à une coupure réseau pour inactivité.
-  Les doublons sont rejetés à l'insertion par `uk_pdi_ref`, **avec leur numéro de ligne**.
-  Un index absent au départ (chargement précédent interrompu) est recréé sur la table vide,
-  juste après le `TRUNCATE` : instantané. Contrepartie : plus lent — maintenir l'index
-  unique ligne à ligne, PDI dans le désordre, lit le disque dès que l'index dépasse le
-  cache InnoDB (de l'ordre de 1 000 lignes/s avec le cache par défaut, bien plus avec un
-  cache dimensionné).
-- **`CHARGEMENT_RETIRER_INDEX=true`** : `uk_pdi_ref` et `idx_cr_ref_actif` sont retirés,
-  les lignes insérées, puis les index reconstruits en une passe triée
-  (`app/traitements/index_chargement.py`) — environ 9 000 lignes/s mesurées, mais une
-  reconstruction finale longue ; les doublons sont alors traités en fin de parcours, par
-  PDI. À réserver à un chemin réseau sans délai d'inactivité court. Côté batch : le lot suivant est lu et converti
-pendant l'insertion du courant, et la mémoire reste bornée (deux lots, quelle que soit la
-taille du fichier — compatible avec un conteneur de 356 Mo).
-
-- **Droits** : `DROP` (pour le `TRUNCATE`), `ALTER` et `INDEX` sur la table. Sans `ALTER`,
-  le chargement se fait quand même, index en place, avec un avertissement : correct, mais
-  lent.
+- **Droits** : `DROP` (pour le `TRUNCATE`), `ALTER` et `INDEX` (remise en place d'un index
+  manquant) sur la table.
 - **Verrous** : tout le DDL passe par une connexion dédiée avec
   `lock_wait_timeout = CHARGEMENT_LOCK_WAIT_TIMEOUT`. Si l'API lit la table à ce moment-là,
   le chargement échoue en une minute au lieu de bloquer toutes ses requêtes.
 - **Côté serveur MySQL** (DBA) : `innodb_buffer_pool_size` (128 Mo par défaut, très
-  insuffisant pour 22 M de lignes) et `innodb_sort_buffer_size` (1 Mo par défaut ; 64 Mo
-  accélère la reconstruction des index) sont les deux réglages qui comptent.
+  insuffisant pour 22 M de lignes) est le réglage qui décide du débit. Un fichier livré trié
+  par PDI (`id`) rend aussi les insertions dans l'index unique séquentielles.
 
 **Atomicité et reprise** : chaque lot est commité séparément. Sur 22 M de lignes, une
 transaction unique ferait du journal d'annulation, de la durée de connexion et du coût du
-`ROLLBACK` le vrai risque. Un échec **après** le retrait des index remet la table dans un
-état propre : vidée, index recréés (instantané sur une table vide), avec un avertissement.
-Si le processus est tué (OOM, pod supprimé), les index peuvent manquer : le chargement
-suivant les recrée de lui-même. Il suffit de relancer — la purge rend l'opération
-idempotente.
+`ROLLBACK` le vrai risque. Un échec laisse donc un chargement partiel, index en place : il
+suffit de relancer — la purge rend l'opération idempotente.
 
-**Doublons de PDI** : sans `--skip-errors`, le chargement échoue en fin de parcours avec le
-nombre de PDI en doublon (dont ceux aux données différentes) et les premiers détaillés, puis
-remet la table en état. Le fichier doit être dédoublonné en amont
+**Doublons de PDI** : rejetés à l'insertion par `uk_pdi_ref`. Sans `--skip-errors`, le
+premier fait échouer le chargement en citant sa ligne ; avec, chacun est écarté et listé
+(`Ligne 1841 : doublon de PDI …`). Le fichier devrait être dédoublonné en amont
 (`scripts/nettoyer_csv_cles.py`) ; un `DISTINCT` ne suffit pas, deux lignes d'un même PDI
 aux trafics différents y survivent.
 
@@ -516,9 +501,8 @@ Référentiel : 1
 [OK] Fichier 'referentiels/cles.csv' présent sur S3 (1288490188 octets)
 [OK] Aucun autre référentiel que 1 dans la table
 [OK] Purge (TRUNCATE) : 22395341 ligne(s) supprimée(s)
-[OK] Index secondaires retirés pendant le chargement
-[OK] 22395341 ligne(s) insérée(s) en 4480 lot(s)
-[OK] Index secondaires reconstruits
+[OK] Index en place pendant le chargement
+[OK] 22395341 ligne(s) insérée(s) en 22396 lot(s)
 [OK] Volumétrie en base : 22395341 ligne(s)
 [OK] Unicité (PDI, référentiel) garantie par l'index uk_pdi_ref
 [OK] Lignes actives (date_fin_validite NULL) : 22395341
@@ -558,26 +542,6 @@ ligne de localisation devient `Fichier '…' présent en local (… octets)`.
 
 En Docker, le fichier doit être visible dans le conteneur : monter son dossier en volume
 (`-v /chemin/hote:/data`) et passer `/data/cles.csv`.
-
-### `finaliser-chargement` — reprendre sans recharger
-
-```bash
-python -m app.main finaliser-chargement 1 --skip-errors
-```
-
-Une fois le fichier **entièrement** chargé, un échec de la suite (coupure de connexion pendant
-la reconstruction des index, verrou non obtenu, doublons en mode strict…) **ne vide plus la
-table** : le rapport l'indique (`REPRENDRE_PAR = finaliser-chargement`) et donne la commande,
-avec les mêmes options que le chargement interrompu. Elle reconstruit les index qui manquent
-— y compris quand MySQL a terminé un `ALTER` que le batch n'a pas vu finir —, traite les
-doublons (`--skip-errors`) et rejoue les contrôles
-finaux. Relancée sur un chargement complet, elle ne refait rien.
-
-Tant que le chargement n'est pas finalisé, `init --depuis migration` (et au-delà) refuse de
-démarrer.
-
-Un chargement interrompu **pendant** l'insertion, lui, vide la table et recrée ses index : un
-chargement partiel n'a pas de valeur, il se relance.
 
 ### `init` — initialiser les clés de répartition
 
@@ -922,11 +886,10 @@ métier vit donc dans `app_message`, sous la grammaire
   réellement fait. `Fin script SQL` rappelle `sources`, le nombre d'instructions jouées,
   les `selects_non_joues` et le `commit`. Pendant une écriture longue, `Avancement
   instruction SQL` toutes les `SGBD_SUIVI_INSTRUCTION` secondes (état, phase, pourcentage).
-- Le chargement : purge, retrait des index (`Fin retrait index`), avancement tous les
-  `CHARGEMENT_LOG_TOUTES_LES` lignes avec le débit, chaque ligne écartée par
-  `--skip-errors` (`Rejet ligne clés de répartition`, plafonné), reconstruction des index
-  par phase (`Avancement reconstruction index`), contrôles finaux avec leur durée, et la
-  remise en état après un échec.
+- Le chargement : purge, remise en place d'un index manquant (`Fin remise en place des
+  index`), avancement tous les `CHARGEMENT_LOG_TOUTES_LES` lignes avec le débit, chaque
+  ligne écartée par `--skip-errors` (`Rejet ligne clés de répartition`, plafonné), et les
+  contrôles finaux avec leur durée.
 - `init` : l'index unique des clés retiré puis recréé autour du calcul (`Fin préparation
   calcul des clés`, `Début|Fin reconstruction index clés`) ; début et fin de chaque étape (`Début|Fin étape initialisation`, avec `etape`,
   `rang`, `verdict`, `duration_ms`), les prérequis refusés (`Rejet prérequis

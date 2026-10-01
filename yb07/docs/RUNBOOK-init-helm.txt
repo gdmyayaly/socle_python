@@ -175,13 +175,11 @@ la table contient un autre referentiel. Irreversible, exige le droit
 DROP. Si l'API lit la table, le chargement echoue apres 60 s
 (CHARGEMENT_LOCK_WAIT_TIMEOUT) au lieu de la bloquer : relancer.
 
-Index : par defaut ils restent en place pendant le chargement
-(insertion par lots, plus lent, mais aucune instruction longue
-exposee a une coupure reseau). Un doublon de PDI est rejete a
-l'insertion avec son numero de ligne. CHARGEMENT_RETIRER_INDEX=true
-retire les index puis les reconstruit en une passe (plus rapide,
-ALTER final de plusieurs minutes). Memoire du pod bornee (deux lots
-de CHARGEMENT_TAILLE_LOT lignes).
+Index : ils restent toujours en place pendant le chargement
+(insertion par lots de 1000 lignes, plus lent, mais aucune
+instruction longue exposee a une coupure reseau). Un doublon de PDI
+est rejete a l'insertion avec son numero de ligne. Memoire du pod
+bornee (deux lots de CHARGEMENT_TAILLE_LOT lignes).
 Suivre l'avancement : lignes "Avancement chargement" (debit_lignes_s)
 dans kubectl logs.
 
@@ -278,22 +276,7 @@ client MySQL avec yb05/db/suivi.sql.
 5. EN CAS D'ECHEC
 ------------------------------------------------------------------------
 
-Si le rapport indique "REPRENDRE_PAR = finaliser-chargement" : le
-fichier est entierement charge, seule la suite a echoue (index,
-doublons, controles). Les donnees sont CONSERVEES. Reprendre
-sans recharger, avec les memes options que le chargement :
-
-      command:
-        - python
-        - '-m'
-        - app.main
-        - finaliser-chargement
-        - '1'
-        - '--skip-errors'
-
-puis reprendre la chaine : init 1 --depuis migration.
-
-Sinon, le rapport indique "REPRENDRE_A = <etape>". Corriger la cause,
+Le rapport indique "REPRENDRE_A = <etape>". Corriger la cause,
 puis reprendre a cette etape et enchainer les suivantes :
 
       command:

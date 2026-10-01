@@ -45,7 +45,6 @@ from app.services import s3
 from app.traitements import (
     ETAPES,
     charger_cles_repartition,
-    finaliser_chargement,
     initialiser_cles_repartition,
 )
 from app.traitements.rapport import ECHEC, Rapport
@@ -263,17 +262,6 @@ async def cmd_charger_cles_repartition_local(args: argparse.Namespace) -> int:
     )
 
 
-async def cmd_finaliser_chargement(args: argparse.Namespace) -> int:
-    """Reprend un chargement dont les lignes sont en base mais la suite a échoué."""
-    return await _executer_traitement(
-        lambda a: finaliser_chargement(
-            a.id_traitement,
-            ignorer_erreurs=a.ignorer_erreurs,
-        ),
-        args,
-    )
-
-
 async def cmd_init(args: argparse.Namespace) -> int:
     """Enchaîne la chaîne d'initialisation des clés de répartition (DSR-696 à DSR-699)."""
     return await _executer_traitement(
@@ -404,21 +392,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _ajouter_skip_errors(chargement_local)
     chargement_local.set_defaults(handler=cmd_charger_cles_repartition_local)
-
-    finalisation = sous_commandes.add_parser(
-        "finaliser-chargement",
-        parents=[commun],
-        help="Reprend un chargement interrompu APRÈS l'insertion des lignes (index, doublons, "
-        "sites à total nul, contrôles), sans relire le fichier.",
-    )
-    finalisation.add_argument(
-        "id_traitement",
-        type=int,
-        metavar="id_referentiel",
-        help="Référentiel dont le chargement est à finaliser.",
-    )
-    _ajouter_skip_errors(finalisation)
-    finalisation.set_defaults(handler=cmd_finaliser_chargement)
 
     init = sous_commandes.add_parser(
         "init",
