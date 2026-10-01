@@ -176,8 +176,18 @@ async def _agreger(
     async with db_ecriture.transaction() as tx:
         await tx.execute(DELETE_TRAFIC_AGREBAL_SQL, (id_scenario,))
         for couleur, colonne in COULEURS:
-            nb_lignes += await tx.execute(
+            debut_couleur = time.perf_counter()
+            lignes_couleur = await tx.execute(
                 INSERT_AGREGAT_SQL.format(colonne=colonne), (couleur, id_scenario)
+            )
+            nb_lignes += lignes_couleur
+            logger.info(
+                "Avancement calcul trafics Agrébal %s",
+                ctx(
+                    couleur=couleur,
+                    lignes=lignes_couleur,
+                    duration_ms=round((time.perf_counter() - debut_couleur) * 1000, 1),
+                ),
             )
         await tx.execute(
             scn.INSERT_RECALCUL_LOG_SQL, (id_scenario, raison, _commentaire(raison))

@@ -47,6 +47,7 @@ from app.traitements import (
     controle_eligibilite,
     executer_tout,
 )
+from app.traitements.generateur import generer_scenarios, supprimer_scenarios_test
 from app.traitements.rapport import ECHEC, Bilan, Rapport
 
 log = logging.getLogger("yb05")
@@ -189,6 +190,39 @@ async def cmd_all(args: argparse.Namespace) -> int:
     return EXIT_OK if bilan.reussi else EXIT_KO
 
 
+async def _executer_outil(traitement, args: argparse.Namespace) -> int:
+    """Joue un outil sans scénario (génération, nettoyage) et affiche son rapport."""
+    try:
+        rapport = await traitement(args)
+    except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
+        log.exception("Erreur traitement %s", ctx(commande=args.commande))
+        rapport = Rapport(titre=f"Traitement {args.commande}", id_scenario=0)
+        rapport.ko(f"Traitement interrompu : {erreur}")
+        rapport.erreur = str(erreur)
+        rapport.statut = ECHEC
+
+    if args.json:
+        _print_json(rapport.to_dict())
+    else:
+        print(rapport.texte())
+    return EXIT_OK if rapport.reussi else EXIT_KO
+
+
+async def cmd_generer_scenarios(args: argparse.Namespace) -> int:
+    """Crée N scénarios de test complets (fausses données), prêts pour `all`."""
+    return await _executer_outil(
+        lambda a: generer_scenarios(
+            a.nombre, nb_pdi=a.pdi, nb_agrebals=a.agrebals, nb_jours=a.jours
+        ),
+        args,
+    )
+
+
+async def cmd_supprimer_scenarios_test(args: argparse.Namespace) -> int:
+    """Efface tout ce que `generer-scenarios` a créé, et seulement cela."""
+    return await _executer_outil(lambda a: supprimer_scenarios_test(), args)
+
+
 # Nom de commande officiel -> orthographe des tickets, acceptée comme alias.
 TRAITEMENTS = (
     ("eligibilite", "ELIGIBILITE", cmd_eligibilite, "Contrôle d'éligibilité d'un scénario"),
@@ -305,6 +339,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Identifiant d'un scénario précis ; omis, tous les scénarios éligibles.",
     )
     mode_all.set_defaults(handler=cmd_all)
+
+    generation = sous_commandes.add_parser(
+        "generer-scenarios",
+        parents=[commun],
+        help="Crée N scénarios de test complets (fausses données), prêts pour « all ». "
+        "Refusé si APP_ENV=prod.",
+    )
+    generation.add_argument("nombre", type=int, help="Nombre de scénarios à créer (1 à 500).")
+    generation.add_argument(
+        "--pdi", type=int, default=20, help="PDI par scénario (défaut : 20, maximum 999)."
+    )
+    generation.add_argument(
+        "--agrebals", type=int, default=3, help="Agrébals par scénario (défaut : 3)."
+    )
+    generation.add_argument(
+        "--jours",
+        type=int,
+        choices=(5, 6),
+        default=5,
+        help="Jours de la semaine du scénario (défaut : 5).",
+    )
+    generation.set_defaults(handler=cmd_generer_scenarios)
+
+    sous_commandes.add_parser(
+        "supprimer-scenarios-test",
+        parents=[commun],
+        help="Supprime tous les scénarios de test créés par generer-scenarios, et leurs données.",
+    ).set_defaults(handler=cmd_supprimer_scenarios_test)
 
     return parser
 

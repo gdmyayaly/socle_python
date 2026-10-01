@@ -22,6 +22,31 @@ MYSQL_DATABASE = os.getenv("SGBD_DB_NAME", "yb05")
 MYSQL_MAX_RETRIES = int(os.getenv("SGBD_MAX_RETRIES", "3"))
 MYSQL_RETRY_DELAY = float(os.getenv("SGBD_RETRY_DELAY", "1.0"))
 
+
+def _entier_positif(nom: str, defaut: int) -> int:
+    """Entier strictement positif lu dans l'environnement ; le défaut sinon.
+
+    Un batch d'exploitation ne refuse pas de démarrer pour une variable mal saisie.
+    """
+    try:
+        return max(1, int(os.getenv(nom, "")))
+    except (TypeError, ValueError):
+        return defaut
+
+
+# Âge maximal (s) d'une connexion inactive du pool avant renouvellement : MySQL la couperait
+# au-delà de `wait_timeout`, et la requête suivante échouerait (« server has gone away »).
+MYSQL_POOL_RECYCLE = _entier_positif("MYSQL_POOL_RECYCLE", 600)
+# Keepalive TCP (s d'inactivité avant la première sonde). Pendant une requête longue, MySQL
+# n'envoie rien : un équipement réseau à délai d'inactivité (souvent 300 s) couperait la
+# connexion (erreur 2013). Les sondes la maintiennent visible.
+MYSQL_TCP_KEEPALIVE = _entier_positif("SGBD_TCP_KEEPALIVE", 60)
+# Classement des connexions. Vide = celui de la base (`@@collation_database`) : pymysql ouvre en
+# utf8mb4_general_ci, les tables sont en utf8mb4_0900_ai_ci — un littéral ou une variable de
+# script comparé à une colonne lèverait l'erreur 1267. Lettres, chiffres et `_` seulement.
+_collation = os.getenv("SGBD_COLLATION", "").strip()
+MYSQL_COLLATION = _collation if _collation.replace("_", "").isalnum() else ""
+
 # Application / Logging
 APP = os.getenv("APP", "dsr")
 APP_ENV = os.getenv("APP_ENV", "sdev")

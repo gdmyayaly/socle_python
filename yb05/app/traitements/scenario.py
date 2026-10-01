@@ -206,10 +206,13 @@ async def prendre_verrou(db_ecriture, id_scenario: int) -> bool:
     commité immédiatement — dans la transaction du calcul, le verrou resterait invisible des
     autres processus jusqu'au commit final, c'est-à-dire trop tard.
     """
-    lignes = await db_ecriture.execute(PRENDRE_VERROU_SQL, (id_scenario,))
+    # Une seule tentative : rejouée après une coupure survenue APRÈS le commit, la pose
+    # trouverait le verrou déjà à 1 et conclurait à tort « calcul déjà en cours ». Mieux vaut
+    # un échec franc, qui dit que l'état du verrou est à vérifier.
+    lignes = await db_ecriture.execute(PRENDRE_VERROU_SQL, (id_scenario,), retries=1)
     obtenu = bool(lignes)
     if obtenu:
-        logger.debug("Verrou de calcul obtenu %s", ctx(id_scenario=id_scenario))
+        logger.info("Verrou de calcul obtenu %s", ctx(id_scenario=id_scenario))
     else:
         # 0 ligne affectée = un autre processus détient le scénario. L'appelant
         # se contente d'un `Rapport` : sans cette ligne, la collision est muette.
@@ -246,8 +249,10 @@ async def journaliser(db_ecriture, id_scenario: int, raison: str, commentaire: s
     L'échec d'écriture est donc capté et redescendu en WARNING.
     """
     try:
+        # Une seule tentative : un INSERT rejoué après une coupure post-commit doublerait
+        # la trace.
         await db_ecriture.execute(
-            INSERT_RECALCUL_LOG_SQL, (id_scenario, raison, commentaire[:255])
+            INSERT_RECALCUL_LOG_SQL, (id_scenario, raison, commentaire[:255]), retries=1
         )
     except Exception:
         logger.warning(

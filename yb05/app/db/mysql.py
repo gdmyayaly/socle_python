@@ -3,6 +3,7 @@ exécution de scripts SQL (fichiers .sql)."""
 
 import asyncio
 import logging
+import socket
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,14 +12,17 @@ from typing import Any, Sequence
 import aiomysql
 
 from app.config import (
+    MYSQL_COLLATION,
     MYSQL_DATABASE,
     MYSQL_HOST_WRITE,
     MYSQL_HOST_READ,
     MYSQL_MAX_RETRIES,
     MYSQL_PASSWORD_READ,
     MYSQL_PASSWORD_WRITE,
+    MYSQL_POOL_RECYCLE,
     MYSQL_PORT,
     MYSQL_RETRY_DELAY,
+    MYSQL_TCP_KEEPALIVE,
     MYSQL_USER_WRITE,
     MYSQL_USER_READ,
     NB_WORKER,
@@ -41,6 +45,47 @@ logger = logging.getLogger(__name__)
 #   None   -> se connecter SANS schéma sélectionné
 #   "xxx"  -> schéma explicite
 _CONFIGURED_DB = ""
+
+
+def _activer_keepalive(conn: Any) -> None:
+    """Active les sondes TCP keepalive sur la socket d'une connexion (une seule fois).
+
+    Sans elles, une requête longue laisse la connexion muette de bout en bout : un équipement
+    réseau à délai d'inactivité la coupe (« Connection reset by peer », erreur 2013), alors
+    que MySQL travaillait encore. Les options absentes de la plateforme sont ignorées.
+    """
+    if getattr(conn, "_yb05_keepalive", False):
+        return
+    transport = getattr(conn, "_writer", None)
+    sock = transport.get_extra_info("socket") if transport is not None else None
+    if sock is None:
+        return
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        for nom, valeur in (
+            ("TCP_KEEPIDLE", MYSQL_TCP_KEEPALIVE),
+            ("TCP_KEEPINTVL", max(5, MYSQL_TCP_KEEPALIVE // 2)),
+            ("TCP_KEEPCNT", 5),
+        ):
+            option = getattr(socket, nom, None)
+            if option is not None:
+                sock.setsockopt(socket.IPPROTO_TCP, option, valeur)
+    except OSError as erreur:
+        logger.debug("Keepalive TCP non activé %s", ctx(motif=str(erreur)))
+        return
+    try:
+        conn._yb05_keepalive = True
+    except AttributeError:  # pragma: no cover - objet sans __dict__
+        pass
+
+
+def _init_command() -> str:
+    """Instruction jouée à l'ouverture de chaque connexion : aligne son classement sur celui
+    de la base (ou sur SGBD_COLLATION), pour éviter l'erreur 1267 « Illegal mix of
+    collations »."""
+    if MYSQL_COLLATION:
+        return f"SET collation_connection = '{MYSQL_COLLATION}'"
+    return "SET collation_connection = @@collation_database"
 
 
 class Database:
@@ -79,13 +124,24 @@ class Database:
                     user=self.user,
                     password=self.password,
                     db=self.database,
+                    charset="utf8mb4",
+                    init_command=_init_command(),
                     minsize=self.min_connections,
                     maxsize=self.max_connections,
                     autocommit=True,
+                    # Renouvelle une connexion restée inactive au-delà de `wait_timeout`.
+                    pool_recycle=MYSQL_POOL_RECYCLE,
                 )
                 logger.info(
                     "Connexion au pool MySQL établie %s",
-                    ctx(hote=self.host, port=self.port, base=self.database),
+                    ctx(
+                        hote=self.host,
+                        port=self.port,
+                        base=self.database,
+                        taille_max=self.max_connections,
+                        recyclage_s=MYSQL_POOL_RECYCLE,
+                        keepalive_s=MYSQL_TCP_KEEPALIVE,
+                    ),
                 )
                 return
             except Exception as e:
@@ -126,6 +182,7 @@ class Database:
         for attempt in range(1, max_retries + 1):
             try:
                 async with pool.acquire() as conn:
+                    _activer_keepalive(conn)
                     async with conn.cursor() as cur:
                         await cur.execute(query, params)
                         return cur.rowcount
@@ -144,6 +201,7 @@ class Database:
         """Exécute une requête SELECT et retourne une seule ligne sous forme de dict."""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
+            _activer_keepalive(conn)
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(query, params)
                 return await cur.fetchone()
@@ -154,6 +212,7 @@ class Database:
         """Exécute une requête SELECT et retourne toutes les lignes sous forme de list[dict]."""
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
+            _activer_keepalive(conn)
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(query, params)
                 return await cur.fetchall()
@@ -170,6 +229,7 @@ class Database:
         """
         pool = await self._ensure_pool()
         conn = await pool.acquire()
+        _activer_keepalive(conn)
         try:
             await conn.begin()
             yield _TransactionCursor(conn)
@@ -337,8 +397,11 @@ class Database:
                     user=self.user,
                     password=self.password,
                     db=database,
+                    charset="utf8mb4",
+                    init_command=_init_command(),
                     autocommit=autocommit,
                 )
+                _activer_keepalive(conn)
                 break
             except Exception as e:
                 logger.warning(

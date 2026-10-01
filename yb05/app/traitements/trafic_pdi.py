@@ -205,6 +205,7 @@ async def _calculer(
     """Étapes 3 à 7. Toute anomalie lève : l'appelant libère le verrou et journalise."""
     id_scenario = scenario["id_scenario"]
     co_regate = scenario["co_regate"]
+    debut_phase = time.perf_counter()
 
     # Étape 3 — traçabilité (DSR-700). Commitée avant le calcul, comme l'exige le CA-03.
     version = await scn.version_cle_active(db_lecture, co_regate)
@@ -218,10 +219,15 @@ async def _calculer(
     )
     rapport.ok(f"Référentiel associé ({id_referentiel})")
     rapport.ok(f"Version de clés associée ({id_version_cle})")
-    logger.debug(
-        "Traçabilité associée %s",
-        ctx(id_referentiel=id_referentiel, id_version_cle=id_version_cle),
+    logger.info(
+        "Avancement calcul trafics PDI %s",
+        ctx(
+            phase="traçabilité",
+            id_referentiel=id_referentiel,
+            id_version_cle=id_version_cle,
+        ),
     )
+    debut_phase = time.perf_counter()
 
     # Étape 5 — chargement (avant la purge : rien n'est détruit si une donnée manque).
     tmh = await _charger_tmh(db_lecture, id_scenario)
@@ -236,15 +242,18 @@ async def _calculer(
     agrebal_par_pdi = await _charger_mapping_agrebal(db_lecture, co_regate)
     rapport.ok(f"Mapping Agrébal/PDI chargé ({len(agrebal_par_pdi)} PDI)")
 
-    logger.debug(
-        "Données de calcul chargées %s",
+    logger.info(
+        "Avancement calcul trafics PDI %s",
         ctx(
+            phase="chargement",
             tmh=len(tmh),
             coefficients=len(coefficients),
             cles=len(cles),
             agrebal_par_pdi=len(agrebal_par_pdi),
+            duration_ms=_ms(debut_phase),
         ),
     )
+    debut_phase = time.perf_counter()
 
     _signaler_ecarts_de_perimetre(rapport, cles, agrebal_par_pdi)
 
@@ -253,10 +262,17 @@ async def _calculer(
     logger.debug("Jours à calculer %s", ctx(nb=len(jours), jours=jours))
 
     lignes = _construire_lignes(scenario, tmh, coefficients, cles, agrebal_par_pdi, jours)
-    logger.debug(
-        "Lignes de trafic PDI construites %s",
-        ctx(lignes=len(lignes), taille_lot=TAILLE_LOT),
+    logger.info(
+        "Avancement calcul trafics PDI %s",
+        ctx(
+            phase="construction",
+            lignes=len(lignes),
+            jours=len(jours),
+            taille_lot=TAILLE_LOT,
+            duration_ms=_ms(debut_phase),
+        ),
     )
+    debut_phase = time.perf_counter()
     if not lignes:
         raise TraitementImpossible(
             "Aucun trafic PDI à écrire : vérifier les TMH, les coefficients et les clés"
@@ -269,8 +285,21 @@ async def _calculer(
         await tx.execute(RESET_FLAGS_SQL, (id_scenario,))
         nb_lots = 0
         for depart in range(0, len(lignes), TAILLE_LOT):
-            await tx.execute_many(INSERT_TRAFIC_PDI_SQL, lignes[depart : depart + TAILLE_LOT])
+            lot = lignes[depart : depart + TAILLE_LOT]
+            await tx.execute_many(INSERT_TRAFIC_PDI_SQL, lot)
             nb_lots += 1
+            if len(lignes) > TAILLE_LOT:
+                # Plusieurs lots : la transaction peut durer, on montre qu'elle avance.
+                logger.info(
+                    "Avancement calcul trafics PDI %s",
+                    ctx(
+                        phase="écriture",
+                        lots=nb_lots,
+                        lignes=depart + len(lot),
+                        lignes_total=len(lignes),
+                        duration_ms=_ms(debut_phase),
+                    ),
+                )
         await tx.execute(
             scn.INSERT_RECALCUL_LOG_SQL,
             (id_scenario, raison, _commentaire(raison, len(lignes))),
@@ -279,9 +308,14 @@ async def _calculer(
 
     logger.info(
         "Trafics PDI écrits %s",
-        ctx(lignes=len(lignes), raison=raison, lots=nb_lots),
+        ctx(lignes=len(lignes), raison=raison, lots=nb_lots, duration_ms=_ms(debut_phase)),
     )
     return len(lignes)
+
+
+def _ms(depuis: float) -> float:
+    """Durée écoulée depuis `depuis` (perf_counter), en millisecondes arrondies."""
+    return round((time.perf_counter() - depuis) * 1000, 1)
 
 
 # ---------------------------------------------------------------------------

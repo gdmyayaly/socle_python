@@ -111,7 +111,7 @@ async def executer_tout(
 
     await asyncio.gather(
         *(
-            _worker(numero + 1, file, bilan, db_lecture, db_ecriture)
+            _worker(numero + 1, file, bilan, db_lecture, db_ecriture, debut)
             for numero in range(nb_workers)
         )
     )
@@ -145,7 +145,9 @@ async def _lister_a_moitie_calcules(db_lecture) -> list[int]:
     return [int(ligne["id_scenario"]) for ligne in lignes]
 
 
-async def _worker(numero: int, file: asyncio.Queue, bilan: Bilan, db_lecture, db_ecriture) -> None:
+async def _worker(
+    numero: int, file: asyncio.Queue, bilan: Bilan, db_lecture, db_ecriture, debut: float
+) -> None:
     """Vide la file, un scénario à la fois, jusqu'à épuisement."""
     while True:
         try:
@@ -166,6 +168,7 @@ async def _worker(numero: int, file: asyncio.Queue, bilan: Bilan, db_lecture, db
         finally:
             reset_id_scenario(jeton)
             file.task_done()
+        _journaliser_avancement(bilan, debut)
 
 
 async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> None:
@@ -228,6 +231,27 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
     )
     await scn.liberer_verrou(db_ecriture, id_scenario)
     bilan.ajouter(id_scenario, ECHEC, _motif(rapport_agrebal))
+
+
+def _journaliser_avancement(bilan: Bilan, debut: float) -> None:
+    """Une ligne après chaque scénario : en mode ALL sur des centaines de scénarios, c'est ce
+    qui distingue une file qui avance d'une file bloquée, et donne une idée du temps restant."""
+    traites = len(bilan.resultats)
+    total = len(bilan.scenarios_trouves)
+    ecoule = max(time.monotonic() - debut, 1e-9)
+    logger.info(
+        "Avancement mode ALL %s",
+        ctx(
+            traites=traites,
+            total=total,
+            pct=round(100 * traites / total, 1) if total else None,
+            succes=len(bilan.succes),
+            echecs=len(bilan.echecs),
+            non_eligibles=len(bilan.non_eligibles),
+            debit_scenarios_min=round(60 * traites / ecoule, 1),
+            duration_ms=round(ecoule * 1000, 1),
+        ),
+    )
 
 
 def _motif(rapport) -> str:

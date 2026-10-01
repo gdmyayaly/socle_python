@@ -23,8 +23,9 @@ class BaseEnPanne:
         self.appels: list[tuple[str, tuple]] = []
         self._exception = exception or RuntimeError("base injoignable")
 
-    async def execute(self, sql, params=None):
+    async def execute(self, sql, params=None, retries=None):
         self.appels.append((sql, params))
+        self.retries = retries
         raise self._exception
 
 
@@ -35,8 +36,9 @@ class BaseOk:
         self.appels: list[tuple[str, tuple]] = []
         self._rowcount = rowcount
 
-    async def execute(self, sql, params=None):
+    async def execute(self, sql, params=None, retries=None):
         self.appels.append((sql, params))
+        self.retries = retries
         return self._rowcount
 
 

@@ -35,6 +35,9 @@ de vérité en cas de doute.
 | `SGBD_DB_NAME` | `yb05` | Nom de la base |
 | `SGBD_MAX_RETRIES` | `3` | Nombre de tentatives de connexion |
 | `SGBD_RETRY_DELAY` | `1.0` | Délai de base entre tentatives (backoff linéaire : `délai × tentative`) |
+| `MYSQL_POOL_RECYCLE` | `600` | Âge maximal (s) d'une connexion inactive du pool avant renouvellement. À garder sous le `wait_timeout` du serveur. |
+| `SGBD_TCP_KEEPALIVE` | `60` | Sondes TCP keepalive sur chaque connexion : un proxy ou pare-feu à délai d'inactivité ne coupe plus une requête longue (erreur 2013). |
+| `SGBD_COLLATION` | `""` | Classement des connexions ; vide = celui de la base. Évite l'erreur 1267 « Illegal mix of collations ». |
 | `SQL_SCRIPT_WARN_SIZE` | `10485760` | Taille (octets) au-delà de laquelle un script `.sql` déclenche un avertissement |
 
 ### Application / Logging
@@ -210,6 +213,30 @@ clés (colis, oo, 3s, potentielip) alors que les produits sont des codes aliment
 depuis Databricks. Rien en base ne dit à quelle famille appartient un code : la correspondance
 est portée par `CLES_PAR_PRODUIT` (cf. `.env.example`). Un produit absent de cette liste **fait
 échouer le calcul**, avec le message qui le nomme — plutôt que de produire un trafic faux.
+
+### Scénarios de test — `generer-scenarios` et `supprimer-scenarios-test`
+
+```bash
+python -m app.main generer-scenarios 10                       # 10 scénarios complets
+python -m app.main generer-scenarios 3 --pdi 50 --agrebals 5 --jours 6
+python -m app.main all                                        # les calcule
+python -m app.main supprimer-scenarios-test                   # efface tout ce qui a été généré
+```
+
+Crée N scénarios **complets, avec de fausses données**, prêts pour `all` : chacun passe les
+douze règles de DSR-701 et se calcule (DSR-702/703). Pour chaque scénario, sur un site de
+test dédié (`ZT0001`, `ZT0002`…) : la version PIC et ses coefficients (produit × jour × densité),
+un référentiel et une version de clés active, `--pdi` PDI avec leurs clés (chaque famille somme
+à 1), `--agrebals` Agrébals qui se partagent ces PDI, le scénario (`VALIDE`, figé, non calculé)
+et ses TMH — un par produit de `CLES_PAR_PRODUIT`, créés dans `trppu_produit` s'ils manquent.
+
+- **Marquage** : libellés `TEST YB05`, sites `ZT…`, PDI au-delà de 9·10¹² et Agrébals au-delà
+  de 9·10⁸ — hors de toute plage réelle. `supprimer-scenarios-test` efface exactement ces
+  données (et les trafics calculés dessus), rien d'autre ; les produits, partagés, restent.
+- **Une transaction** : une génération interrompue ne laisse rien.
+- **Refusé en production** (`APP_ENV=prod`).
+- La règle 10 lisant encore `trppu_referentiel`, le générateur y écrit un référentiel par
+  site ; il faudra l'adapter le jour où cette table disparaît.
 
 ### Docker
 
@@ -424,6 +451,15 @@ métier vit donc dans `app_message`, sous la grammaire
 
 - Début et fin de chaque commande, avec `exit_code` et `duration_ms`.
 - Début et fin de chaque traitement, avec la volumétrie écrite et la `raison`.
+- La pose du verrou de calcul (`Verrou de calcul obtenu`) et sa libération, en INFO.
+- Le calcul des trafics PDI phase par phase (`Avancement calcul trafics PDI`,
+  `phase=traçabilité|chargement|construction|écriture`, avec volumes et `duration_ms`) ;
+  l'écriture en plusieurs lots montre son avancement lot par lot.
+- L'agrégation Agrébal couleur par couleur (`Avancement calcul trafics Agrébal`, lignes et
+  durée).
+- Le mode `all` après chaque scénario (`Avancement mode ALL` : traités/total, pourcentage,
+  succès, échecs, non éligibles, débit en scénarios/min).
+- La génération et la suppression des scénarios de test.
 - **Le verdict de chaque scénario** — `SUCCES` en INFO, `NON_ELIGIBLE` et `ECHEC` en
   WARNING avec leurs motifs. Un traitement ne lève pas, il rend un rapport : sans ces
   lignes, un scénario en échec ne laisserait aucune trace.

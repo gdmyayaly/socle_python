@@ -20,12 +20,29 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Any
 
+import aiomysql
 import pytest
 
 
 def _normaliser(sql: str) -> str:
     """Requête sur une seule ligne, espaces multiples réduits — pour la comparaison."""
     return " ".join(sql.split())
+
+
+@pytest.fixture(autouse=True)
+def _aucune_connexion_reelle(monkeypatch):
+    """Filet de sécurité : aucun test ne doit joindre une vraie base.
+
+    Un module qui importe `db_write` sous son propre nom échappe au remplacement fait par un
+    test ; sans ce filet, il se connecterait au MySQL du poste. Un test qui a besoin de
+    simuler `create_pool` ou `connect` le remplace lui-même, après ce filet.
+    """
+
+    async def interdit(*args, **kwargs):
+        raise AssertionError("connexion MySQL réelle tentée pendant un test")
+
+    monkeypatch.setattr(aiomysql, "create_pool", interdit)
+    monkeypatch.setattr(aiomysql, "connect", interdit)
 
 
 class EcritureInterdite(AssertionError):
@@ -67,6 +84,9 @@ class FausseBase:
         self.rowcounts = {_normaliser(k): v for k, v in (rowcounts or {}).items()}
         self.lecture_seule = lecture_seule
         self.journal: list[tuple[str, str, Any]] = []
+        # (début de requête, `retries` demandé) pour chaque `execute` : prouve qu'une écriture
+        # non rejouable (pose du verrou, journal) n'est tentée qu'une fois.
+        self.retries_demandes: list[tuple[str, int | None]] = []
         self.transactions_commitees = 0
         self.transactions_annulees = 0
 
@@ -85,7 +105,10 @@ class FausseBase:
 
     # -- écritures --------------------------------------------------------
 
-    async def execute(self, query: str, params: tuple | None = None) -> int:
+    async def execute(
+        self, query: str, params: tuple | None = None, retries: int | None = None
+    ) -> int:
+        self.retries_demandes.append((_normaliser(query)[:60], retries))
         return self._enregistrer("execute", query, params)
 
     @asynccontextmanager
