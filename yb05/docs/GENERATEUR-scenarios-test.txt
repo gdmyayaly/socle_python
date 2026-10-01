@@ -1,0 +1,295 @@
+YB05 - GENERATEUR DE SCENARIOS DE TEST
+======================================
+
+Commandes : generer-scenarios / supprimer-scenarios-test
+Code      : yb05/app/traitements/generateur.py
+Tests     : yb05/tests/test_generateur.py
+
+
+1. A QUOI CA SERT
+-----------------
+
+Le generateur cree en base des scenarios complets avec de fausses
+donnees. Il suffit de donner le nombre de scenarios voulus.
+
+Chaque scenario recoit tout ce dont le batch a besoin :
+- DSR-701 controle les 12 regles d'eligibilite ;
+- DSR-702 calcule les trafics par PDI ;
+- DSR-703 agrege les trafics par Agrebal.
+
+On peut donc tester YB05 de bout en bout sans dependre des donnees
+reelles d'un site.
+
+
+2. COMMANDES
+------------
+
+Toutes les commandes se lancent depuis le dossier yb05/.
+
+  Generer (seul le nombre est obligatoire) :
+    python -m app.main generer-scenarios 10
+
+  Calculer les scenarios generes (mode ALL) :
+    python -m app.main all
+
+  Tout effacer quand le test est fini :
+    python -m app.main supprimer-scenarios-test
+
+  Options de generer-scenarios :
+    --pdi N        PDI par scenario       defaut 20   (1 a 999)
+    --agrebals N   Agrebals par scenario  defaut 3    (1 a 99,
+                                                       pas plus
+                                                       que de PDI)
+    --jours 5|6    jours dans la semaine  defaut 5
+
+  Exemple :
+    python -m app.main generer-scenarios 5 --pdi 50 --agrebals 4
+                                           --jours 6
+    (sur une seule ligne)
+
+  Bornes : 1 a 500 scenarios par lancement, 9999 sites de test au
+  total (ZT0001 a ZT9999).
+
+
+3. CE QUI EST CREE POUR CHAQUE SCENARIO
+---------------------------------------
+
+Chaque scenario a son propre site de test. Le numero continue apres
+le dernier site de test deja en base (ZT0001, ZT0002...).
+
+  Table                           Contenu
+  ------------------------------  ------------------------------------
+  trppu_produit                   les 6 produits de CLES_PAR_PRODUIT
+                                  (CO, OO, IP, OS, PR, PPI), crees
+                                  seulement s'ils manquent
+  trppu_site                      site ZTnnnn "SITE TEST YB05 nnnn",
+                                  type PPDC, ROC ZRnnnn
+  trppu_pic_version               une version PIC niveau SITE,
+                                  libelle "TEST YB05"
+  trppu_pic_coefficients          6 produits x 6 jours (lundi a
+                                  samedi) x 3 densites = 108 lignes
+  trppu_referentiel               un referentiel du site (regle 10)
+  trppu_version_cle               une version de cles active (O)
+                                  sur ce referentiel (regle 9)
+  trppu_cles_repartition_calcule  une ligne de cles par PDI
+  trppu_agrebal_pdi               les Agrebals du site, qui se
+                                  partagent les PDI (regles 11, 12)
+  trppu_scenario                  le scenario (regles 2 a 8)
+  trppu_tmh                       un TMH par produit, non exclu
+
+Le scenario genere est dans cet etat :
+- statut VALIDE, et fige (est_fige = 1) ;
+- trafic_pdi_calcule = 0 et trafic_agrebal_calcule = 0 ;
+- pas de verrou (calcul_trafic_en_cours = 0) ;
+- periode du 1er janvier au 31 decembre de l'annee en cours ;
+- libelle "TEST YB05 nnnn" ;
+- createur 'GENERATEUR'.
+
+Il est donc pret pour un premier calcul (raison INITIAL).
+
+
+4. LES FAUSSES DONNEES
+----------------------
+
+Les valeurs ne sont pas aleatoires. Une meme generation donne
+toujours les memes chiffres, donc les resultats se comparent d'un
+lancement a l'autre.
+
+Coefficients PIC :
+  La base depend de la densite :
+    densite 0 (DENSE)    0,20
+    densite 1 (FAIBLE1)  0,15
+    densite 2 (FAIBLE2)  0,10
+  Elle augmente de 5 % par jour, du lundi (+0 %) au samedi (+25 %).
+
+Cles de repartition :
+  Les PDI recoivent des poids 1, 2, ... N, ramenes a une somme de 1.
+  Le decalage des poids change d'une famille a l'autre (colis, oo,
+  3s, potentielip), donc les quatre cles ne sont pas identiques.
+  Le dernier PDI absorbe l'arrondi : chaque famille somme exactement
+  a 1 (regle CA3 de DSR-699).
+
+Agrebals :
+  Les PDI sont distribues a tour de role. Avec 3 Agrebals, on a :
+    Agrebal 1 : PDI 1, 4, 7...
+    Agrebal 2 : PDI 2, 5, 8...
+    Agrebal 3 : PDI 3, 6, 9...
+  Chaque PDI appartient a exactement un Agrebal.
+
+TMH :
+  moyenne hebdo = 1000 x (rang du produit) + 100 x (dernier chiffre
+                  du numero de site)
+  Cela donne entre 1000 et 6900 par semaine. Le trafic calcule
+  (TMH x coef x cle) reste tres en dessous de la limite de la
+  colonne (65535).
+
+
+5. COMMENT LES DONNEES DE TEST SONT RECONNUES
+---------------------------------------------
+
+Tout ce qui est genere est marque, pour ne jamais se confondre avec
+des donnees reelles :
+
+  - sites     : ZT0001 a ZT9999, libelle "SITE TEST YB05 ..."
+  - ROC       : ZR0001 a ZR9999
+  - libelles  : "TEST YB05" (scenario, version PIC, version de cles,
+                Agrebal)
+  - createur  : id_rh = 'GENERATEUR'
+  - PDI       : 9 000 000 000 000 + numero de site x 1000 + rang
+                (hors de toute plage reelle)
+  - Agrebals  : 900 000 000 + numero de site x 100 + rang
+
+supprimer-scenarios-test ne retient que les sites dont le code
+commence par ZT ET dont le libelle commence par "SITE TEST YB05".
+Elle n'efface que ce qui est rattache a ces sites :
+  1. les tables filles des scenarios (trafics PDI et Agrebal,
+     recalcul_log, tmh, exclusions, comptages manuels, coefficients
+     PIC du scenario, variations, neutralisations, api_log) ;
+  2. les scenarios ;
+  3. les cles, versions de cles, referentiels et Agrebals ;
+  4. la version PIC "TEST YB05" (les coefficients suivent en
+     cascade) ;
+  5. les sites.
+Le produit cree par le generateur n'est pas supprime : il peut etre
+partage avec des donnees reelles.
+
+
+6. SECURITES
+------------
+
+- Refus en production : si APP_ENV=prod, rien n'est ecrit.
+- Une seule transaction pour toute la generation : si une ecriture
+  echoue, rien ne reste en base ("Generation annulee : rien n'a ete
+  ecrit").
+- La suppression se fait aussi dans une seule transaction.
+- Parametres hors bornes : refus avec un message clair, aucune
+  ecriture.
+- Plus de numero ZT libre : refus, avec le conseil de lancer
+  supprimer-scenarios-test.
+
+
+7. CE QUE TU DOIS VOIR
+----------------------
+
+Apres generer-scenarios, le rapport affiche :
+  - une ligne par scenario (50 au maximum) : id, site, nombre de PDI,
+    d'Agrebals, de produits et de jours ;
+  - SCENARIOS_GENERES, PREMIER_SCENARIO, DERNIER_SCENARIO ;
+  - A_LANCER  : python -m app.main all
+  - NETTOYAGE : python -m app.main supprimer-scenarios-test
+
+Apres all, chaque scenario genere doit etre :
+  - ELIGIBLE au controle DSR-701 ;
+  - SUCCES au calcul DSR-702 (trafics PDI) ;
+  - SUCCES au calcul DSR-703 (trafics Agrebal).
+
+Nombre de lignes attendu dans trppu_trafic_pdi, par scenario :
+  PDI x 6 produits x jours de la semaine
+  Avec les valeurs par defaut : 20 x 6 x 5 = 600 lignes.
+
+Logs a suivre (fichier JSON du jour) :
+  Debut generation scenarios de test
+  Fin generation scenarios de test      (nombre, premier, dernier,
+                                         duree)
+  Verrou de calcul obtenu
+  Avancement calcul trafics PDI         (phases tracabilite,
+                                         chargement, construction,
+                                         ecriture)
+  Avancement calcul trafics Agrebal     (une ligne par couleur)
+  Avancement mode ALL                   (traites / total, pct,
+                                         debit)
+
+Un scenario genere NON ELIGIBLE ou EN ECHEC signale un vrai probleme
+dans le batch ou dans le schema : garder le rapport et les logs.
+
+
+8. REQUETES DE VERIFICATION
+---------------------------
+
+Scenarios generes et leur etat :
+
+  SELECT id_scenario, co_regate, lb_scenario, statut,
+         trafic_pdi_calcule, trafic_agrebal_calcule,
+         calcul_trafic_en_cours
+    FROM trppu_scenario
+   WHERE co_regate LIKE 'ZT%'
+   ORDER BY id_scenario;
+
+Lignes de trafic PDI par scenario :
+
+  SELECT s.id_scenario, s.co_regate, COUNT(t.id_scenario) AS nb
+    FROM trppu_scenario s
+    LEFT JOIN trppu_trafic_pdi t ON t.id_scenario = s.id_scenario
+   WHERE s.co_regate LIKE 'ZT%'
+   GROUP BY s.id_scenario, s.co_regate
+   ORDER BY s.id_scenario;
+
+Lignes de trafic Agrebal par scenario :
+
+  SELECT s.id_scenario, COUNT(a.id_scenario) AS nb
+    FROM trppu_scenario s
+    LEFT JOIN trppu_trafic_agrebal a
+           ON a.id_scenario = s.id_scenario
+   WHERE s.co_regate LIKE 'ZT%'
+   GROUP BY s.id_scenario
+   ORDER BY s.id_scenario;
+
+Somme des cles par site (chaque somme doit valoir 1) :
+
+  SELECT co_regate_site,
+         SUM(cle_colis)       AS colis,
+         SUM(cle_oo)          AS oo,
+         SUM(cle_3s)          AS s3,
+         SUM(cle_potentielip) AS potentielip
+    FROM trppu_cles_repartition_calcule
+   WHERE co_regate_site LIKE 'ZT%'
+   GROUP BY co_regate_site;
+
+Journal des calculs :
+
+  SELECT l.id_scenario, l.dt_recalcul, l.raison, l.commentaire
+    FROM trppu_recalcul_log l
+    JOIN trppu_scenario s ON s.id_scenario = l.id_scenario
+   WHERE s.co_regate LIKE 'ZT%'
+   ORDER BY l.dt_recalcul DESC;
+
+
+9. POINTS D'ATTENTION
+---------------------
+
+- La regle 10 lit encore trppu_referentiel. C'est pour cela que le
+  generateur y ecrit une ligne. Quand cette table sera supprimee, il
+  faudra adapter ensemble la regle 10 et le generateur.
+- Les produits viennent de CLES_PAR_PRODUIT dans le .env. Si cette
+  liste change, le nombre de coefficients, de TMH et de lignes de
+  trafic change avec elle.
+- Pour relancer un calcul sur les memes scenarios, le plus simple
+  est de supprimer puis de regenerer. Une fois calcules, les flags
+  restent a 1 et le scenario n'est plus un premier calcul.
+- Le mode ALL traite tous les scenarios eligibles, pas seulement les
+  scenarios de test. Sur une base qui contient aussi des donnees
+  reelles, le calcul ALL les traitera aussi.
+
+
+10. PREUVE PAR LES TESTS
+------------------------
+
+tests/test_generateur.py, 19 tests. Le test principal reprend les
+donnees reellement inserees par le generateur, puis execute le VRAI
+controle d'eligibilite et le VRAI calcul des trafics PDI, pour des
+semaines de 5 et de 6 jours. Resultat attendu : ELIGIBLE puis
+SUCCES, avec PDI x produits x jours lignes de trafic.
+
+Les autres tests verifient :
+  - chaque famille de cles somme exactement a 1 ;
+  - chaque PDI est dans un seul Agrebal ;
+  - les coefficients couvrent tous les produits, jours et densites ;
+  - les marquages ZT / TEST YB05 et les plages d'identifiants ;
+  - la numerotation reprend apres le dernier site de test ;
+  - une seule transaction est utilisee, et un echec annule tout ;
+  - le refus en production et les bornes des parametres ;
+  - la suppression : les enfants avant les parents, et uniquement
+    les sites de test.
+
+Lancement :
+  python -m pytest tests/test_generateur.py

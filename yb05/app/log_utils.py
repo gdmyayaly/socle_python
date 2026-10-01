@@ -54,6 +54,41 @@ def reset_id_scenario(token: Token) -> None:
     _id_scenario.reset(token)
 
 
+# --- Site du scénario ------------------------------------------------------------
+#
+# Le code site (`co_regate`) et le code ROC (`co_roc`) du scénario en cours, posés dès
+# qu'ils sont connus (liste du mode ALL, puis `scenario.charger_scenario`) et relus par
+# `JsonFormatter` comme `id_scenario` : une recherche Kibana par site retrouve toutes
+# les lignes de ses scénarios, y compris celles de `app.db.mysql`.
+_site: ContextVar[tuple[str | None, str | None]] = ContextVar("site", default=(None, None))
+
+
+def _code(valeur: Any) -> str | None:
+    """Code normalisé (texte sans blancs), None si absent : un log ne doit jamais lever."""
+    if valeur is None:
+        return None
+    try:
+        texte = str(valeur).strip()
+    except Exception:
+        return None
+    return texte or None
+
+
+def set_site(co_regate: Any, co_roc: Any) -> Token:
+    """Pose le site et le ROC du contexte courant et retourne le token de reset."""
+    return _site.set((_code(co_regate), _code(co_roc)))
+
+
+def get_site() -> tuple[str | None, str | None]:
+    """(co_regate, co_roc) du contexte courant, (None, None) hors traitement."""
+    return _site.get()
+
+
+def reset_site(token: Token) -> None:
+    """Restaure le site précédent du contexte (à appeler en fin de traitement)."""
+    _site.reset(token)
+
+
 def safe_preview(obj: Any, max_len: int = 500) -> str:
     """Représentation tronquée d'un objet pour les logs.
 
@@ -149,7 +184,10 @@ __all__ = [
     "CTX_VALEUR_MAX_LEN",
     "ctx",
     "get_id_scenario",
+    "get_site",
     "reset_id_scenario",
+    "reset_site",
     "safe_preview",
     "set_id_scenario",
+    "set_site",
 ]

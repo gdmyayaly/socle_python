@@ -44,6 +44,20 @@ Toutes les lignes émises dessous le portent, **y compris celles de `app.db.mysq
 qui n'ont aucun moyen de connaître le scénario. C'est ce qui rend une trace lisible en
 mode `ALL`, où `NB_WORKER` scénarios s'entrelacent.
 
+**Site et ROC.** Deux autres clés suivent le même mécanisme : `co_regate` (code site) et
+`co_roc` (code ROC) du scénario, toujours présentes, `null` tant qu'elles ne sont pas
+connues. Elles sont posées :
+
+- par `orchestrateur._worker`, à partir de la liste du mode `ALL` (qui lit `co_regate` et
+  `co_roc` avec `id_scenario`) — la ligne `Début traitement scénario` les porte déjà ;
+- par `scenario.charger_scenario`, dès la lecture du scénario — c'est le cas des commandes
+  mono-scénario et de `all <id>`.
+
+Le reset appartient à celui qui a ouvert le contexte (`_worker`, `_executer_traitement`) :
+un site ne déborde jamais sur le scénario suivant. Les lignes émises avant la lecture du
+scénario (`Début contrôle éligibilité` d'une commande mono-scénario) n'ont pas encore de
+site.
+
 ### 3. Le niveau par défaut est INFO, `-v` donne DEBUG
 
 `main.py` configurait auparavant WARNING par défaut « pour ne pas polluer la sortie
@@ -98,6 +112,9 @@ scénario bloqué pour tous les autres processus, cela doit rester un échec vis
 
 - `tests/test_log_convention.py` — rendu de `ctx()`, paresse, et le champ `id_scenario`
   (toujours présent, `null` hors contexte, isolé entre tâches asyncio).
+- `tests/test_log_site.py` — les champs `co_regate` / `co_roc` : présents et nuls hors
+  traitement, posés par `charger_scenario` et par la liste du mode `ALL`, propres à chaque
+  worker, effacés en sortie.
 - `tests/test_journalisation.py` — `journaliser` best-effort, `liberer_verrou`
   propageante, verrou non obtenu tracé.
 - `tests/test_traitements_orchestrateur.py` — un verdict journalisé par scénario.

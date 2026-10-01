@@ -435,13 +435,17 @@ plus haut). `-v` ajoute le niveau DEBUG — étapes de calcul, instructions SQL.
 ### Format des logs (JSON)
 
 ```json
-{"app_datetime": "2026-07-31T07:49:35.874Z", "app_ccx": "dsr", "app_env": "sdev", "app_ptf": "build", "app_tm": "yb05", "app_version": "1.0.0", "severity_label": "INFO", "app_message": "Fin calcul trafics PDI (lignes=1240, raison=INITIAL, duration_ms=8421.0)", "id_scenario": 12345, "name": "app.traitements.trafic_pdi", "filename": "trafic_pdi.py", "lineno": 231}
+{"app_datetime": "2026-07-31T07:49:35.874Z", "app_ccx": "dsr", "app_env": "sdev", "app_ptf": "build", "app_tm": "yb05", "app_version": "1.0.0", "severity_label": "INFO", "app_message": "Fin calcul trafics PDI (lignes=1240, raison=INITIAL, duration_ms=8421.0)", "id_scenario": 12345, "co_regate": "750100", "co_roc": "75010", "name": "app.traitements.trafic_pdi", "filename": "trafic_pdi.py", "lineno": 231}
 ```
 
 `id_scenario` est posé une fois par traitement et repris sur **toutes** les lignes qui en
 découlent, y compris celles de `app.db.mysql`. En mode `ALL`, où `NB_WORKER` scénarios sont
 traités en parallèle et où les lignes s'entrelacent, c'est ce champ qui permet de
 reconstituer la trace d'un seul scénario. Il vaut `null` hors traitement.
+
+`co_regate` (code site) et `co_roc` (code ROC) suivent le même principe : posés dès que le
+scénario est connu (liste du mode `ALL`, ou lecture du scénario), `null` sinon. Ils
+permettent de filtrer dans Kibana tous les calculs d'un site.
 
 Le jeu de clés est fixe : `logger.info(..., extra={...})` est **sans effet**. Le contexte
 métier vit donc dans `app_message`, sous la grammaire

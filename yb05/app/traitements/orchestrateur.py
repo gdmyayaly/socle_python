@@ -25,7 +25,7 @@ import time
 
 from app.config import NB_WORKER
 from app.db.mysql import db_read, db_write
-from app.log_utils import ctx, reset_id_scenario, set_id_scenario
+from app.log_utils import ctx, reset_id_scenario, reset_site, set_id_scenario, set_site
 from app.traitements import scenario as scn
 from app.traitements.eligibilite import controle_eligibilite
 from app.traitements.rapport import ECHEC, NON_ELIGIBLE, SUCCES, Bilan
@@ -39,7 +39,7 @@ TITRE = "YB05 - Mode ALL"
 # Critères du ticket, mot pour mot. Un scénario déjà calculé n'y répond plus : c'est ce qui rend
 # le mode ALL rejouable sans précaution particulière.
 SELECT_SCENARIOS_ELIGIBLES_SQL = """
-    SELECT id_scenario
+    SELECT id_scenario, co_regate, co_roc
       FROM trppu_scenario
      WHERE statut = 'VALIDE'
        AND est_fige = 1
@@ -84,8 +84,9 @@ async def executer_tout(
         ctx(id_scenario=id_scenario, nb_workers=nb_workers),
     )
 
+    sites: dict[int, tuple] = {}
     try:
-        bilan.scenarios_trouves = await _lister_scenarios(db_lecture, id_scenario)
+        bilan.scenarios_trouves = await _lister_scenarios(db_lecture, id_scenario, sites)
         if id_scenario is None:
             bilan.scenarios_a_moitie_calcules = await _lister_a_moitie_calcules(db_lecture)
     except Exception as erreur:  # noqa: BLE001 — une erreur système ne rend pas de stacktrace
@@ -111,7 +112,7 @@ async def executer_tout(
 
     await asyncio.gather(
         *(
-            _worker(numero + 1, file, bilan, db_lecture, db_ecriture, debut)
+            _worker(numero + 1, file, bilan, db_lecture, db_ecriture, debut, sites)
             for numero in range(nb_workers)
         )
     )
@@ -133,11 +134,20 @@ async def executer_tout(
     return bilan
 
 
-async def _lister_scenarios(db_lecture, id_scenario: int | None) -> list[int]:
+async def _lister_scenarios(
+    db_lecture, id_scenario: int | None, sites: dict[int, tuple] | None = None
+) -> list[int]:
+    """Identifiants à traiter ; `sites` reçoit au passage (co_regate, co_roc) de chacun."""
     if id_scenario is not None:
         return [id_scenario]
     lignes = await db_lecture.fetch_all(SELECT_SCENARIOS_ELIGIBLES_SQL)
-    return [int(ligne["id_scenario"]) for ligne in lignes]
+    ids = []
+    for ligne in lignes:
+        identifiant = int(ligne["id_scenario"])
+        ids.append(identifiant)
+        if sites is not None:
+            sites[identifiant] = (ligne.get("co_regate"), ligne.get("co_roc"))
+    return ids
 
 
 async def _lister_a_moitie_calcules(db_lecture) -> list[int]:
@@ -146,7 +156,13 @@ async def _lister_a_moitie_calcules(db_lecture) -> list[int]:
 
 
 async def _worker(
-    numero: int, file: asyncio.Queue, bilan: Bilan, db_lecture, db_ecriture, debut: float
+    numero: int,
+    file: asyncio.Queue,
+    bilan: Bilan,
+    db_lecture,
+    db_ecriture,
+    debut: float,
+    sites: dict[int, tuple] | None = None,
 ) -> None:
     """Vide la file, un scénario à la fois, jusqu'à épuisement."""
     while True:
@@ -159,6 +175,9 @@ async def _worker(
         # s'entrelacent, et c'est ce qui permet de reconstituer la trace d'un
         # scénario donné — y compris les lignes émises par `app.db.mysql`.
         jeton = set_id_scenario(id_scenario)
+        # Site et ROC connus dès la liste : même la ligne « Début » les porte. Inconnus (un
+        # seul scénario demandé), `charger_scenario` les posera à la première lecture.
+        jeton_site = set_site(*(sites or {}).get(id_scenario, (None, None)))
         logger.info("Début traitement scénario %s", ctx(worker=numero))
         try:
             await _traiter(id_scenario, bilan, db_lecture, db_ecriture)
@@ -166,6 +185,7 @@ async def _worker(
             logger.exception("Erreur traitement scénario %s", ctx(worker=numero))
             bilan.ajouter(id_scenario, ECHEC, str(erreur))
         finally:
+            reset_site(jeton_site)
             reset_id_scenario(jeton)
             file.task_done()
         _journaliser_avancement(bilan, debut)

@@ -40,7 +40,7 @@ from app.health import (
     fetch_server_info,
 )
 from app.json_formatter import setup_logging
-from app.log_utils import ctx, reset_id_scenario, set_id_scenario
+from app.log_utils import ctx, reset_id_scenario, reset_site, set_id_scenario, set_site
 from app.traitements import (
     calcul_trafic_agrebal,
     calcul_trafic_pdi,
@@ -134,6 +134,8 @@ async def _executer_traitement(traitement, args: argparse.Namespace) -> int:
     # Le scénario est posé ici plutôt que dans chaque `cmd_*` : toutes les lignes
     # émises dessous, y compris celles de `app.db.mysql`, le porteront.
     jeton = set_id_scenario(args.id_scenario)
+    # Site et ROC : posés par `charger_scenario` dès la lecture du scénario, effacés ici.
+    jeton_site = set_site(None, None)
     try:
         rapport = await traitement(args.id_scenario)
     except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
@@ -143,6 +145,7 @@ async def _executer_traitement(traitement, args: argparse.Namespace) -> int:
         rapport.erreur = str(erreur)
         rapport.statut = ECHEC
     finally:
+        reset_site(jeton_site)
         reset_id_scenario(jeton)
 
     if args.json:

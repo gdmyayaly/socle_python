@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Any
 
-from app.log_utils import ctx, safe_preview
+from app.log_utils import ctx, safe_preview, set_site
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +112,16 @@ INSERT_RECALCUL_LOG_SQL = """
 
 
 async def charger_scenario(db_lecture, id_scenario: int) -> dict[str, Any] | None:
-    """Le scénario, ou None s'il n'existe pas (DSR-701 règle 1)."""
-    return await db_lecture.fetch_one(SELECT_SCENARIO_SQL, (id_scenario,))
+    """Le scénario, ou None s'il n'existe pas (DSR-701 règle 1).
+
+    Pose aussi son site et son ROC dans le contexte de log : toutes les lignes suivantes
+    les portent. Le reset appartient à l'appelant qui a ouvert le contexte
+    (`orchestrateur._worker`, `main._executer_traitement`).
+    """
+    scenario = await db_lecture.fetch_one(SELECT_SCENARIO_SQL, (id_scenario,))
+    if scenario:
+        set_site(scenario.get("co_regate"), scenario.get("co_roc"))
+    return scenario
 
 
 async def compter_coefficients_pic(db_lecture, id_pic_version: int) -> int:

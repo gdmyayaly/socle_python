@@ -193,9 +193,13 @@ async def generer_scenarios(
             for numero in range(premier, premier + nombre):
                 id_scenario = await _creer_scenario(tx, numero, nb_pdi, nb_agrebals, nb_jours)
                 crees.append((id_scenario, _site(numero)))
-                logger.debug(
+                logger.info(
                     "Fin génération scénario de test %s",
-                    ctx(id_scenario=id_scenario, site=_site(numero)),
+                    ctx(
+                        id_scenario=id_scenario,
+                        co_regate=_site(numero),
+                        co_roc=f"{PREFIXE_ROC}{numero:04d}",
+                    ),
                 )
     except Exception as erreur:  # noqa: BLE001 - la CLI ne doit jamais rendre de stacktrace
         logger.exception("Erreur génération scénarios de test %s", ctx(nombre=nombre))
