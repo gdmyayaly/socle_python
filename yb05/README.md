@@ -226,7 +226,7 @@ python -m app.main supprimer-scenarios-test                   # efface tout ce q
 Crée N scénarios **complets, avec de fausses données**, prêts pour `all` : chacun passe les
 douze règles de DSR-701 et se calcule (DSR-702/703). Pour chaque scénario, sur un site de
 test dédié (`ZT0001`, `ZT0002`…) : la version PIC et ses coefficients (produit × jour × densité),
-un référentiel et une version de clés active, `--pdi` PDI avec leurs clés (chaque famille somme
+une version de clés active (référentiel 900000), `--pdi` PDI avec leurs clés (chaque famille somme
 à 1), `--agrebals` Agrébals qui se partagent ces PDI, le scénario (`VALIDE`, figé, non calculé)
 et ses TMH — un par produit de `CLES_PAR_PRODUIT`, créés dans `trppu_produit` s'ils manquent.
 
@@ -235,8 +235,17 @@ et ses TMH — un par produit de `CLES_PAR_PRODUIT`, créés dans `trppu_produit
   données (et les trafics calculés dessus), rien d'autre ; les produits, partagés, restent.
 - **Une transaction** : une génération interrompue ne laisse rien.
 - **Refusé en production** (`APP_ENV=prod`).
-- La règle 10 lisant encore `trppu_referentiel`, le générateur y écrit un référentiel par
-  site ; il faudra l'adapter le jour où cette table disparaît.
+- `trppu_referentiel` n'est jamais touchée : comme pour les vrais sites, le référentiel est
+  porté par la version de clés (règle 10).
+
+### Référentiel actif (règle 10)
+
+Le référentiel d'un site est celui de sa **version de clés active**
+(`trppu_version_cle`, `actif = 'O'`, la plus récente) : DSR-701 et DSR-702 proposent de le
+lire soit dans `trppu_referentiel`, soit dans `trppu_version_cle`, et le rédacteur des tickets
+a retenu la seconde (02/10/2026). `trppu_referentiel` n'est alimentée par aucun ticket
+et est vouée à disparaître : YB05 ne la lit ni ne l'écrit plus
+(`tests/test_sans_trppu_referentiel.py` y veille).
 
 ### Docker
 

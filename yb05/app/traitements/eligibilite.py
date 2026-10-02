@@ -121,24 +121,15 @@ async def _regles_sur_les_donnees(rapport: Rapport, scenario: dict, db_lecture) 
     # Règle 9 — version de clés active du site (lue avant la règle 10, qui s'y compare).
     version = await scn.version_cle_active(db_lecture, co_regate)
 
-    # Règle 10 — référentiel actif du site.
-    referentiel = await scn.dernier_referentiel(db_lecture, co_regate)
-    if referentiel is None:
-        rapport.ko(
-            "Aucun référentiel actif disponible",
-            libelle="Référentiel actif disponible",
-        )
-    elif version is not None and version["id_referentiel"] != referentiel:
-        # Le ticket exige que les deux requêtes renvoient le même identifiant, sans dire quoi
-        # faire lorsqu'elles diffèrent. Un écart signifie que la version active repose sur un
-        # référentiel dépassé : calculer produirait des trafics à partir de clés périmées.
-        rapport.ko(
-            f"Le référentiel de la version de clés active ({version['id_referentiel']}) "
-            f"n'est pas le dernier référentiel du site ({referentiel})",
-            libelle="Référentiel actif disponible",
-        )
-    else:
-        rapport.ok(f"Référentiel actif disponible ({referentiel})")
+    # Règle 10 — référentiel actif du site : celui de sa version de clés active. Le ticket
+    # propose `trppu_referentiel` « ou » `trppu_version_cle` ; la seconde est retenue par le
+    # rédacteur des tickets (02/10/2026), la première n'étant alimentée par aucun ticket.
+    referentiel = scn.referentiel_de_la_version(version)
+    rapport.ajouter(
+        referentiel is not None,
+        f"Référentiel actif disponible ({referentiel})",
+        "Aucun référentiel actif disponible",
+    )
 
     rapport.ajouter(
         version is not None,

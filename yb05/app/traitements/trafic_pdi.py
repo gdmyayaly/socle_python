@@ -208,12 +208,17 @@ async def _calculer(
     debut_phase = time.perf_counter()
 
     # Étape 3 — traçabilité (DSR-700). Commitée avant le calcul, comme l'exige le CA-03.
+    # Référentiel et version lus sur la même ligne de `trppu_version_cle` (cf.
+    # `scn.version_cle_active`) : `trppu_referentiel` n'est plus consultée.
     version = await scn.version_cle_active(db_lecture, co_regate)
-    referentiel = await scn.dernier_referentiel(db_lecture, co_regate)
     if version is None:
         raise TraitementImpossible(f"Aucune version de clés active pour le site {co_regate}")
+    id_referentiel = scn.referentiel_de_la_version(version)
+    if id_referentiel is None:
+        raise TraitementImpossible(
+            f"La version de clés active du site {co_regate} ne porte aucun référentiel"
+        )
     id_version_cle = int(version["id_version_cle"])
-    id_referentiel = referentiel if referentiel is not None else int(version["id_referentiel"])
     await db_ecriture.execute(
         UPDATE_TRACABILITE_SQL, (id_referentiel, id_version_cle, id_scenario)
     )

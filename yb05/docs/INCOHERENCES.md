@@ -27,7 +27,7 @@ comptages restent valides, les noms non.
 | 3 | Aucun index ne sert l'agrégation sur 22,4 M lignes — contredit le CA6 | Fort | Corrigé par la migration |
 | 4 | `trppu_version_cle` sans index sur `(co_regate, actif)` | Moyen | **Corrigé en base** — `idx_regate_actif` |
 | 5 | Débordement décimal : `decimal(25,19)` sommé dans `decimal(24,18)` | **Fort** | **Survenu en recette, corrigé** — `db/fix_error.sql` |
-| 6 | `trppu_referentiel` ne permet pas d'exprimer « référentiel actif » | Fort | **Ouvert** — impacte DSR-701 |
+| 6 | `trppu_referentiel` ne permet pas d'exprimer « référentiel actif » | Fort | **Résolu le 02/10/2026** — référentiel lu dans `trppu_version_cle` |
 | 7 | ~~`docs/DSR-697.md` est vide (0 octet)~~ | Moyen | **Clos** — ticket reçu et implémenté |
 | 8 | YS04 laisse `id_referentiel` / `id_version_cle` à `0` sur les scénarios | Fort | **Ouvert** — hors périmètre 696/698/699 |
 | 9 | `trppu_cles_repartition_calcule` sans unicité ni index | Moyen | Corrigé par la migration |
@@ -171,6 +171,13 @@ Or `trppu_referentiel` ne comporte que quatre colonnes — `id_referentiel`, `co
 
 À arbitrer avant DSR-701 : soit on aligne la table (colonne `actif`, index sur
 `co_regate`), soit on documente que « actif = dernier id du site » est la définition officielle.
+
+> **Résolu le 02/10/2026.** La table s'est révélée vide : aucun ticket ne l'alimente (ni la
+> chaîne DSR-696 → 699 de YB07, ni ailleurs). Le rédacteur des tickets a tranché : on ne
+> l'utilise plus, le référentiel actif est celui de la version de clés active, variante que
+> DSR-701 règle 10 et DSR-702 étape 3 prévoyaient déjà (« possible aussi avec
+> `trppu_version_cle` »). YB05 ne lit ni n'écrit plus `trppu_referentiel` ; YS04 ne l'a jamais
+> utilisée. Sa suppression physique relève de la base (MD01, DSR-736).
 
 ### 7. `DSR-697.md` était vide — **clos**
 

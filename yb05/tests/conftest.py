@@ -190,7 +190,6 @@ def reponses_eligibles(**surcharges: Any) -> dict[str, Any]:
         "FROM trppu_scenario WHERE id_scenario": dict(SCENARIO_ELIGIBLE),
         "COUNT(*) AS nb FROM trppu_pic_coefficients": {"nb": 30},
         "FROM trppu_version_cle": {"id_version_cle": 4, "id_referentiel": 2},
-        "FROM trppu_referentiel": {"id_referentiel": 2},
         "FROM trppu_agrebal_pdi": [
             {
                 "agrebal_id": 2404,

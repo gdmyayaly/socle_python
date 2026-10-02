@@ -61,7 +61,8 @@ def ecritures(base, fragment):
 def _reponses_du_scenario_genere(base, nb_jours):
     """Ce que liraient DSR-701/702, reconstruit depuis les INSERT du générateur."""
     ids = iter(range(101, 1000))
-    id_pic_version, id_referentiel, id_version_cle, id_scenario = (next(ids) for _ in range(4))
+    id_pic_version, id_version_cle, id_scenario = (next(ids) for _ in range(3))
+    id_referentiel = generateur.REFERENTIEL_TEST
     (scenario,) = ecritures(base, "INSERT INTO trppu_scenario")
     roc, site, libelle, _, _, jours, pic = scenario
     assert (pic, jours) == (id_pic_version, nb_jours)
@@ -91,7 +92,6 @@ def _reponses_du_scenario_genere(base, nb_jours):
             "id_version_cle": id_version_cle,
             "id_referentiel": id_referentiel,
         },
-        "FROM trppu_referentiel": {"id_referentiel": id_referentiel},
         "FROM trppu_agrebal_pdi": [
             {
                 "agrebal_id": a[0],
@@ -128,11 +128,11 @@ def test_le_scenario_genere_est_eligible_et_se_calcule(nb_jours):
     reponses = _reponses_du_scenario_genere(base, nb_jours)
     lecture = FausseBase(reponses, lecture_seule=True)
 
-    eligibilite = asyncio.run(controle_eligibilite(104, db_lecture=lecture))
+    eligibilite = asyncio.run(controle_eligibilite(103, db_lecture=lecture))
     assert eligibilite.statut == ELIGIBLE, eligibilite.motifs
 
     ecriture = FausseBase(reponses)
-    calcul = asyncio.run(calcul_trafic_pdi(104, db_lecture=lecture, db_ecriture=ecriture))
+    calcul = asyncio.run(calcul_trafic_pdi(103, db_lecture=lecture, db_ecriture=ecriture))
     assert calcul.statut == SUCCES, (calcul.motifs, calcul.erreur)
     lignes = ecriture.parametres_de("INSERT INTO trppu_trafic_pdi")
     # Chaque PDI × chaque produit × chaque jour de la semaine du scénario.
@@ -176,6 +176,21 @@ def test_identifiants_hors_des_plages_reelles_et_donnees_marquees():
     assert all(a[0] >= 900_000_000 for a in ecritures(base, "INSERT INTO trppu_agrebal_pdi"))
     (scenario,) = ecritures(base, "INSERT INTO trppu_scenario")
     assert scenario[2] == "TEST YB05 0001"
+
+
+def test_trppu_referentiel_n_est_jamais_touchee():
+    """Le référentiel est porté par la version de clés : ni INSERT ni DELETE sur la table."""
+    _, base = generer(nombre=2)
+    asyncio.run(
+        generateur.supprimer_scenarios_test(
+            db_lecture=BaseGeneration({"FROM trppu_site WHERE co_regate LIKE": [
+                {"co_regate": "ZT0001"}]}),
+            db_ecriture=base,
+        )
+    )
+    assert not any("trppu_referentiel" in sql for _, sql, _ in base.journal)
+    versions = ecritures(base, "INSERT INTO trppu_version_cle")
+    assert {v[0] for v in versions} == {generateur.REFERENTIEL_TEST}
 
 
 def test_numerotation_reprend_apres_le_dernier_site_de_test():

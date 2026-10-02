@@ -1,0 +1,205 @@
+OBJET : Table TRPPU_REFERENTIEL - son initialisation n'est decrite
+        dans aucun ticket
+========================================================================
+
+Bonjour,
+
+Suite a notre echange sur la table TRPPU_REFERENTIEL (vide aujourd'hui),
+j'ai repris l'ensemble des tickets et de la documentation des projets
+pour verifier si son initialisation etait prevue, notamment dans les
+tickets de la chaine YB07.
+
+Conclusion : aucun ticket ne decrit l'alimentation de cette table, ni
+dans YB07, ni ailleurs. Elle est seulement LUE par YB05 (DSR-701 et
+DSR-702). Le detail est ci-dessous.
+
+
+1. CE QUI A ETE VERIFIE
+------------------------------------------------------------------------
+
+150 documents de tickets et de specifications, dans tous les projets :
+
+  - All-Jira/          42 tickets (DSR-594 a DSR-737)
+  - python/jira/       33 tickets (API YS04, versions v1, v2, other)
+  - python/api_docs/   50 specifications et notes DSR de l'API
+  - yb05/docs/         20 documents (DSR-696 a DSR-704, dont DSR-697
+                       qui n'existe que la)
+  - yb06/docs/          2 documents (DSR-715, DSR-717)
+  - racine du depot     3 rapports (DSR-729, DSR-715-717)
+
+Recherche : toutes les ecritures de "referentiel" (avec ou sans
+accents), "trppu_referentiel", et toute formulation du type "creer /
+initialiser / alimenter un referentiel".
+
+Le code a aussi ete verifie : API YS04 (python/), YB05, YB06, YB07.
+
+
+2. TICKETS DE LA CHAINE YB07 (DSR-696 A DSR-699)
+------------------------------------------------------------------------
+
+YB07 execute la chaine d'initialisation des cles de repartition. Aucun
+de ses tickets n'ecrit dans TRPPU_REFERENTIEL :
+
+DSR-697 - Chargement du CSV des cles de repartition
+  Table alimentee : TRPPU_CLES_REPARTITION uniquement.
+  RG1 : "Le chargement correspond a un referentiel unique."
+  Toutes les lignes recoivent la valeur fixe id_referentiel = 1.
+  Ici, "referentiel" designe le JEU DE DONNEES charge (le fichier
+  CSV), pas une ligne de la table TRPPU_REFERENTIEL. Le ticket le dit
+  lui-meme : le chargement sert a "constituer le referentiel source
+  des PDI".
+
+DSR-696 - Agregats de trafic par site
+  Table alimentee : TRPPU_TRAFIC_SITE.
+  Utilise la colonne id_referentiel = 1 comme filtre.
+
+DSR-698 - Creation des versions de cles
+  Table concernee (selon le ticket) : TRPPU_VERSION_CLE uniquement.
+  Resultat attendu : une ligne dans TRPPU_VERSION_CLE.
+  Point a noter : sa regle de gestion dit "Toute modification du
+  perimetre PDI ou des trafics d'un site entraine la creation d'un
+  nouveau referentiel et d'une nouvelle version de cles". Le ticket
+  constate donc qu'un nouveau referentiel existe, mais il ne dit ni
+  QUI le cree, ni COMMENT, ni dans quelle table. La seule table
+  citee, et le seul resultat attendu, concernent TRPPU_VERSION_CLE.
+  C'est la phrase la plus proche d'une creation de referentiel dans
+  tous les tickets, et elle ne constitue pas une specification
+  d'alimentation.
+
+DSR-699 - Calcul des cles
+  Table alimentee : TRPPU_CLES_REPARTITION_CALCULE.
+  Utilise la colonne id_referentiel, jamais la table.
+
+
+3. LES SEULS ENDROITS OU LA TABLE EST CITEE
+------------------------------------------------------------------------
+
+DSR-701 regle 10 (YB05, eligibilite d'un scenario)
+  "Le batch doit verifier qu'un referentiel actif est disponible pour
+  le site du scenario dans la table trppu_referentiel."
+    SELECT id_referentiel FROM trppu_referentiel
+     WHERE co_regate = :coRegate
+     ORDER BY id_referentiel DESC LIMIT 1
+  Le ticket ajoute "Ou :", avec la meme recherche dans
+  TRPPU_VERSION_CLE (actif = 'O'), "qui doit renvoyer le meme
+  id_referentiel".
+  => C'est une LECTURE. Le ticket suppose la table deja remplie.
+
+DSR-702 (YB05, calcul des trafics PDI)
+  Meme requete de lecture. Le ticket precise "possible aussi avec"
+  la lecture de TRPPU_VERSION_CLE (actif = 'O').
+  => LECTURE seulement.
+
+DSR-736 (regles de livraison des scripts SQL, batch MD01)
+  Cite "referentiel.csv" et "001_init_referentiel.sql" uniquement
+  comme EXEMPLES de nommage de fichiers d'initialisation ("selon la
+  strategie retenue"). Il ne donne aucun contenu, ne designe aucune
+  source de donnees et ne renvoie a aucun ticket.
+  => Ce n'est pas une specification de l'initialisation.
+
+Aucun autre ticket (API YS04, YB06, DSR-700, DSR-703, DSR-704,
+DSR-715 a DSR-737) ne mentionne cette table.
+
+
+4. CE QUI EXISTE DANS LE CODE
+------------------------------------------------------------------------
+
+  - API YS04 (python/)   : n'ecrit jamais dans la table.
+  - YB07 (init des cles) : n'ecrit jamais dans la table. Elle n'est
+                           plus non plus lue, puisqu'elle est annoncee
+                           comme vouee a disparaitre.
+  - YB06                 : aucune reference.
+  - YB05                 : LIT la table (regle 10). Seul le generateur
+                           de scenarios de test y ecrit, pour ses
+                           propres donnees fictives.
+  - python/db/02_donnees.sql : jeu de donnees de DEVELOPPEMENT ecrit a
+    la main (2 lignes fictives), marque "ne jamais le jouer sur une
+    base reelle".
+
+Le schema de la table ne comporte que 4 colonnes : id_referentiel
+(cle primaire auto-incrementee), co_regate (facultatif),
+date_reference, commentaire. Il n'y a ni colonne "actif", ni date de
+fin de validite.
+
+
+5. POINT DEJA REMONTE
+------------------------------------------------------------------------
+
+Le sujet a ete signale par ecrit lors des developpements :
+
+  - commentaire Jira DSR-698, point 6 b) "REFERENTIEL ACTIF N'EST PAS
+    EXPRIMABLE EN BASE", avec la mention "A arbitrer avant DSR-697 /
+    DSR-701" ;
+  - commentaire Jira DSR-701, points b) et c) sur la regle 10 ;
+  - yb05/docs/INCOHERENCES.md, point 6, impact Fort, statut Ouvert.
+
+
+6. POURQUOI UNE SIMPLE INITIALISATION NE SUFFIRAIT PAS
+------------------------------------------------------------------------
+
+Meme si on decidait de remplir la table maintenant, le modele actuel
+ne permet pas de satisfaire la regle 10 pour tous les sites :
+
+  - DSR-697 charge TOUS les sites sous un seul referentiel, id = 1 ;
+    toutes les versions de cles creees par DSR-698 portent donc
+    id_referentiel = 1 ;
+  - la regle 10 cherche, POUR CHAQUE SITE, une ligne de
+    TRPPU_REFERENTIEL avec co_regate = ce site, et exige que son id
+    soit egal a celui de la version de cles (donc 1) ;
+  - or id_referentiel est la CLE PRIMAIRE de la table : une seule
+    ligne peut porter l'id 1, rattachee a un seul site (ou a aucun) ;
+  - une ligne nationale (co_regate vide) n'est jamais retenue par la
+    requete de la regle 10.
+
+Resultat : avec un referentiel unique pour tous les sites, au mieux UN
+site passerait la regle 10. Tous les autres resteraient "non
+eligibles", que la table soit remplie ou non.
+
+Il faut donc choisir une regle de gestion, pas seulement remplir une
+table.
+
+
+7. CONSEQUENCE ACTUELLE
+------------------------------------------------------------------------
+
+La table etant vide, la regle 10 de YB05 declare chaque scenario reel
+"Aucun referentiel actif disponible" : aucun calcul de trafic ne
+peut aboutir.
+
+Le calcul lui-meme (DSR-702) n'a pas besoin de cette table : sans
+ligne, il reprend l'id_referentiel de la version de cles active. Seul
+le controle d'eligibilite bloque.
+
+
+8. PROPOSITION / DECISION A PRENDRE
+------------------------------------------------------------------------
+
+Option A (recommandee) : appliquer la variante deja prevue par les
+tickets
+  DSR-701 et DSR-702 proposent eux-memes de lire le referentiel dans
+  TRPPU_VERSION_CLE (actif = 'O'). La regle 10 verifierait alors que
+  le site a une version de cles active, rattachee a un referentiel.
+  - aucune donnee a creer, coherent avec la chaine YB07 telle
+    qu'elle a ete specifiee ;
+  - ne depend plus d'une table annoncee comme vouee a disparaitre ;
+  - modification limitee a YB05, avec ses tests.
+
+Option B : specifier l'initialisation de TRPPU_REFERENTIEL
+  Il faudrait un nouveau ticket qui precise :
+  - la source des donnees et le moment de l'alimentation (avant
+    YB07 ? dans YB07 ? par MD01 / DSR-736 ?) ;
+  - le modele : un referentiel par site (ce qui remet en cause
+    "id_referentiel = 1 pour tous" de DSR-697 et toute la chaine
+    YB07), ou un referentiel national (ce qui impose de modifier la
+    regle 10, puisqu'une ligne nationale n'est jamais retenue) ;
+  - la notion de referentiel "actif", absente du schema.
+  Cette option demande une modification du schema et des tickets
+  DSR-697 a DSR-701, puis la reinitialisation complete des cles.
+
+Decision attendue : Option A ou Option B.
+En attendant, YB05 ne peut calculer aucun scenario reel.
+
+Je reste disponible pour en discuter et pour montrer les extraits des
+tickets.
+
+Cordialement

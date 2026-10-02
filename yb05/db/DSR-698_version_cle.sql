@@ -33,8 +33,8 @@ SET @libelle        := NULL;                    -- colonne présente en base, ab
 -- -------------------------------------------------------------------------------------
 -- Garde-fous
 -- -------------------------------------------------------------------------------------
--- État courant du site : version active éventuelle, et dernier référentiel connu. Un écart
--- entre les deux est ce que contrôle DSR-701 règle 10 avant d'autoriser un calcul.
+-- État courant du site : version active éventuelle et son référentiel. `trppu_referentiel`
+-- n'est pas interrogée : la table est vouée à disparaître.
 SELECT @co_regate                                              AS co_regate,
        @id_referentiel                                         AS id_referentiel_demande,
        (SELECT id_version_cle FROM trppu_version_cle
@@ -43,8 +43,6 @@ SELECT @co_regate                                              AS co_regate,
        (SELECT id_referentiel FROM trppu_version_cle
          WHERE co_regate = @co_regate AND actif = 'O'
          ORDER BY id_version_cle DESC LIMIT 1)                 AS referentiel_de_cette_version,
-       (SELECT MAX(id_referentiel) FROM trppu_referentiel
-         WHERE co_regate = @co_regate)                         AS dernier_referentiel_du_site,
        (SELECT COUNT(*) FROM trppu_trafic_site
          WHERE id_referentiel = @id_referentiel
            AND co_regate_site = @co_regate)                    AS agregats_dsr696_presents;

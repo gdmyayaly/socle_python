@@ -7,15 +7,15 @@ Chaque scénario reçoit tout ce que DSR-701 contrôle et que DSR-702/703 consom
     trppu_produit                    les produits de CLES_PAR_PRODUIT (créés s'ils manquent)
     trppu_pic_version                une version PIC de niveau SITE
     trppu_pic_coefficients           produit × jour (LUNDI…SAMEDI) × densité (0, 1, 2)
-    trppu_referentiel                un référentiel du site (règle 10)
-    trppu_version_cle                une version de clés active, sur ce référentiel (règle 9)
+    trppu_version_cle                une version de clés active, avec son référentiel
+                                     (règles 9 et 10)
     trppu_cles_repartition_calcule   une clé par PDI ; chaque famille somme à 1
     trppu_agrebal_pdi                des Agrébals qui se partagent les PDI (règles 11 et 12)
     trppu_scenario                   VALIDE, figé, non calculé, non verrouillé (règles 2 à 8)
     trppu_tmh                        un TMH par produit, non exclu
 
-Tout est **marqué** — libellés `TEST YB05`, sites `ZT…`, PDI au-delà de 9·10¹² et Agrébals
-au-delà de 9·10⁸, hors de toute plage réelle — et `supprimer_scenarios_test` efface
+Tout est **marqué** — libellés `TEST YB05`, sites `ZT…`, référentiel 900000, PDI au-delà de
+9·10¹² et Agrébals au-delà de 9·10⁸, hors de toute plage réelle — et `supprimer_scenarios_test` efface
 exactement ces données. La génération est refusée en production (`APP_ENV=prod`).
 
 Une seule transaction pour l'ensemble : une génération interrompue ne laisse rien.
@@ -53,6 +53,9 @@ AGREBALS_PAR_SITE_MAX = 99
 # Hors de toute plage réelle : un PDI ou un Agrébal de test ne peut jamais en masquer un vrai.
 PDI_BASE = 9_000_000_000_000
 AGREBAL_BASE = 900_000_000
+# Référentiel porté par les versions et les clés de test. `trppu_referentiel` n'est pas
+# alimentée : le référentiel est lu dans la version de clés (DSR-701 règle 10).
+REFERENTIEL_TEST = 900_000
 
 JOURS = ("LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI")
 # Coefficient de base par densité (0 = dense, 1 = faible1, 2 = faible2), modulé par jour.
@@ -88,10 +91,6 @@ INSERT_COEFFICIENT_SQL = """
 INSERT INTO trppu_pic_coefficients
     (id_pic_version, co_produit, jour_semaine, dt_effet, coef, densite, id_rh)
 VALUES (%s, %s, %s, NOW(), %s, %s, 'GENERATEUR')
-"""
-INSERT_REFERENTIEL_SQL = """
-INSERT INTO trppu_referentiel (co_regate, date_reference, commentaire)
-VALUES (%s, CURDATE(), %s)
 """
 INSERT_VERSION_CLE_SQL = """
 INSERT INTO trppu_version_cle (id_referentiel, libelle, co_regate, actif, commentaire)
@@ -145,7 +144,6 @@ TABLES_FILLES_DU_SCENARIO = (
 SUPPRESSIONS_PAR_SITE = (
     ("trppu_cles_repartition_calcule", "co_regate_site"),
     ("trppu_version_cle", "co_regate"),
-    ("trppu_referentiel", "co_regate"),
     ("trppu_agrebal_pdi", "agrebal_code_regate"),
 )
 
@@ -294,9 +292,8 @@ async def _creer_scenario(tx, numero: int, nb_pdi: int, nb_agrebals: int, nb_jou
         ],
     )
 
-    # Référentiel, puis version de clés active qui le porte (règles 9 et 10 concordantes).
-    await tx.execute(INSERT_REFERENTIEL_SQL, (site, commentaire))
-    id_referentiel = await _dernier_id(tx)
+    # Version de clés active, qui porte le référentiel (règles 9 et 10).
+    id_referentiel = REFERENTIEL_TEST
     await tx.execute(INSERT_VERSION_CLE_SQL, (id_referentiel, MARQUEUR, site, commentaire))
     id_version_cle = await _dernier_id(tx)
 

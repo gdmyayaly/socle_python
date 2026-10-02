@@ -68,9 +68,8 @@ le dernier site de test deja en base (ZT0001, ZT0002...).
                                   libelle "TEST YB05"
   trppu_pic_coefficients          6 produits x 6 jours (lundi a
                                   samedi) x 3 densites = 108 lignes
-  trppu_referentiel               un referentiel du site (regle 10)
-  trppu_version_cle               une version de cles active (O)
-                                  sur ce referentiel (regle 9)
+  trppu_version_cle               une version de cles active (O),
+                                  referentiel 900000 (regles 9, 10)
   trppu_cles_repartition_calcule  une ligne de cles par PDI
   trppu_agrebal_pdi               les Agrebals du site, qui se
                                   partagent les PDI (regles 11, 12)
@@ -138,6 +137,7 @@ des donnees reelles :
   - PDI       : 9 000 000 000 000 + numero de site x 1000 + rang
                 (hors de toute plage reelle)
   - Agrebals  : 900 000 000 + numero de site x 100 + rang
+  - referentiel : 900000 (porte par la version de cles)
 
 supprimer-scenarios-test ne retient que les sites dont le code
 commence par ZT ET dont le libelle commence par "SITE TEST YB05".
@@ -146,7 +146,7 @@ Elle n'efface que ce qui est rattache a ces sites :
      recalcul_log, tmh, exclusions, comptages manuels, coefficients
      PIC du scenario, variations, neutralisations, api_log) ;
   2. les scenarios ;
-  3. les cles, versions de cles, referentiels et Agrebals ;
+  3. les cles, versions de cles et Agrebals ;
   4. la version PIC "TEST YB05" (les coefficients suivent en
      cascade) ;
   5. les sites.
@@ -257,9 +257,8 @@ Journal des calculs :
 9. POINTS D'ATTENTION
 ---------------------
 
-- La regle 10 lit encore trppu_referentiel. C'est pour cela que le
-  generateur y ecrit une ligne. Quand cette table sera supprimee, il
-  faudra adapter ensemble la regle 10 et le generateur.
+- trppu_referentiel n'est jamais touchee. Comme pour les vrais sites,
+  le referentiel est lu dans la version de cles active (regle 10).
 - Les produits viennent de CLES_PAR_PRODUIT dans le .env. Si cette
   liste change, le nombre de coefficients, de TMH et de lignes de
   trafic change avec elle.

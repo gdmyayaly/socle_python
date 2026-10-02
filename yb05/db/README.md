@@ -251,7 +251,7 @@ Chaque script se termine par les contrôles de ses critères d'acceptation. Il n
 
 | Script | Contrôle | Attendu |
 |--------|----------|---------|
-| DSR-697 | garde-fou *(avant chargement)* | `repertoire_autorise` renseigné, `referentiel_declare` = 1 |
+| DSR-697 | garde-fou *(avant chargement)* | `repertoire_autorise` renseigné |
 | | volumétrie (CA1+CA3) | `nb_lignes` = lignes du fichier dédoublonné, en-tête déduit, et `nb_pdi_distincts` identique |
 | | doublons de PDI (CA3, RG5) | 0 ligne |
 | | lignes non actives (CA5+CA6) | 0 ligne |

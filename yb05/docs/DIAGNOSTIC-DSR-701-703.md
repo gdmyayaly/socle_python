@@ -65,9 +65,12 @@ règles voisines interdisent.
 Déjà relevé pour DSR-698 (`INCOHERENCES.md` §6) : `trppu_referentiel` ne porte ni colonne
 `actif`, ni date de fin de validité, et son `co_regate` est nullable et sans index.
 
-> **Convention retenue**, celle du ticket : le référentiel actif d'un site est son plus grand
-> `id_referentiel`. Conséquence à connaître — un référentiel national (`co_regate IS NULL`) n'est
-> jamais retourné, et la règle 10 le déclarerait absent.
+> ~~**Convention retenue**, celle du ticket : le référentiel actif d'un site est son plus grand
+> `id_referentiel`.~~
+>
+> **Remplacé le 02/10/2026.** `trppu_referentiel` est vide et aucun ticket ne l'alimente. Le
+> rédacteur des tickets a retenu la variante `trppu_version_cle` : le référentiel actif est celui
+> de la version de clés active du site. La table n'est plus lue.
 
 ### 23. Le ticket ne dit pas quoi faire quand les deux requêtes divergent
 
@@ -75,9 +78,10 @@ La règle 10 propose deux requêtes — le dernier référentiel du site, et cel
 de clés active — et précise que la seconde « doit renvoyer le même `id_referentiel` ». Elle ne
 prévoit aucun message pour le cas où elles diffèrent.
 
-> **Tranché : bloquant.** Un écart signifie que la version de clés active repose sur un
-> référentiel dépassé ; calculer produirait des trafics à partir de clés périmées, ce qui est
-> exactement ce que DSR-700 cherche à rendre traçable. Le motif nomme les deux identifiants.
+> ~~**Tranché : bloquant.**~~ **Sans objet depuis le 02/10/2026** : il n'y a plus qu'une
+> source, la version de clés active — version et référentiel sont lus sur la même ligne, ils ne
+> peuvent plus diverger. La règle 10 échoue seulement si cette version manque ou ne porte aucun
+> référentiel.
 
 ---
 

@@ -57,14 +57,6 @@ SELECT_VERSION_CLE_ACTIVE_SQL = """
      LIMIT 1
 """
 
-SELECT_DERNIER_REFERENTIEL_SQL = """
-    SELECT id_referentiel
-      FROM trppu_referentiel
-     WHERE co_regate = %s
-     ORDER BY id_referentiel DESC
-     LIMIT 1
-"""
-
 # DSR-701 règle 11 désigne `trppu_trafic_agrebal` — table des trafics CALCULÉS, que la règle 6
 # exige justement vide avant un premier calcul. Les Agrébals d'un site vivent dans
 # `trppu_agrebal_pdi` ; c'est elle qui est interrogée. Cf. docs/DIAGNOSTIC-DSR-701-703.md.
@@ -130,19 +122,31 @@ async def compter_coefficients_pic(db_lecture, id_pic_version: int) -> int:
 
 
 async def version_cle_active(db_lecture, co_regate: str) -> dict[str, Any] | None:
-    """Version de clés active du site (DSR-701 règle 9, DSR-702 étape 3)."""
+    """Version de clés active du site, avec son référentiel (DSR-701 règles 9 et 10, DSR-702
+    étape 3).
+
+    C'est la **seule** source du référentiel : DSR-701 et DSR-702 proposent de le lire soit
+    dans `trppu_referentiel`, soit dans `trppu_version_cle`, et le rédacteur des tickets a
+    retenu la seconde (02/10/2026) — `trppu_referentiel` n'est alimentée par aucun ticket et
+    est vouée à disparaître. Lus sur la même ligne, version et référentiel sont cohérents
+    par construction.
+    """
     return await db_lecture.fetch_one(SELECT_VERSION_CLE_ACTIVE_SQL, (co_regate,))
 
 
-async def dernier_referentiel(db_lecture, co_regate: str) -> int | None:
-    """« Référentiel actif » du site.
+def referentiel_de_la_version(version: dict[str, Any] | None) -> int | None:
+    """Référentiel actif du site : celui de sa version de clés active, None s'il manque.
 
-    `trppu_referentiel` ne porte aucune colonne `actif` : la convention retenue est celle du
-    ticket, le plus grand `id_referentiel` du site. Un référentiel national (`co_regate IS
-    NULL`) n'est donc jamais retourné — écart signalé dans le rapport d'éligibilité.
+    Un `id_referentiel` nul ou à 0 est traité comme absent : ce ne peut pas être un vrai
+    référentiel, et calculer dessus n'aurait pas de traçabilité exploitable (DSR-700).
     """
-    ligne = await db_lecture.fetch_one(SELECT_DERNIER_REFERENTIEL_SQL, (co_regate,))
-    return int(ligne["id_referentiel"]) if ligne else None
+    if not version:
+        return None
+    try:
+        referentiel = int(version.get("id_referentiel") or 0)
+    except (TypeError, ValueError):
+        return None
+    return referentiel or None
 
 
 async def agrebals_du_site(db_lecture, co_regate: str) -> list[dict[str, Any]]:
@@ -281,10 +285,10 @@ __all__ = [
     "agrebals_du_site",
     "charger_scenario",
     "compter_coefficients_pic",
-    "dernier_referentiel",
     "determiner_raison",
     "journaliser",
     "liberer_verrou",
     "prendre_verrou",
+    "referentiel_de_la_version",
     "version_cle_active",
 ]

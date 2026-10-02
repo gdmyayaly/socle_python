@@ -119,36 +119,42 @@ def test_regle_8_aucun_coefficient_de_retention():
 
 
 def test_regle_9_aucune_version_de_cles_active():
+    """Sans version active, il n'y a pas non plus de référentiel : les règles 9 et 10 tombent."""
     reponses = reponses_eligibles()
     reponses["FROM trppu_version_cle"] = None
 
     rapport, _ = _controler(reponses)
 
-    assert rapport.motifs == ["Aucune version de clés active disponible"]
+    assert rapport.motifs == [
+        "Aucun référentiel actif disponible",
+        "Aucune version de clés active disponible",
+    ]
 
 
-def test_regle_10_aucun_referentiel():
+def test_regle_10_referentiel_lu_dans_la_version_de_cles():
+    """Le référentiel actif est celui de la version de clés active (DSR-702 étape 3, variante
+    `trppu_version_cle`, retenue par le rédacteur des tickets)."""
+    rapport, _ = _controler(reponses_eligibles())
+
+    assert "Référentiel actif disponible (2)" in [c.libelle for c in rapport.controles]
+
+
+@pytest.mark.parametrize("valeur", [None, 0])
+def test_regle_10_version_sans_referentiel(valeur):
     reponses = reponses_eligibles()
-    reponses["FROM trppu_referentiel"] = None
-
-    rapport, _ = _controler(reponses)
-
-    assert rapport.motifs == ["Aucun référentiel actif disponible"]
-
-
-def test_regle_10_referentiel_de_la_version_perime():
-    """Le ticket exige que les deux requêtes rendent le même identifiant.
-
-    Un écart signifie que la version de clés active repose sur un référentiel dépassé :
-    calculer produirait des trafics à partir de clés périmées.
-    """
-    reponses = reponses_eligibles()
-    reponses["FROM trppu_referentiel"] = {"id_referentiel": 9}
+    reponses["FROM trppu_version_cle"] = {"id_version_cle": 4, "id_referentiel": valeur}
 
     rapport, _ = _controler(reponses)
 
     assert rapport.statut == NON_ELIGIBLE
-    assert "n'est pas le dernier référentiel du site (9)" in rapport.motifs[0]
+    assert rapport.motifs == ["Aucun référentiel actif disponible"]
+
+
+def test_regle_10_ne_lit_jamais_trppu_referentiel():
+    """Table alimentée par aucun ticket et vouée à disparaître : plus aucune lecture."""
+    _, base = _controler(reponses_eligibles())
+
+    assert not any("trppu_referentiel" in sql for _, sql, _ in base.journal)
 
 
 def test_regle_11_aucun_agrebal_sur_le_site():

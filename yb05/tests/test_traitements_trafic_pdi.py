@@ -123,6 +123,21 @@ def test_la_tracabilite_est_ecrite_avant_le_calcul():
     assert ecriture.parametres_de("SET id_referentiel = %s") == (2, 4, 12345)
 
 
+def test_le_referentiel_trace_est_celui_de_la_version_de_cles():
+    """DSR-702 étape 3 : référentiel lu dans `trppu_version_cle`, jamais dans
+    `trppu_referentiel`."""
+    reponses = reponses_calcul()
+    reponses["FROM trppu_version_cle"] = {"id_version_cle": 7, "id_referentiel": 3}
+    lecture = FausseBase(reponses, lecture_seule=True)
+    ecriture = FausseBase(reponses)
+
+    rapport = asyncio.run(calcul_trafic_pdi(12345, db_lecture=lecture, db_ecriture=ecriture))
+
+    assert rapport.statut == SUCCES
+    assert ecriture.parametres_de("SET id_referentiel = %s") == (3, 7, 12345)
+    assert not any("trppu_referentiel" in sql for _, sql, _ in lecture.journal)
+
+
 def test_les_trafics_agrebal_sont_purges_avant_les_trafics_pdi():
     """Étape 4 : les deux trafics sont indissociables, l'Agrébal part en premier."""
     _, ecriture = _calculer(reponses_calcul())

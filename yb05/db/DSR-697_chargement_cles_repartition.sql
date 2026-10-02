@@ -78,15 +78,12 @@ SET SESSION sql_mode = CONCAT(@@sql_mode, ',STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZE
 -- `nb_lignes_deja_presentes` annonce ce que la purge RG6 va supprimer. Sur un rechargement,
 -- ce nombre doit correspondre au chargement précédent ; sur un premier chargement, il vaut 0.
 --
--- `referentiel_declare` doit valoir 1 : `trppu_referentiel` ne porte aucune clé étrangère
--- vers cette table, rien n'empêche donc de charger 22 M de lignes sous un identifiant de
--- référentiel qui n'existe pas. C'est ici, et seulement ici, que l'écart se voit.
+-- `trppu_referentiel` n'est pas interrogée : aucun ticket ne l'alimente, le référentiel est
+-- porté par les versions de clés (DSR-698), et la table est vouée à disparaître.
 SELECT @id_referentiel                                          AS id_referentiel_demande,
        @@secure_file_priv                                       AS repertoire_autorise,
        (SELECT COUNT(*) FROM trppu_cles_repartition
          WHERE id_referentiel = @id_referentiel)                AS nb_lignes_deja_presentes,
-       (SELECT COUNT(*) FROM trppu_referentiel
-         WHERE id_referentiel = @id_referentiel)                AS referentiel_declare,
        (SELECT COUNT(*) FROM trppu_trafic_site
          WHERE id_referentiel = @id_referentiel)                AS agregats_dsr696_a_recalculer;
 
