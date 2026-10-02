@@ -142,7 +142,8 @@ class TraficAmasRequest(BaseModel):
 
     `page` ne figure pas dans la section « Paramètres » du ticket mais est utilisé
     par les critères d'acceptation 6 et 7 ; il est donc déclaré ici, avec 1 pour
-    défaut. Il est ignoré lorsque `amas` est fourni (Cas 8).
+    défaut. Il est ignoré lorsque `amas` est fourni et non vide (Cas 8) ; `amas: []`
+    vaut absence de filtre.
     """
 
     model_config = _REQUEST_CONFIG
@@ -159,11 +160,13 @@ class TraficAmasRequest(BaseModel):
         None,
         max_length=MAX_AMAS_DEMANDES,
         description=(
-            "Liste des agrebal_uuid à restituer. Absente : tous les amas calculés "
-            "du scénario (RG-API-005)."
+            "Liste des agrebal_uuid à restituer. Absente ou vide ([]) : tous les "
+            "amas calculés du scénario, paginés (RG-API-005)."
         ),
     )
-    page: int = Field(1, ge=1, description="Page demandée ; ignorée si `amas` est fourni")
+    page: int = Field(
+        1, ge=1, description="Page demandée ; ignorée si `amas` est fourni et non vide"
+    )
 
 
 class ProduitVolumes(BaseModel):
@@ -182,11 +185,19 @@ class ProduitVolumes(BaseModel):
 class AmasOut(BaseModel):
     """Un Agrébal et ses trafics, regroupés par jour puis par produit.
 
+    `id_amas` porte l'`agrebal_uuid` de l'Agrébal — le ticket l'appelait `agrebal_uuid`,
+    renommé `id_amas` le 02/10/2026 pour s'aligner sur `nom_amas`. C'est la valeur à
+    renvoyer dans `amas` pour filtrer.
+
     `nom_amas` provient de `trppu_agrebal_pdi.agrebal_nom`, colonne nullable et
     jointe en LEFT JOIN : il peut valoir `null` sans que les trafics disparaissent.
     """
 
-    agrebal_uuid: str = Field(..., max_length=AGREBAL_UUID_MAX_LEN)
+    id_amas: str = Field(
+        ...,
+        max_length=AGREBAL_UUID_MAX_LEN,
+        description="agrebal_uuid de l'Agrébal (valeur acceptée par le filtre `amas`)",
+    )
     nom_amas: str | None = None
     jours: dict[str, list[ProduitVolumes]]
 

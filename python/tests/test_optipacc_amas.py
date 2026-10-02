@@ -252,7 +252,7 @@ def test_regroupement_par_amas_puis_jour_puis_produit():
         _ligne("uuidB", "LUNDI", "OO", 5, 0, 0, nom="AUTRE"),
     ]
     amas = routes._regrouper_amas(rows)
-    assert [a.agrebal_uuid for a in amas] == ["uuidA", "uuidB"]
+    assert [a.id_amas for a in amas] == ["uuidA", "uuidB"]
     assert list(amas[0].jours) == ["lundi", "mardi"]
     assert len(amas[0].jours["lundi"]) == 2
     assert amas[0].jours["lundi"][0].produit == "OO"
@@ -331,7 +331,7 @@ def test_c3_accepte_aussi_un_scenario_en_production(statut, monkeypatch, site_ex
         trafics=[_ligne("uuidA", "LUNDI", "OO", 12, 2, 1)],
     )
     reponse = _appeler(db, monkeypatch=monkeypatch)
-    assert reponse.amas[0].agrebal_uuid == "uuidA"
+    assert reponse.amas[0].id_amas == "uuidA"
 
 
 def test_erreur_sgbd_donne_un_500(monkeypatch, site_existant):
@@ -419,7 +419,7 @@ def test_cas_2_selection_damas(monkeypatch, site_existant):
         ],
     )
     reponse = _appeler(db, monkeypatch=monkeypatch, amas=["uuidA", "uuidB"])
-    assert [a.agrebal_uuid for a in reponse.amas] == ["uuidA", "uuidB"]
+    assert [a.id_amas for a in reponse.amas] == ["uuidA", "uuidB"]
     assert reponse.amas_non_trouves == []
 
 
@@ -446,7 +446,7 @@ def test_c4_les_uuid_inconnus_sont_ignores_mais_traces(monkeypatch, site_existan
         trafics=[_ligne("uuidA", "LUNDI", "OO", 12, 2, 1)],
     )
     reponse = _appeler(db, monkeypatch=monkeypatch, amas=["uuidA", "uuidInconnu"])
-    assert [a.agrebal_uuid for a in reponse.amas] == ["uuidA"]
+    assert [a.id_amas for a in reponse.amas] == ["uuidA"]
     assert reponse.amas_non_trouves == ["uuidInconnu"]
 
 
@@ -468,14 +468,36 @@ def test_les_doublons_de_la_demande_sont_dedoublonnes(monkeypatch, site_existant
     assert params == (125, "123456", "uuidA")
 
 
-def test_une_liste_damas_vide_nest_pas_traitee_comme_absente(monkeypatch, site_existant):
-    """`amas: []` est une demande explicite de rien, pas un « tous les amas »."""
-    db = FakeRead(scenario=_scenario(), nb_amas=742, pages=[], trafics=[])
-    with pytest.raises(HTTPException) as exc:
-        _appeler(db, monkeypatch=monkeypatch, amas=[])
-    assert exc.value.status_code == 404
-    # Et surtout : aucune requête ne part avec un `IN ()`, erreur de syntaxe MySQL.
-    assert not any("IN ()" in sql for sql, _ in db.executed)
+def test_une_liste_damas_vide_renvoie_tous_les_amas(monkeypatch, site_existant):
+    """`amas: []` vaut absence de filtre : tous les amas du scénario, paginés."""
+    db = FakeRead(
+        scenario=_scenario(),
+        nb_amas=2,
+        pages=["uuidA", "uuidB"],
+        trafics=[
+            _ligne("uuidA", "LUNDI", "OO", 12, 2, 1),
+            _ligne("uuidB", "LUNDI", "OO", 5, 1, 0),
+        ],
+    )
+    reponse = _appeler(db, monkeypatch=monkeypatch, amas=[])
+
+    assert [a.id_amas for a in reponse.amas] == ["uuidA", "uuidB"]
+    assert reponse.pagination.nb_amas_total == 2
+    assert reponse.amas_non_trouves == []
+    # Même chemin que sans `amas` : comptage puis page, jamais de filtre `IN`.
+    assert any("COUNT" in sql for sql, _ in db.executed)
+    assert not any("IN (" in sql and "SELECT DISTINCT" in sql for sql, _ in db.executed)
+
+
+def test_une_liste_damas_vide_respecte_la_page(monkeypatch, site_existant):
+    """Contrairement au mode filtre, `page` n'est pas ignorée avec `amas: []`."""
+    db = FakeRead(scenario=_scenario(), nb_amas=742, pages=["uuidX"], trafics=[])
+    reponse = _appeler(db, monkeypatch=monkeypatch, amas=[], page=3)
+
+    assert reponse.pagination.page == 3
+    assert reponse.pagination.nb_amas_total == 742
+    _, params = next((s, p) for s, p in db.executed if "LIMIT" in s)
+    assert params[-1] == 2 * reponse.pagination.taille_page  # offset de la page 3
 
 
 def test_la_liste_damas_est_bornee():
@@ -565,3 +587,18 @@ def test_les_jours_correspondent_a_lenum_de_la_base():
     assert valeurs == ["LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI"]
     for valeur in valeurs:
         assert f"'{valeur}'" in helpers.ORDER_BY_TRAFICS_AMAS
+
+
+def test_la_reponse_expose_id_amas_et_plus_agrebal_uuid(monkeypatch, site_existant):
+    """Contrat JSON : la clé de l'amas est `id_amas` (valeur = agrebal_uuid)."""
+    db = FakeRead(
+        scenario=_scenario(),
+        nb_amas=1,
+        pages=["uuidA"],
+        trafics=[_ligne("uuidA", "LUNDI", "OO", 12, 2, 1)],
+    )
+    corps = _appeler(db, monkeypatch=monkeypatch).model_dump(mode="json")
+
+    amas = corps["amas"][0]
+    assert amas["id_amas"] == "uuidA"
+    assert "agrebal_uuid" not in amas

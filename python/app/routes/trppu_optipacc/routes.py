@@ -332,7 +332,7 @@ def _regrouper_amas(rows: list[dict]) -> list[AmasOut]:
         uuid = row["agrebal_uuid"]
         amas = par_uuid.get(uuid)
         if amas is None:
-            amas = AmasOut(agrebal_uuid=uuid, nom_amas=row.get("nom_amas"), jours={})
+            amas = AmasOut(id_amas=uuid, nom_amas=row.get("nom_amas"), jours={})
             par_uuid[uuid] = amas
         jour = str(row["jour_semaine"]).lower()
         amas.jours.setdefault(jour, []).append(
@@ -360,10 +360,10 @@ async def trafic_amas(
 
     Deux modes :
 
-    - **sans `amas`** — tous les amas du scénario (RG-API-005), paginés par
+    - **sans `amas`, ou `amas: []`** — tous les amas du scénario (RG-API-005), paginés par
       tranches de `NB_AMAS_PAR_PAGE`, triés par `agrebal_uuid` avant découpage pour
       qu'un amas ne change pas de page d'un appel à l'autre (RG-API-008) ;
-    - **avec `amas`** — uniquement les UUID demandés, sans pagination (Cas 8). Les
+    - **avec `amas` non vide** — uniquement les UUID demandés, sans pagination (Cas 8). Les
       UUID inconnus sont ignorés mais restitués dans `amas_non_trouves` et tracés
       en WARNING (C4) ; si aucun n'est valide, la réponse est un 404.
 
@@ -402,22 +402,18 @@ async def trafic_amas(
 
     taille_page = NB_AMAS_PAR_PAGE
     amas_non_trouves: list[str] = []
+    # Une liste vide vaut absence de filtre : l'appelant reçoit tous les amas, paginés.
+    # Elle ne part donc jamais en base sous la forme `IN ()`, erreur de syntaxe MySQL.
+    filtre = bool(payload.amas)
 
     try:
-        if payload.amas is not None:
+        if filtre:
             # Mode filtre : le périmètre est déjà borné par l'appelant (Cas 8).
             # dict.fromkeys dédoublonne sans perdre l'ordre de la demande.
             demandes = list(dict.fromkeys(payload.amas))
-            # Une liste vide ne part jamais en base : `IN ()` est une erreur de
-            # syntaxe MySQL. `amas: []` est une demande explicite de rien, traitée
-            # comme « aucun amas valide » (404) plus bas.
-            rows_uuid = (
-                await db_read.fetch_all(
-                    select_amas_existants_sql(len(demandes)),
-                    (id_scenario, co_regate, *demandes),
-                )
-                if demandes
-                else []
+            rows_uuid = await db_read.fetch_all(
+                select_amas_existants_sql(len(demandes)),
+                (id_scenario, co_regate, *demandes),
             )
             trouves = {r["agrebal_uuid"] for r in rows_uuid}
             uuids = [u for u in demandes if u in trouves]
@@ -468,7 +464,7 @@ async def trafic_amas(
             ),
         )
 
-    if payload.amas is not None and not uuids:  # C4 : aucun amas valide
+    if filtre and not uuids:  # C4 : aucun amas valide
         logger.warning(
             "Rejet trafic amas OPTIPACC %s",
             ctx(

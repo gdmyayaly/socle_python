@@ -310,7 +310,7 @@ coefficient PIC appliqué à la restitution (RG-API-006).
 |-------|------|-------------|-------|
 | `code_regate` | string | oui | exactement 6 caractères alphanumériques |
 | `scenario_id` | int | oui | ≥ 1 |
-| `amas` | array\<string\> | non | `agrebal_uuid` à restituer, 1000 maximum. Absent → **tous** les amas du scénario (RG-API-005) |
+| `amas` | array\<string\> | non | `agrebal_uuid` à restituer, 1000 maximum. Absent ou vide (`[]`) → **tous** les amas du scénario, paginés (RG-API-005) |
 | `page` | int | non | défaut `1`. **Ignoré** lorsque `amas` est fourni |
 
 > Le corps est en **snake_case**, comme l'écrit le ticket — contrairement à DSR-689/690 qui
@@ -332,7 +332,7 @@ coefficient PIC appliqué à la restitution (RG-API-006).
   },
   "amas": [
     {
-      "agrebal_uuid": "0bb6f27c-e4ec-42fa-a61b-f0fe6e4a1234",
+      "id_amas": "0bb6f27c-e4ec-42fa-a61b-f0fe6e4a1234",
       "nom_amas": "PLUVENCE_2449",
       "jours": {
         "lundi": [
@@ -348,6 +348,10 @@ coefficient PIC appliqué à la restitution (RG-API-006).
   "amas_non_trouves": []
 }
 ```
+
+`id_amas` porte l'`agrebal_uuid` de l'Agrébal ; c'est la valeur à passer dans `amas` pour
+filtrer. Le ticket nommait ce champ `agrebal_uuid`, il est renommé `id_amas` depuis le
+02/10/2026.
 
 `nom_amas` provient de `trppu_agrebal_pdi.agrebal_nom` : colonne nullable, jointe en
 `LEFT JOIN`. Un amas dont la ligne référentiel a disparu conserve ses trafics avec

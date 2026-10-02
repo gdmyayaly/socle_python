@@ -23,7 +23,9 @@ paginé. Première route du projet à lire `trppu_trafic_agrebal` et `trppu_agre
   "amas": ["0bb6f27c-..."], "page": 1 }
 ```
 Réponse `200` : `site`, `scenario`, `pagination`, `amas[]`, `amas_non_trouves[]`
-(structure détaillée dans `api_docs/api_trppu_optipacc.md` §9.2).
+(structure détaillée dans `api_docs/api_trppu_optipacc.md` §9.2). Chaque amas porte
+`id_amas` (valeur : l'`agrebal_uuid`), `nom_amas` et `jours` — `id_amas` remplace le
+`agrebal_uuid` du ticket depuis le 02/10/2026.
 
 Codes : `200` · `400` (C2) · `404` (C1, ou aucun amas valide en C4) · `409` (C3) ·
 `422` corps invalide · `500` technique.
@@ -96,8 +98,9 @@ PIC n'est appliqué à la restitution. Un test le vérifie en interdisant `coef`
   densité absente pour un couple (jour, produit) vaut `0`.
 
 - **Liste `amas` bornée à 1000 éléments**, pour borner la clause `IN (...)` générée. Une
-  liste vide (`"amas": []`) est traitée comme une demande explicite de rien → `404`, et
-  aucune requête ne part en base (`IN ()` est une erreur de syntaxe MySQL).
+  liste vide (`"amas": []`) vaut **absence de filtre** : tous les amas du scénario,
+  paginés, comme sans `amas` (décision du 02/10/2026 ; auparavant `404`). Aucune requête
+  ne part en base avec un `IN ()`, erreur de syntaxe MySQL.
 
 ## 7. Pagination (RG-API-007 / RG-API-008)
 
