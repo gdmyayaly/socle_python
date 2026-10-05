@@ -22,6 +22,8 @@ from datetime import date
 
 import httpx
 
+from app.log_utils import ctx
+
 from app.config import (
     JOURS_FERMES_API_BASE_URL,
     JOURS_FERMES_API_CA_BUNDLE,
@@ -96,7 +98,10 @@ async def fetch_feries_annee(annee: int) -> set[date]:
             response.raise_for_status()
             payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
-        logger.warning("Appel API jours fermés échoué (annee=%s) : %s", annee, exc)
+        logger.warning(
+            "Rejet appel API jours fermés %s",
+            ctx(annee=annee, http=503, motif=str(exc)),
+        )
         raise JoursFermesAPIError(
             f"API jours fermés indisponible (annee={annee}) : {exc}"
         ) from exc

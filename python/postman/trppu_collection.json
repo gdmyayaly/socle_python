@@ -2026,7 +2026,7 @@
       ]
     },
     {
-      "name": "Audit id_rh",
+      "name": "Audit",
       "item": [
         {
           "name": "POST /trppu-api/audit/actions-id-rh",
@@ -2053,6 +2053,39 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"id_rh\": \"{{id_rh}}\",\n  \"cle\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /trppu-api/audit/agrebals-pdi",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/audit/agrebals-pdi",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "audit",
+                "agrebals-pdi"
+              ]
+            },
+            "description": "Agrebals Pdi",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idScenario\": 0,\n  \"codeRegate\": \"string\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

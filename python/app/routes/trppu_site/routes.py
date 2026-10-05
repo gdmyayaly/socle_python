@@ -290,7 +290,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         rc = await tx.execute(UPSERT_SQL, site_to_upsert_params(site))
                     except Exception:
                         logger.exception(
-                            "Échec UPSERT trppu_site %s",
+                            "Erreur UPSERT trppu_site %s",
                             ctx(
                                 fichier=file.filename,
                                 ligne_excel=excel_row,

@@ -22,7 +22,7 @@ import logging
 from typing import Any
 
 from app.db.mysql import db_write
-from app.log_utils import CHAMPS_SENSIBLES, get_id_session_ihm
+from app.log_utils import CHAMPS_SENSIBLES, ctx, get_id_session_ihm
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +128,11 @@ async def enregistrer_appel(
     except Exception:
         # L'audit ne doit jamais faire échouer le métier : on trace et on continue.
         logger.warning(
-            "Écriture trppu_api_log impossible (api_name=%s, id_scenario=%s) "
-            "— appel métier non impacté.",
-            api_name,
-            id_scenario,
+            "Écriture trppu_api_log impossible %s",
+            ctx(
+                api_name=api_name,
+                id_scenario=id_scenario,
+                consequence="appel métier non impacté",
+            ),
             exc_info=True,
         )

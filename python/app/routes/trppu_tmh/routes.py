@@ -56,7 +56,13 @@ async def list_tmh(
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
         "Fin lecture TMH %s",
-        ctx(id_scenario=id_scenario, count=len(rows), duration_ms=duration_ms),
+        ctx(
+            id_scenario=id_scenario,
+            count=len(rows),
+            # DSR-716 : un scénario sans trafic doit se lire, pas se déduire de count=0.
+            constat="aucun trafic TMH pour ce scénario" if not rows else None,
+            duration_ms=duration_ms,
+        ),
     )
     return rows
 

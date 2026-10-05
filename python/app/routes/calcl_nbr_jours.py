@@ -47,10 +47,20 @@ async def get_nb_jours(
     dt_debut = _parse_date_souple(date_debut, "date_debut")
     dt_fin = _parse_date_souple(date_fin, "date_fin")
     if dt_debut > dt_fin:
+        logger.warning(
+            "Rejet calcul nb_jours %s",
+            ctx(date_debut=date_debut, date_fin=date_fin, http=400,
+                motif="date_debut postérieure à date_fin"),
+        )
         raise HTTPException(
             status_code=400, detail="date_debut doit être antérieure ou égale à date_fin."
         )
     if (dt_fin - dt_debut).days > MAX_DATE_RANGE_DAYS:
+        logger.warning(
+            "Rejet calcul nb_jours %s",
+            ctx(date_debut=date_debut, date_fin=date_fin, http=400,
+                motif=f"écart supérieur à {MAX_DATE_RANGE_DAYS} jours"),
+        )
         raise HTTPException(
             status_code=400,
             detail=f"L'écart entre les dates ne doit pas dépasser {MAX_DATE_RANGE_DAYS} jours.",
@@ -68,12 +78,17 @@ async def get_nb_jours(
         )
         raise HTTPException(status_code=500, detail="Erreur calcul nombre de jours.") from e
 
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
-        "get_nb_jours : ouvres=%d, ouvrables=%d en %.2fms",
-        nbj.nb_jours_ouvres,
-        nbj.nb_jours_ouvrables,
-        duration_ms,
+        "Fin calcul nb_jours %s",
+        ctx(
+            date_debut=date_debut,
+            date_fin=date_fin,
+            nb_jours_ouvres=nbj.nb_jours_ouvres,
+            nb_jours_ouvrables=nbj.nb_jours_ouvrables,
+            nb_feries_hors_weekend=nbj.nb_feries_hors_weekend,
+            duration_ms=duration_ms,
+        ),
     )
     return {
         "date_debut": date_debut,

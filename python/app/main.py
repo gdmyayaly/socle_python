@@ -25,9 +25,12 @@ from app.config import (
 )
 from app.json_formatter import setup_logging
 from app.log_utils import (
+    CHAMPS_SENSIBLES,
     ctx,
+    reset_co_regate,
     reset_id_session_ihm,
     safe_preview,
+    set_co_regate,
     set_id_session_ihm,
 )
 from app.services.jours_fermes_client import JoursFermesAPIError
@@ -160,9 +163,16 @@ async def log_requests(request: Request, call_next):
     aient à le déclarer.
     """
     token = set_id_session_ihm(request.query_params.get("id_session_ihm"))
+    token_site = set_co_regate(request.query_params.get("co_regate"))
     start = time.time()
     try:
-        log.info(">>> %s %s", request.method, request.url.path)
+        params = _params_requete(request)
+        if params:
+            # DSR-716 : l'appel seul (« GET /trppu-api/... ») ne dit rien des critères
+            # de l'utilisateur. Les query params suivent, champs sensibles exclus.
+            log.info(">>> %s %s %s", request.method, request.url.path, ctx(**params))
+        else:
+            log.info(">>> %s %s", request.method, request.url.path)
         try:
             response = await call_next(request)
         except Exception:
@@ -184,7 +194,20 @@ async def log_requests(request: Request, call_next):
         )
         return response
     finally:
+        reset_co_regate(token_site)
         reset_id_session_ihm(token)
+
+
+def _params_requete(request: Request) -> dict[str, str]:
+    """Query params loggables : sans `id_session_ihm` (déjà champ racine du JSON) ni
+    les champs sensibles (`CHAMPS_SENSIBLES`, dont `id_rh`). Une clé répétée garde
+    toutes ses valeurs, séparées par une virgule."""
+    params: dict[str, str] = {}
+    for cle in request.query_params.keys():
+        if cle == "id_session_ihm" or cle in CHAMPS_SENSIBLES or cle in params:
+            continue
+        params[cle] = ",".join(request.query_params.getlist(cle))
+    return params
  
  
 app.include_router(health_routes.router)

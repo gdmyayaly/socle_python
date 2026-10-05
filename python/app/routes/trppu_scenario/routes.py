@@ -141,7 +141,15 @@ async def get_scenario(id_scenario: int):
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
         "Fin lecture scénario %s",
-        ctx(id_scenario=id_scenario, statut=row.get("statut"), duration_ms=duration_ms),
+        ctx(
+            id_scenario=id_scenario,
+            co_regate=row.get("co_regate"),
+            lb_scenario=row.get("lb_scenario"),
+            statut=row.get("statut"),
+            trafic_pdi_calcule=row.get("trafic_pdi_calcule"),
+            trafic_agrebal_calcule=row.get("trafic_agrebal_calcule"),
+            duration_ms=duration_ms,
+        ),
     )
     return row
 
@@ -158,7 +166,7 @@ async def get_scenario_periodes(
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info(
         "Fin lecture périodes scénario %s",
-        ctx(id_scenario=id_scenario, duration_ms=duration_ms),
+        ctx(id_scenario=id_scenario, co_regate=row.get("co_regate"), duration_ms=duration_ms),
     )
     return row
 

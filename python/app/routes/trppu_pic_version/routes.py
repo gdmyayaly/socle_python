@@ -436,7 +436,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         nb_inserted += 1
                     except Exception:
                         logger.exception(
-                            "Échec INSERT trppu_pic_version %s",
+                            "Erreur INSERT trppu_pic_version %s",
                             ctx(
                                 fichier=file.filename,
                                 ligne_excel=excel_row,

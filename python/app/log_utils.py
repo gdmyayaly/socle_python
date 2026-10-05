@@ -42,6 +42,39 @@ def reset_id_session_ihm(token: Token) -> None:
     _id_session_ihm.reset(token)
 
 
+# Site (co_regate) concerné par la requête courante (DSR-716). Posé par le middleware
+# quand la requête porte un query param `co_regate`, puis dès que l'endpoint lit un
+# scénario ou un site (`fetch_scenario_or_404`, `fetch_site_or_404`). Relu par
+# `JsonFormatter` comme `id_session_ihm` : une recherche Kibana par site retrouve
+# toutes les lignes qui le concernent, même celles qui ne le citent pas.
+CO_REGATE_MAX_LEN = 16
+_co_regate: ContextVar[str | None] = ContextVar("co_regate", default=None)
+
+
+def set_co_regate(value: Any) -> Token:
+    """Pose le site du contexte courant et retourne le token de reset.
+
+    Un log ne doit jamais faire échouer la requête : toute valeur est convertie en
+    texte, vide -> None, bornée à `CO_REGATE_MAX_LEN`.
+    """
+    if value is not None:
+        try:
+            value = str(value).strip()[:CO_REGATE_MAX_LEN] or None
+        except Exception:
+            value = None
+    return _co_regate.set(value)
+
+
+def get_co_regate() -> str | None:
+    """Site du contexte courant, None tant qu'il n'est pas connu."""
+    return _co_regate.get()
+
+
+def reset_co_regate(token: Token) -> None:
+    """Restaure le site précédent du contexte (à appeler en fin de requête)."""
+    _co_regate.reset(token)
+
+
 def safe_preview(obj: Any, max_len: int = 500) -> str:
     """Représentation tronquée d'un payload pour les logs.
 

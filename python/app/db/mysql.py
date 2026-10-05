@@ -7,6 +7,8 @@ from typing import Any
 
 import aiomysql
 
+from app.log_utils import ctx
+
 from app.config import (
     MYSQL_DATABASE,
     MYSQL_HOST_WRITE,
@@ -63,14 +65,20 @@ class Database:
                     maxsize=self.max_connections,
                     autocommit=True,
                 )
-                logger.info("Connexion au pool MySQL réussie.")
+                logger.info(
+                    "Fin connexion pool MySQL %s",
+                    ctx(host=self.host, base=self.database, tentative=attempt),
+                )
                 return
             except Exception as e:
                 logger.warning(
-                    "Tentative %d/%d de connexion MySQL échouée : %s",
-                    attempt,
-                    self.max_retries,
-                    e,
+                    "Tentative connexion MySQL échouée %s",
+                    ctx(
+                        host=self.host,
+                        tentative=attempt,
+                        max_tentatives=self.max_retries,
+                        erreur=str(e),
+                    ),
                 )
                 if attempt == self.max_retries:
                     raise
@@ -105,10 +113,8 @@ class Database:
                         return cur.rowcount
             except Exception as e:
                 logger.warning(
-                    "Tentative %d/%d pour execute échouée : %s",
-                    attempt,
-                    max_retries,
-                    e,
+                    "Tentative execute MySQL échouée %s",
+                    ctx(tentative=attempt, max_tentatives=max_retries, erreur=str(e)),
                 )
                 if attempt == max_retries:
                     raise

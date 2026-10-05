@@ -27,6 +27,7 @@ briques transverses (cryptage, jours fériés, migrations).
 | DSR-690 | liste des scénarios exploitables (OPTIPACC) | lecture | ✅ | [690](DSR-690_resolution.md) |
 | DSR-705 | trafics Agrébal d'un scénario (OPTIPACC) | lecture | ✅ | [705](DSR-705_resolution.md) |
 | DSR-707 | mise en production d'un scénario (OPTIPACC) | écriture | ✅ | [707](DSR-707_resolution.md) |
+| DSR-737 | Agrébals et PDI d'un scénario ou d'un site (audit) | lecture | ✅ | [737](DSR-737_resolution.md) |
 
 ## Pré-requis d'exploitation (rappel)
 1. Variable d'environnement **`ID_RH_CRYPTO_KEY`** (cryptage id_rh).

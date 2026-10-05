@@ -514,7 +514,7 @@ async def upload_excel(file: UploadFile = File(..., description="Fichier .xlsx")
                         rc = await tx.execute(UPSERT_SQL, pic_coef_to_upsert_params(c))
                     except Exception:
                         logger.exception(
-                            "Échec UPSERT trppu_pic_coefficients %s",
+                            "Erreur UPSERT trppu_pic_coefficients %s",
                             ctx(
                                 fichier=file.filename,
                                 ligne_excel=excel_row,

@@ -19,7 +19,7 @@ from app.config import (
     LOGS_DIR as CONFIG_LOGS_DIR,
     MODULE,
 )
-from app.log_utils import get_id_session_ihm
+from app.log_utils import get_co_regate, get_id_session_ihm
 
 DEFAULT_LOGS_DIR = os.path.join(os.getcwd(), "logs")
 
@@ -49,6 +49,8 @@ class JsonFormatter(logging.Formatter):
                 - app_version : version de l'application (par défaut '1.0.0')
                 - severity_label : niveau de log (INFO, ERROR, etc.)
                 - app_message : message du log
+                - co_regate : site concerné par la requête, dès qu'il est connu
+                  (DSR-716), null sinon
                 - id_session_ihm : id de session IHM de la requête courante
                   (null hors requête HTTP) — permet le regroupement par session
                   dans Kibana (DSR-660/661)
@@ -64,6 +66,10 @@ class JsonFormatter(logging.Formatter):
             id_session_ihm = get_id_session_ihm()
         except Exception:
             id_session_ihm = None
+        try:
+            co_regate = get_co_regate()
+        except Exception:
+            co_regate = None
         log_record = {
             'app_datetime': datetime.fromtimestamp(record.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             'app_ccx': APP,
@@ -74,6 +80,7 @@ class JsonFormatter(logging.Formatter):
             'severity_label': record.levelname,
             'app_message': record.getMessage(),
             'id_session_ihm': id_session_ihm,
+            'co_regate': co_regate,
             'name': record.name,
             'filename': record.filename,
             'lineno': record.lineno

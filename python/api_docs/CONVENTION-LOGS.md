@@ -32,9 +32,20 @@ Erreur <action> (<cle>=<valeur>, …)          ← toujours via logger.exception
 - **`duration_ms=%.1f` partout.** Les champs `execution_time_s` des *réponses* HTTP
   gardent leurs secondes : c'est un contrat d'API, pas un log.
 - **Pas de flèches.** `>>>` / `<<<` restent réservés au middleware HTTP de
-  `app/main.py`.
+  `app/main.py`. La ligne `>>>` porte les query params de l'appel (DSR-716), champs
+  sensibles et `id_session_ihm` exclus :
+  `>>> GET /trppu-api/get_trafics_pivot (co_regate=123456, date_debut=2026-01-01, …)`.
 - **`id_session_ihm` ne se met jamais dans le message** : `JsonFormatter` le pose
   déjà comme champ racine du JSON, sur *toutes* les lignes de la requête.
+- **`co_regate` est aussi un champ racine** (DSR-716) : posé par le middleware si la
+  requête porte un query param `co_regate`, puis par `fetch_scenario_or_404` et
+  `fetch_site_or_404` dès que le scénario ou le site est lu. Toutes les lignes qui
+  suivent le portent ; il vaut `null` tant que le site n'est pas connu.
+- **Pas de format `%d` / `%s` multiples** : un message paramétré prend un seul `%s`,
+  alimenté par `ctx(...)`. Les erreurs techniques commencent toujours par `Erreur`,
+  jamais `Échec` (non regroupable dans Kibana).
+- **Un résultat vide se dit** : `constat=aucun trafic …` dans la ligne `Fin` (lecture
+  TMH, trafics pivot), plutôt qu'un `count=0` à interpréter.
 
 ## 2. Niveaux
 
@@ -139,6 +150,7 @@ contexte vit dans `app_message`.
   "severity_label": "INFO",
   "app_message": "Fin création scénario (id_scenario=52, co_regate=012345, duration_ms=84.2)",
   "id_session_ihm": "a1b2c3d4-…",
+  "co_regate": "012345",
   "name": "app.routes.trppu_scenario.routes",
   "filename": "routes.py", "lineno": 331
 }
@@ -157,3 +169,7 @@ contexte vit dans `app_message`.
 - `tests/test_delete_scenario_cascade.py` — détachement des tables de logs avant
   le parent (garde-fou contre le MySQL 1451) et volumétrie retournée.
 - `tests/test_log_session.py` — `id_session_ihm` présent sur chaque ligne.
+- `tests/test_log_normalisation.py` — champ `co_regate`, paramètres du middleware,
+  cas DSR-716 (site du scénario, « aucun trafic », rejets 400), et **garde-fou sur
+  tout `app/`** : `Erreur` pour les erreurs techniques, un seul `ctx()` par message,
+  plus aucun « Échec ».

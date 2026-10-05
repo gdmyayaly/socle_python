@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.db.mysql import db_read
-from app.log_utils import ctx
+from app.log_utils import ctx, set_co_regate
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,9 @@ async def fetch_scenario_or_404(id_scenario: int) -> dict[str, Any]:
         raise HTTPException(
             status_code=404, detail=f"Scénario {id_scenario} introuvable."
         )
+    # DSR-716 : dès que le scénario est lu, toutes les lignes de la requête portent son
+    # site (champ racine `co_regate` du JSON).
+    set_co_regate(row.get("co_regate"))
     return row
 
 

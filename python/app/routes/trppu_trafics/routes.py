@@ -71,7 +71,7 @@ async def get_trafics_pivot(
                 # Pas de `logger.exception` ici : l'exception a été absorbée par
                 # `executer_requete`, qui a déjà journalisé la stacktrace.
                 logger.error(
-                    "Échec requête trafics pivot %s",
+                    "Erreur requête trafics pivot %s",
                     ctx(co_regate=co_regate, erreur=trace["erreur"]),
                 )
                 raise erreur_500(
@@ -143,6 +143,7 @@ async def get_trafics_pivot(
             count=len(trafics),
             lignes=len(raw_rows),
             objets_sans_libelle=len(sans_libelle),
+            constat="aucun trafic sur la période" if not trafics else None,
             duration_ms=round(duration_s * 1000, 1),
         ),
     )

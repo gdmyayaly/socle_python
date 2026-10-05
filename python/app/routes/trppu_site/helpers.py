@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 from typing import Any
 
@@ -10,8 +11,11 @@ from openpyxl import load_workbook
 from pydantic import ValidationError
 
 from app.db.mysql import db_read
+from app.log_utils import ctx, set_co_regate
 
 from .schemas import BulkUploadError, SiteCreate
+
+logger = logging.getLogger(__name__)
 
 EXPECTED_HEADERS = ["co_regate", "lb_regate", "type_site", "co_roc"]
 REQUIRED_HEADERS = ["co_regate", "type_site", "co_roc"]
@@ -39,7 +43,12 @@ async def fetch_site_or_404(co_regate: str) -> dict[str, Any]:
     """
     row = await db_read.fetch_one(SELECT_SITE_EXISTS_SQL, (co_regate,))
     if not row:
+        logger.warning(
+            "Rejet accès site %s",
+            ctx(co_regate=co_regate, http=404, motif="site introuvable"),
+        )
         raise HTTPException(status_code=404, detail=f"Site {co_regate} introuvable.")
+    set_co_regate(co_regate)
     return row
 
 

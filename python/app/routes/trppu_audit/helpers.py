@@ -11,10 +11,13 @@ id_rh (schéma de PROD = référence) :
 - `trppu_neutralisations` : id_rh (ECRITURE)
 - `trppu_tmh`             : id_rh (ECRITURE)
 - `trppu_scenario_variations_prev` : id_rh (ECRITURE)
+
+Le même module porte aussi l'audit Agrébals / PDI (DSR-737), en fin de fichier.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -151,3 +154,77 @@ async def collect_actions(db, fernet: Fernet, target_clear: str) -> list[dict[st
             })
 
     return actions
+
+
+# ---------------------------------------------------------------------------
+# DSR-737 — Agrébals et PDI d'un scénario ou d'un site
+# ---------------------------------------------------------------------------
+
+SELECT_SCENARIO_AUDIT_SQL = (
+    "SELECT id_scenario, co_regate, trafic_pdi_calcule "
+    "FROM trppu_scenario WHERE id_scenario = %s"
+)
+SELECT_SITE_AUDIT_SQL = "SELECT co_regate, lb_regate FROM trppu_site WHERE co_regate = %s"
+
+# RG-003 / CA-03 : ce que le calcul a RÉELLEMENT utilisé. YB05 (DSR-702) écrit dans
+# `trppu_trafic_pdi` l'Agrébal et le PDI de chaque ligne de trafic : c'est une photo du
+# calcul, qui reste juste même si l'Agrébal a changé depuis. `trppu_agrebal_pdi` ne
+# garde aucun historique (une ligne par Agrébal et par site, `uq_agrpdi_courant`), elle
+# ne permettrait pas de reconstituer un calcul passé. Index de tête : id_scenario.
+SELECT_AGREBALS_PDI_SCENARIO_SQL = (
+    "SELECT DISTINCT agrebal_uuid, id_pdi FROM trppu_trafic_pdi "
+    "WHERE id_scenario = %s ORDER BY agrebal_uuid, id_pdi"
+)
+
+# RG-002 : données actives du site. `trppu_agrebal_pdi` n'a pas de DATE_FIN_VALIDITE ;
+# le « mécanisme équivalent » que le ticket autorise est la suppression logique
+# `agrebal_deleteddAt IS NULL`. Index : idx_agrpdi_site.
+SELECT_AGREBALS_PDI_SITE_SQL = (
+    "SELECT agrebal_uuid, agrebal_pdiList FROM trppu_agrebal_pdi "
+    "WHERE agrebal_code_regate = %s AND agrebal_deleteddAt IS NULL "
+    "ORDER BY agrebal_uuid"
+)
+
+
+def extraire_pdi_ids(brut: Any) -> list[int]:
+    """PDI d'un `agrebal_pdiList` (`[{"pdi_id": …}, …]`), liste vide si illisible.
+
+    Même lecture que YB05 (`scenario._extraire_pdi_ids`) : les deux modules doivent voir
+    les mêmes PDI dans un Agrébal.
+    """
+    if not brut:
+        return []
+    if isinstance(brut, (str, bytes, bytearray)):
+        try:
+            brut = json.loads(brut)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(brut, list):
+        return []
+    ids: list[int] = []
+    for element in brut:
+        pdi = element.get("pdi_id") if isinstance(element, dict) else element
+        try:
+            ids.append(int(pdi))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def regrouper_par_agrebal(lignes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`(agrebal_uuid, id_pdi)` à plat -> `[{agrebal_uuid, pdis}]`, ordre de lecture conservé."""
+    par_uuid: dict[str, list[int]] = {}
+    for ligne in lignes:
+        par_uuid.setdefault(str(ligne["agrebal_uuid"]), []).append(int(ligne["id_pdi"]))
+    return [{"agrebal_uuid": uuid, "pdis": pdis} for uuid, pdis in par_uuid.items()]
+
+
+def agrebals_du_site(lignes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Lignes de `trppu_agrebal_pdi` -> `[{agrebal_uuid, pdis}]`."""
+    return [
+        {
+            "agrebal_uuid": str(ligne["agrebal_uuid"]),
+            "pdis": extraire_pdi_ids(ligne.get("agrebal_pdiList")),
+        }
+        for ligne in lignes
+    ]

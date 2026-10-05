@@ -78,18 +78,23 @@ class DatabricksDB:
             return oauth_service_principal(config)
 
         logger.info(
-            "Connexion à Databricks en cours... (host=%s, catalogue=%s, schema=%s, timeout=%ds)",
-            self.server_hostname,
-            self.catalog,
-            self.schema,
-            self.timeout,
+            "Début connexion Databricks %s",
+            ctx(
+                host=self.server_hostname,
+                catalogue=self.catalog,
+                schema=self.schema,
+                timeout_s=self.timeout,
+            ),
         )
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(
-                    "Tentative de connexion %d/%d... (cold start possible, peut prendre plusieurs minutes)",
-                    attempt,
-                    self.max_retries,
+                    "Tentative connexion Databricks %s",
+                    ctx(
+                        tentative=attempt,
+                        max_tentatives=self.max_retries,
+                        note="cold start possible, plusieurs minutes",
+                    ),
                 )
                 self._connection = databricks_sql.connect(
                     server_hostname=self.server_hostname,
@@ -99,7 +104,7 @@ class DatabricksDB:
                     schema=self.schema,
                     _socket_timeout=self.timeout,
                 )
-                logger.info("Connexion à Databricks SQL Warehouse réussie.")
+                logger.info("Fin connexion Databricks %s", ctx(tentative=attempt))
                 return
             except Exception as e:
                 logger.warning(
@@ -110,8 +115,8 @@ class DatabricksDB:
                     # Dernière tentative : la stacktrace est indispensable, l'appelant
                     # ne verra qu'une exception remontée.
                     logger.exception(
-                        "Échec définitif de la connexion Databricks %s",
-                        ctx(tentatives=self.max_retries),
+                        "Erreur connexion Databricks %s",
+                        ctx(tentatives=self.max_retries, verdict="échec définitif"),
                     )
                     raise
                 logger.info(
@@ -146,8 +151,8 @@ class DatabricksDB:
                 )
                 if attempt == self.max_retries:
                     logger.exception(
-                        "Échec définitif de la requête Databricks %s",
-                        ctx(tentatives=self.max_retries),
+                        "Erreur requête Databricks %s",
+                        ctx(tentatives=self.max_retries, verdict="échec définitif"),
                     )
                     raise
                 time.sleep(self.retry_delay * attempt)
