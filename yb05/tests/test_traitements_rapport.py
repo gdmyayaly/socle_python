@@ -1,9 +1,4 @@
-"""Rendu des rapports et branchement de la CLI.
-
-Le format de sortie est un livrable en soi : les tickets le décrivent au caractère près et
-l'exploitation le lit. Il est donc verrouillé ici, sur les deux cas des tickets — nominal et
-bloquant — plutôt que relu à chaque évolution.
-"""
+"""Rendu des rapports (format fixé par les tickets) et branchement de la CLI."""
 
 import json
 
@@ -200,7 +195,7 @@ def test_normalisation_de_all_sans_scenario():
 
 
 def test_la_cli_rend_1_si_un_scenario_a_echoue(monkeypatch, capsys):
-    """Décision d'exploitation : le batch va au bout, mais l'ordonnanceur voit l'incident."""
+    """Le batch va au bout, mais l'ordonnanceur voit l'incident."""
 
     async def mode_all(id_scenario):
         return _bilan(echecs=(12346,))

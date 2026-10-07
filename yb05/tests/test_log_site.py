@@ -1,9 +1,5 @@
-"""Site (`co_regate`) et ROC (`co_roc`) du scénario sur chaque ligne de log JSON.
-
-Même mécanisme que `id_scenario` (cf. `test_log_convention.py`) : un ContextVar relu par
-`JsonFormatter`. Il est posé par la liste du mode ALL, puis par `charger_scenario`, et
-remis à zéro par celui qui a ouvert le contexte (`_worker`, `_executer_traitement`).
-"""
+"""Site (`co_regate`) et ROC (`co_roc`) sur chaque ligne de log JSON (ContextVar, comme
+`id_scenario`) : posés par le mode ALL ou `charger_scenario`, remis à zéro par l'appelant."""
 
 import argparse
 import asyncio
@@ -34,8 +30,7 @@ def _contexte_propre():
 
 
 class CaptureJson(logging.Handler):
-    """Formate chaque ligne AU MOMENT de l'émission, comme le handler réel : le
-    contexte lu est celui de la tâche qui journalise."""
+    """Formate à l'émission, comme le handler réel : contexte de la tâche qui journalise."""
 
     def __init__(self):
         super().__init__(logging.DEBUG)

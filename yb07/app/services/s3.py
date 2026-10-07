@@ -1,12 +1,7 @@
 """Accès au stockage objet S3 : client boto3 et lecture d'un objet en streaming.
 
-Un fichier métier pèse plusieurs gigaoctets — 22 M de lignes pour les clés de répartition.
-Il n'est ni chargé en mémoire ni déposé sur disque : `ouvrir_objet` rend un flux texte que
-l'appelant consomme ligne à ligne, à mémoire constante.
-
-boto3 est **synchrone**. Les appels réseau ne doivent donc jamais être faits directement
-depuis la boucle asyncio : l'appelant les enveloppe dans `asyncio.to_thread` (cf.
-`app/traitements/cles_repartition.py`).
+Le fichier (plusieurs Go) est lu ligne à ligne, à mémoire constante. boto3 étant
+synchrone, l'appelant enveloppe les appels dans `asyncio.to_thread`.
 """
 
 from __future__ import annotations
@@ -37,18 +32,12 @@ from app.log_utils import ctx
 
 logger = logging.getLogger(__name__)
 
-# Taille des morceaux lus sur le réseau. 1 Mo : assez grand pour que le coût par appel soit
-# négligeable, assez petit pour que l'empreinte mémoire reste plate quel que soit le fichier.
+# Taille des morceaux lus sur le réseau (1 Mo) : empreinte mémoire plate.
 TAILLE_BUFFER = 1024 * 1024
 
 
 class _FluxBrut(io.RawIOBase):
-    """Adapte un corps de réponse S3 à l'interface attendue par `io.BufferedReader`.
-
-    Le `StreamingBody` de botocore n'expose que `read(n)` ; il lui manque `readinto`, que
-    la pile `BufferedReader` / `TextIOWrapper` exige. Cet adaptateur ne fait que combler
-    ce manque — il ne met rien en tampon lui-même.
-    """
+    """Ajoute `readinto` au `StreamingBody` botocore pour `io.BufferedReader`."""
 
     def __init__(self, source) -> None:
         self._source = source
@@ -73,13 +62,8 @@ def chemin_objet(fichier: str) -> str:
 def construire_client():
     """Client S3 boto3.
 
-    Les identifiants du `.env` priment s'ils sont renseignés ; sinon ils sont omis et boto3
-    applique sa chaîne de résolution habituelle (rôle de la machine, profil `~/.aws`,
-    variables d'environnement). Les deux configurations sont donc valides, et c'est le `.env` qui
-    tranche.
-
-    Un endpoint explicite désigne un S3 interne (MinIO, Ceph…) : l'adressage est forcé en
-    *path-style*, ces serveurs ne servant pas le style « bucket dans le nom d'hôte ».
+    Identifiants du `.env` s'ils sont renseignés, sinon chaîne de résolution boto3.
+    Un endpoint explicite (S3 interne) force l'adressage *path-style*.
     """
     options = {
         "config": Config(
@@ -110,11 +94,9 @@ def construire_client():
 
 
 def _verification_tls() -> bool | str | None:
-    """Valeur du paramètre `verify` de boto3, ou None pour garder son comportement par défaut.
+    """Paramètre `verify` de boto3 (None = défaut) : désactivée > bundle CA > standard.
 
-    Même priorité que l'API jours fermés de `python/` : désactivée > bundle CA dédié >
-    vérification standard. Un bundle introuvable fait échouer tout de suite, avec son
-    chemin : sans cela, boto3 rend une erreur SSL qui ne dit pas quel fichier manque.
+    Un bundle introuvable échoue tout de suite avec son chemin, que l'erreur SSL boto3 tait.
     """
     if not S3_VERIFY_SSL:
         return False
@@ -162,11 +144,7 @@ def _traduire(erreur: Exception, cle: str) -> TraitementImpossible:
 
 
 def _masquer(valeur: str) -> str:
-    """Rend une clé d'accès identifiable sans la divulguer.
-
-    Un diagnostic doit permettre de dire « ce n'est pas la bonne clé » sans imprimer un
-    secret dans une console ou un fichier de log.
-    """
+    """Rend une clé d'accès identifiable sans la divulguer."""
     if not valeur:
         return ""
     if len(valeur) <= 4:
@@ -186,8 +164,7 @@ def decrire_configuration() -> dict:
         "verification_tls": _libelle_tls(),
         "identifiants": "explicites" if explicites else "chaîne boto3 par défaut",
         "access_key": _masquer(AWS_ACCESS_KEY_ID) if explicites else "",
-        # Une clé sans secret est ignorée par `construire_client` : le signaler évite de
-        # chercher longtemps pourquoi ce sont les identifiants de la machine qui servent.
+        # Une clé sans secret est ignorée par `construire_client` : on le signale.
         "avertissement": (
             "AWS_ACCESS_KEY_ID renseignée sans AWS_SECRET_ACCESS_KEY (ou l'inverse) : les "
             "deux sont "
@@ -199,17 +176,12 @@ def decrire_configuration() -> dict:
 
 
 def verifier_acces() -> dict:
-    """Teste l'accès au stockage, et au bucket configuré s'il y en a un.
-
-    Ne lève jamais : le diagnostic doit rendre un état, pas s'interrompre — c'est
-    précisément quand l'accès échoue qu'on l'exécute.
-    """
+    """Teste l'accès au stockage et au bucket configuré ; ne lève jamais (diagnostic)."""
     resultat: dict = {"status": "ok", "bucket": S3_BUCKET, "buckets_visibles": [], "error": None}
     try:
         client = construire_client()
-        # `list_buckets` sert de test de connexion et d'authentification. Il échoue sur
-        # certains stockages où le compte n'a de droits que sur son bucket : ce n'est pas
-        # bloquant, d'où le `head_bucket` qui suit et qui, lui, fait foi.
+        # `list_buckets` peut échouer si le compte n'a de droits que sur son bucket :
+        # non bloquant, c'est `head_bucket` qui fait foi.
         try:
             reponse = client.list_buckets()
             resultat["buckets_visibles"] = [
@@ -240,14 +212,9 @@ def verifier_acces() -> dict:
 
 
 def lister(prefixe: str = "", *, recursif: bool = False, limite: int = 200) -> dict:
-    """Contenu du bucket sous `prefixe` : sous-dossiers et objets.
+    """Sous-dossiers et objets sous `prefixe` (niveau courant, ou arbre aplati si `recursif`).
 
-    Sans `recursif`, le listing s'arrête au niveau courant — `Delimiter="/"` fait remonter
-    les sous-dossiers sous forme de préfixes communs, et on navigue de niveau en niveau
-    comme avec `ls`. Avec, tout l'arbre est aplati.
-
-    `limite` borne le nombre d'objets rendus : un bucket de référentiels peut en contenir
-    des milliers, et un diagnostic n'a pas à les dérouler tous.
+    `limite` borne le nombre d'objets rendus.
     """
     if not S3_BUCKET:
         raise TraitementImpossible("S3_BUCKET n'est pas renseigné dans la configuration.")
@@ -264,8 +231,7 @@ def lister(prefixe: str = "", *, recursif: bool = False, limite: int = 200) -> d
         for page in client.get_paginator("list_objects_v2").paginate(**parametres):
             dossiers += [p["Prefix"] for p in page.get("CommonPrefixes", [])]
             for objet in page.get("Contents", []):
-                # Le préfixe lui-même remonte comme un objet de taille nulle quand il a été
-                # créé explicitement comme « dossier » : il n'apporte rien au listing.
+                # Le préfixe lui-même (« dossier » explicite) remonte comme objet vide.
                 if objet["Key"] == prefixe:
                     continue
                 if len(objets) >= limite:
@@ -305,7 +271,7 @@ def lister(prefixe: str = "", *, recursif: bool = False, limite: int = 200) -> d
 
 
 def taille_lisible(octets: int) -> str:
-    """Taille en unité lisible — un fichier de 1,2 Go ne se lit pas en octets."""
+    """Taille en unité lisible (o, Ko, Mo, Go, To)."""
     valeur = float(octets)
     for unite in ("o", "Ko", "Mo", "Go", "To"):
         if valeur < 1024 or unite == "To":
@@ -315,10 +281,10 @@ def taille_lisible(octets: int) -> str:
 
 
 def verifier_presence(cle: str) -> int:
-    """Taille de l'objet en octets. Lève `TraitementImpossible` s'il est inaccessible.
+    """Taille de l'objet en octets ; `TraitementImpossible` s'il est inaccessible.
 
-    Appelée **avant** toute écriture en base : découvrir que le fichier n'existe pas après
-    avoir purgé un référentiel de 22 M de lignes coûterait un rechargement complet.
+    Appelée avant toute écriture en base : l'absence découverte après la purge coûterait
+    un rechargement complet.
     """
     if not S3_BUCKET:
         raise TraitementImpossible("S3_BUCKET n'est pas renseigné dans la configuration.")
@@ -337,12 +303,9 @@ def verifier_presence(cle: str) -> int:
 
 @contextmanager
 def ouvrir_objet(cle: str, *, encodage: str) -> Iterator[TextIO]:
-    """Ouvre un objet S3 en lecture texte, sans le télécharger.
+    """Ouvre un objet S3 en lecture texte, en streaming (`.gz` décompressé à la volée).
 
-    Le corps de la réponse est un flux réseau : il est enveloppé dans un `TextIOWrapper`
-    (et dans un `GzipFile` si la clé se termine par `.gz`, la décompression se faisant
-    alors à la volée). Tout est refermé à la sortie du contexte, y compris en cas
-    d'exception — sans quoi la connexion resterait ouverte jusqu'au timeout.
+    Tout est refermé en sortie, même sur exception, sinon la connexion resterait ouverte.
     """
     if not S3_BUCKET:
         raise TraitementImpossible("S3_BUCKET n'est pas renseigné dans la configuration.")
@@ -355,9 +318,8 @@ def ouvrir_objet(cle: str, *, encodage: str) -> Iterator[TextIO]:
     corps = reponse["Body"]
     brut = io.BufferedReader(_FluxBrut(corps), buffer_size=TAILLE_BUFFER)
     binaire = gzip.GzipFile(fileobj=brut) if cle.endswith(".gz") else brut
-    # newline="" : c'est le module csv qui doit gérer les fins de ligne, sinon un champ
-    # contenant un saut de ligne entre guillemets serait coupé en deux. Cela laisse aussi
-    # passer les fichiers en fins de ligne Windows sans que le \r ne colle au dernier champ.
+    # newline="" : le module csv gère les fins de ligne (sauts de ligne entre guillemets,
+    # \r des fichiers Windows).
     flux = io.TextIOWrapper(binaire, encoding=encodage, newline="")
     try:
         yield flux

@@ -1,10 +1,6 @@
-"""`trppu_referentiel` n'est plus utilisée par YB05.
+"""`trppu_referentiel` n'est plus utilisée : le référentiel est lu dans `trppu_version_cle`.
 
-Aucun ticket ne l'alimente, et le rédacteur des tickets a retenu (02/10/2026) de lire le
-référentiel dans `trppu_version_cle` — variante prévue par DSR-701 règle 10 et DSR-702
-étape 3. Ce test empêche qu'une lecture ou une écriture de la table revienne par mégarde.
-
-`db/database.sql` est exclu : c'est le reflet du schéma, pas un usage.
+DSR-701 règle 10, DSR-702 étape 3. `db/database.sql` (reflet du schéma) est exclu.
 """
 
 import re
@@ -17,8 +13,7 @@ FICHIERS = sorted(
     [*RACINE.joinpath("app").rglob("*.py"), *RACINE.joinpath("db").glob("*.sql")]
 )
 
-# Un usage SQL réel ; les commentaires qui expliquent pourquoi la table n'est plus lue restent
-# permis.
+# Un usage SQL réel ; un commentaire qui cite la table reste permis.
 USAGE_SQL = re.compile(r"\b(FROM|JOIN|INTO|UPDATE|TABLE)\s+`?trppu_referentiel\b", re.I)
 
 

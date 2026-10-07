@@ -1,17 +1,8 @@
-"""Doublures partagées par les tests des traitements YB05.
+"""Doublures partagées par les tests des traitements YB05 (aucune base MySQL requise).
 
-Aucune base MySQL n'est nécessaire : `FausseBase` remplace `Database` en rendant des réponses
-indexées par fragment de requête, et journalise tout ce qui est exécuté. Les tests peuvent donc
-vérifier non seulement le résultat, mais **l'ordre** des écritures — c'est ce qui compte pour un
-verrou et pour une purge avant recalcul.
-
-Deux partis pris :
-
-* une requête sans réponse déclarée lève `KeyError`. Un test qui interroge une table à laquelle
-  il n'a pas pensé échoue bruyamment, au lieu de recevoir un `None` qui ressemble à « pas de
-  données » et fait passer le test pour la mauvaise raison ;
-* `FausseBase(lecture_seule=True)` lève sur toute écriture, ce qui permet de prouver le CA-05 de
-  DSR-701 plutôt que de le relire.
+`FausseBase` répond par fragment de requête et journalise l'ordre des écritures. Une requête
+sans réponse déclarée lève `KeyError` (pas de faux « aucune donnée ») ; `lecture_seule=True`
+lève sur toute écriture (CA-05 de DSR-701).
 """
 
 from __future__ import annotations
@@ -31,12 +22,7 @@ def _normaliser(sql: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _aucune_connexion_reelle(monkeypatch):
-    """Filet de sécurité : aucun test ne doit joindre une vraie base.
-
-    Un module qui importe `db_write` sous son propre nom échappe au remplacement fait par un
-    test ; sans ce filet, il se connecterait au MySQL du poste. Un test qui a besoin de
-    simuler `create_pool` ou `connect` le remplace lui-même, après ce filet.
-    """
+    """Filet de sécurité : aucun test ne joint une vraie base (même via un `db_write` importé)."""
 
     async def interdit(*args, **kwargs):
         raise AssertionError("connexion MySQL réelle tentée pendant un test")
@@ -84,8 +70,7 @@ class FausseBase:
         self.rowcounts = {_normaliser(k): v for k, v in (rowcounts or {}).items()}
         self.lecture_seule = lecture_seule
         self.journal: list[tuple[str, str, Any]] = []
-        # (début de requête, `retries` demandé) pour chaque `execute` : prouve qu'une écriture
-        # non rejouable (pose du verrou, journal) n'est tentée qu'une fois.
+        # (début de requête, `retries`) : prouve qu'une écriture non rejouable n'est tentée qu'une fois.
         self.retries_demandes: list[tuple[str, int | None]] = []
         self.transactions_commitees = 0
         self.transactions_annulees = 0
@@ -181,11 +166,7 @@ SCENARIO_ELIGIBLE = {
 
 
 def reponses_eligibles(**surcharges: Any) -> dict[str, Any]:
-    """Réponses d'un site complet : tout est présent, le scénario est éligible.
-
-    Chaque test surcharge la seule entrée qui l'intéresse, ce qui rend visible d'un coup d'œil
-    ce qu'il fait varier.
-    """
+    """Réponses d'un site complet et éligible ; chaque test surcharge l'entrée qu'il fait varier."""
     reponses = {
         "FROM trppu_scenario WHERE id_scenario": dict(SCENARIO_ELIGIBLE),
         "COUNT(*) AS nb FROM trppu_pic_coefficients": {"nb": 30},

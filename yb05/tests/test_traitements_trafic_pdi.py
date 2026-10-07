@@ -1,9 +1,7 @@
 """DSR-702 — calcul des trafics PDI : formule, ordre des écritures, échecs.
 
-Le jeu de référence (`reponses_calcul`) est volontairement minuscule et calculable de tête :
-un produit `CO` à 1000 de TMH, cinq jours, trois densités (1 / 0,5 / 0,25) et deux PDI dont les
-clés colis valent 0,6 et 0,4. Attendu pour le PDI 1001 : 600 / 300 / 150, et 400 / 200 / 100
-pour le 1002 — soit dix lignes.
+`reponses_calcul` : CO à 1000 de TMH, densités 1/0,5/0,25, PDI 1001 et 1002 à clés 0,6/0,4
+→ 600/300/150 et 400/200/100 sur cinq jours (dix lignes).
 """
 
 import asyncio
@@ -208,7 +206,7 @@ def _verifier_echec_propre(rapport, ecriture, fragment_message):
 
 
 def test_produit_hors_mapping_fait_echouer_le_calcul():
-    """Décision A : plutôt que d'inventer une clé, on refuse de calculer."""
+    """Produit absent de CLES_PAR_PRODUIT : échec plutôt qu'un trafic faux."""
     reponses = reponses_calcul()
     reponses["FROM trppu_tmh"] = [{"co_produit": "ZZ", "tmh": Decimal("1000")}]
     reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
@@ -222,7 +220,7 @@ def test_produit_hors_mapping_fait_echouer_le_calcul():
 
 
 def test_trafic_hors_capacite_de_la_colonne():
-    """Décision D : `smallint unsigned` — au-delà de 65 535, on échoue au lieu de tronquer."""
+    """`smallint unsigned` : au-delà de 65 535, échec plutôt que troncature."""
     reponses = reponses_calcul()
     reponses["FROM trppu_tmh"] = [{"co_produit": "CO", "tmh": Decimal("10000000")}]
 
@@ -250,11 +248,7 @@ def test_aucune_cle_de_repartition():
 
 
 def test_un_produit_sans_coefficient_sur_un_jour_coefficiente_echoue():
-    """Un produit qui manque un jour que les autres couvrent est un oubli de paramétrage.
-
-    À distinguer du cas suivant : un jour qu'AUCUN produit ne coefficiente est un choix
-    d'exploitation, et se traduit par un jour en moins, pas par un échec.
-    """
+    """Jour coefficienté pour un produit mais pas un autre : oubli de paramétrage, échec."""
     reponses = reponses_calcul()
     reponses["FROM trppu_tmh"] = [
         {"co_produit": "CO", "tmh": Decimal("1000")},
@@ -278,7 +272,7 @@ def test_un_produit_sans_coefficient_sur_un_jour_coefficiente_echoue():
 
 
 def test_jour_non_coefficiente_par_la_version_est_simplement_ignore():
-    """Tolérance assumée au niveau de la version PIC : on calcule ce qui est paramétré."""
+    """Jour qu'aucun produit ne coefficiente : un jour en moins, pas un échec."""
     reponses = reponses_calcul()
     reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
         {"co_produit": "CO", "jour_semaine": jour, "densite": d, "coef": Decimal("1")}

@@ -1,13 +1,5 @@
-"""Tests de la convention de log (`app/log_utils.py` + `app/json_formatter.py`).
-
-Deux briques : le rendu du bloc de contexte, et l'identifiant de corrélation
-`id_traitement` que `JsonFormatter` pose sur chaque ligne. Dès que plusieurs unités
-sont traitées en parallèle, leurs lignes s'entrelacent — c'est ce champ qui permet de
-reconstituer la trace d'une unité.
-
-Ces tests verrouillent la convention que tout nouveau code du module doit suivre.
-Cf. `docs/CONVENTION-LOGS.md`.
-"""
+"""Verrouille la convention de log (`ctx()` et corrélation `id_traitement`).
+Cf. `docs/CONVENTION-LOGS.md`."""
 
 import asyncio
 import json
@@ -27,7 +19,6 @@ from app.log_utils import (
 
 
 def _format(message: str = "message de test") -> dict:
-    """Formate un enregistrement de log et retourne le JSON décodé."""
     record = logging.LogRecord(
         name="yb07",
         level=logging.INFO,
@@ -42,7 +33,7 @@ def _format(message: str = "message de test") -> dict:
 
 @pytest.fixture(autouse=True)
 def _contexte_propre():
-    """Isole chaque test : le contexte est remis à None avant et après."""
+    """Remet le contexte à None avant et après chaque test."""
     token = set_id_traitement(None)
     yield
     reset_id_traitement(token)
@@ -77,11 +68,7 @@ def test_valeur_longue_tronquee():
 
 
 def test_rendu_paresseux(caplog):
-    """Le contexte ne doit pas être rendu quand le niveau est désactivé.
-
-    C'est la raison d'être de l'objet retourné par `ctx` : les `logger.debug` des
-    étapes de calcul ne sont visibles qu'avec `-v` et ne doivent rien coûter sinon.
-    """
+    """Le contexte n'est pas rendu quand le niveau est désactivé (debug gratuit sans `-v`)."""
     rendus: list[int] = []
 
     class Espion:
@@ -178,11 +165,7 @@ def test_champ_present_sur_un_log_d_exception():
 
 
 def test_isolation_entre_taches_asyncio():
-    """Un traitement parallélisé fait tourner plusieurs unités de front.
-
-    Chaque tâche doit voir son propre identifiant : sans cette isolation, les lignes
-    de log seraient attribuées à la mauvaise unité.
-    """
+    """Chaque tâche asyncio voit son propre identifiant, sinon les logs changent d'unité."""
     vus: dict[int, int | None] = {}
 
     async def worker(numero: int, id_traitement: int) -> None:

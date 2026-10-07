@@ -1,12 +1,5 @@
-"""Rapport d'exécution d'un traitement : contrôles `[OK]` / `[KO]`, verdict, motifs.
-
-Les trois tickets (DSR-701, DSR-702, DSR-703) décrivent la même sortie console : un bandeau,
-une ligne par contrôle préfixée `[OK]` ou `[KO]`, un `RESULTAT :` final et, en cas de refus, la
-liste des motifs bloquants. Ce module porte ce format une seule fois, pour que les trois
-commandes se ressemblent — et pour que le format soit testable sans base.
-
-Le même objet sait se rendre en JSON (option `--json` de la CLI) : le texte est destiné à
-l'exploitant, le JSON à un ordonnanceur ou à une supervision.
+"""Rapport d'exécution (format console commun à DSR-701/702/703) : contrôles `[OK]`/`[KO]`,
+verdict, motifs ; rendu texte ou JSON (`--json`).
 """
 
 from __future__ import annotations
@@ -25,12 +18,7 @@ ECHEC = "ECHEC"
 
 @dataclass(frozen=True)
 class Controle:
-    """Un point de contrôle, ou une information de déroulement.
-
-    `libelle` est ce qui s'affiche quand tout va bien (« Scénario figé »), `motif` ce qui
-    s'affiche à la place en cas d'échec (« Le scénario n'est pas figé ») — c'est la convention
-    des tickets, qui n'affichent jamais les deux.
-    """
+    """Point de contrôle : `libelle` affiché si OK, `motif` à la place en cas d'échec."""
 
     libelle: str
     ok: bool = True
@@ -142,11 +130,7 @@ class ResultatScenario:
 
 @dataclass
 class Bilan:
-    """Résultat d'une exécution du mode ALL (DSR-704).
-
-    `Rapport` décrit un traitement, `Bilan` décrit une campagne : ce qui a été trouvé, ce qui a
-    abouti, ce qui a échoué, et en combien de temps. Les deux se rendent en texte comme en JSON.
-    """
+    """Résultat d'une exécution du mode ALL (DSR-704), rendu texte ou JSON."""
 
     nb_workers: int
     scenarios_trouves: list[int] = field(default_factory=list)
@@ -179,10 +163,7 @@ class Bilan:
 
     @property
     def reussi(self) -> bool:
-        """Un seul scénario en échec suffit à alerter l'ordonnanceur.
-
-        Les scénarios non éligibles, eux, ne sont pas des échecs : le ticket les distingue.
-        """
+        """Faux dès un échec ; les non éligibles ne sont pas des échecs."""
         return not self.echecs and self.erreur is None
 
     @property
@@ -206,8 +187,7 @@ class Bilan:
             lignes += ["[ERREUR]", self.erreur, ""]
 
         for resultat in self.resultats:
-            # Trois marques et non deux : un scénario non éligible n'est pas en échec — il
-            # n'était pas prêt. Les confondre ferait chercher une panne là où il n'y en a pas.
+            # Non éligible (`--`) distinct d'un échec (`KO`).
             if resultat.reussi:
                 marque = "OK"
             elif resultat.statut == NON_ELIGIBLE:

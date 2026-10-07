@@ -1,10 +1,4 @@
-"""Module de formatage JSON pour les logs applicatifs.
-
-Ce module fournit un formateur personnalisé pour transformer les messages de log
-en format JSON structuré avec des métadonnées contextuelles spécifiques à l'application.
-Il expose aussi une fonction ``setup_logging`` pour initialiser facilement le
-logging console, avec écriture fichier optionnelle pour un usage local.
-"""
+"""Logs au format JSON DSR et ``setup_logging`` (console, fichier en local)."""
 
 import json
 import logging
@@ -25,44 +19,12 @@ DEFAULT_LOGS_DIR = os.path.join(os.getcwd(), "logs")
 
 
 class JsonFormatter(logging.Formatter):
-    """
-    Formateur personnalisé pour les logs au format JSON.
-
-    Cette classe hérite de logging.Formatter et transforme les messages de log
-    en format JSON structuré avec des métadonnées contextuelles spécifiques
-    à l'application (environnement, plateforme, etc.).
-    """
+    """Formateur JSON avec métadonnées applicatives et contexte scénario/site."""
 
     def format(self, record):
-        """
-        Formate un enregistrement de log en JSON.
-
-        Args:
-            record (logging.LogRecord): L'enregistrement de log à formater
-
-        Returns:
-            str: L'enregistrement formaté en JSON contenant :
-                - app_datetime : horodatage du log
-                - app_ccx : contexte applicatif ('dsr')
-                - app_env : environnement (par défaut 'sdev')
-                - app_ptf : plateforme ('build')
-                - app_tm : code module ('yb05')
-                - app_version : version de l'application (par défaut '1.0.0')
-                - severity_label : niveau de log (INFO, ERROR, etc.)
-                - app_message : message du log
-                - id_scenario : scénario en cours de traitement (null hors
-                  traitement) — permet de suivre un scénario dans Kibana malgré
-                  l'entrelacement des workers du mode ALL
-                - co_regate, co_roc : site et ROC du scénario en cours (null tant
-                  qu'ils ne sont pas connus)
-                - name : nom du logger
-                - filename : fichier source du log
-                - lineno : numéro de ligne du log
-        """
+        """Une ligne JSON ; id_scenario, co_regate, co_roc suivent un scénario dans Kibana."""
         app_run_mode = 'run' if APP_ENV == 'prod' else 'build'
-        # La clé est toujours posée (à null hors traitement) pour que le mapping
-        # Kibana reste stable. `format()` ne doit jamais lever : on se protège
-        # d'un contexte inattendu.
+        # Clés toujours posées (null hors traitement) : mapping Kibana stable ; ne jamais lever.
         try:
             id_scenario = get_id_scenario()
         except Exception:
@@ -130,11 +92,7 @@ def _build_console_handler(formatter, level):
 
 
 def setup_logging(level=logging.INFO, logs_dir=None):
-    """Configure le logger racine avec le format JSON DSR.
-
-    Cette fonction crée toujours un handler console et n'active le handler
-    fichier que pour un usage local, ou sur demande explicite.
-    """
+    """Logger racine en JSON : console toujours, fichier en local ou si `logs_dir` est donné."""
     formatter = JsonFormatter()
 
     root_logger = logging.getLogger()

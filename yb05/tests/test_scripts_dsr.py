@@ -1,32 +1,7 @@
-"""Tests des scripts SQL métier de `db/` (DSR-697, DSR-696, DSR-698, DSR-699).
+"""Scripts SQL métier de `db/` (DSR-696 à 699), analysés sans base (découpage, `dry_run`).
 
-Aucune base MySQL n'est nécessaire : les scripts sont analysés par le découpeur du socle, et
-leur exécution n'est vérifiée qu'en `dry_run`, mode qui n'ouvre aucune connexion. Le code
-async passe par ``asyncio.run`` pour ne pas dépendre de pytest-asyncio.
-
-L'enjeu principal est le contrôle des noms, que les tickets décrivent mal :
-
-* DSR-697 charge le CSV métier dans ``trppu_cles_repartition``. Sa liste de colonnes est
-  juste — c'est celle du FICHIER, pas de la table, le mapping de ``LOAD DATA`` étant
-  positionnel. Ses pièges sont ailleurs : les quatre champs vides à convertir en NULL
-  (RG3), qu'un ``SET`` oublié laisserait à ``''`` ou à 0, et les contrôles du ticket qui
-  écrivent ``SELECT COUNT FROM …``, sans parenthèses — ``ERROR 1054`` à l'exécution.
-* DSR-696 écrit ``INSERT INTO trppu_site_trafic (id_site, …)``. La table s'appelle
-  ``trppu_trafic_site`` et ne porte pas de colonne ``id_site`` — c'est ``co_regate_site``.
-  L'amendement du ticket a remplacé ``id_site`` par ``id_site_trafic``, qui est la PK
-  AUTO_INCREMENT : le contresens a changé de forme, pas de nature.
-* DSR-698 attend une colonne ``date_creation`` sur ``trppu_version_cle``, que le schéma
-  ré-extrait a fait disparaître au profit de ``date_debut_validite`` /
-  ``date_fin_validite``. Ici c'est le ticket qui a raison : la migration rétablit la
-  colonne, les trois dates coexistent et disent trois choses différentes.
-
-* DSR-699 est le mieux écrit des trois — sa liste de colonnes correspond exactement à la
-  table. Ses pièges sont ailleurs, dans le calcul : une division par zéro que le serveur
-  peut accepter silencieusement, et une division entière qui coûterait quatorze décimales
-  sur la clé potentiel IP.
-
-Recopiés tels quels, ces scripts échoueraient en base. Le schéma de référence est donc
-rappelé ici et confronté aux listes d'insertion.
+Les tickets se trompent de noms par endroits (`id_site`, `trppu_site_trafic`, `COUNT` sans
+parenthèses) : les listes d'insertion sont confrontées à un schéma de référence.
 """
 
 import asyncio
@@ -48,15 +23,11 @@ SITE_TRAFIC = DB_DIR / "DSR-696_site_trafic.sql"
 VERSION_CLE = DB_DIR / "DSR-698_version_cle.sql"
 CLES_CALCULEES = DB_DIR / "DSR-699_cles_calculees.sql"
 
-# Dans l'ordre d'exécution de la chaîne — cf. db/README.md. Le chargement DSR-697 vient en
-# tête : les trois autres ne lisent rien d'autre que la table qu'il alimente.
+# Ordre d'exécution de la chaîne : DSR-697 alimente la table que lisent les trois autres.
 SCRIPTS_METIER = (CHARGEMENT, SITE_TRAFIC, VERSION_CLE, CLES_CALCULEES)
 
-# `fix_error.sql` n'est pas un script métier : comme la migration, il porte du DDL et ne se
-# joue qu'une fois par base. Il élargit les totaux de `trppu_trafic_site`, trop étroits pour
-# recevoir la somme qu'ils doivent porter — l'`ERROR 1264` rencontrée sur DSR-696.
-# `suivi.sql` ne modifie rien : il s'exécute en parallèle des autres, depuis une seconde
-# session, pour regarder où en est un traitement long.
+# `fix_error.sql` (DDL, une fois par base : ERROR 1264 de DSR-696) et `suivi.sql` (lecture
+# seule, seconde session) ne sont pas des scripts métier.
 TOUS_LES_SCRIPTS = (MIGRATION, FIX, SUIVI, *SCRIPTS_METIER)
 
 
@@ -64,23 +35,9 @@ TOUS_LES_SCRIPTS = (MIGRATION, FIX, SUIVI, *SCRIPTS_METIER)
 # Schéma de référence
 # ---------------------------------------------------------------------------
 
-# Extrait de python/db/db_new.sql, limité aux tables écrites par ces scripts. Recopié plutôt
-# que lu depuis le projet voisin : yb05 ne doit pas dépendre de l'arborescence de python/.
-# À resynchroniser si le schéma évolue.
-#
-# État APRÈS `DSR-696-699_migration.sql` : c'est lui que supposent les scripts de données.
-# Deux écarts avec le dump du 17/08/2026, tous deux apportés par la migration —
-# `trppu_version_cle.date_creation`, que DSR-698 spécifie, et `uq_crc_version_pdi`, qui rend
-# le CA4 de DSR-699 vrai en base.
-#
-# `trppu_cles_repartition` est la table SOURCE de la chaîne, et la cible du chargement
-# DSR-697. Son `idx_cr_ref_actif`, posé par le bloc 2 de la migration, figure désormais dans
-# le dump comme dans `python/db/03_contraintes.sql` : les deux sont d'accord, et le garde-fou
-# de rejouabilité de la migration n'a plus rien à y faire.
-#
-# Troisième écart, apporté par `db/fix_error.sql` : les trois totaux de `trppu_trafic_site`
-# passent de `decimal(24,18)` — six chiffres avant la virgule, d'où l'`ERROR 1264` sur
-# `trafic_oo_total` — à `decimal(35,19)`, seize chiffres entiers et l'échelle de la source.
+# Extrait de python/db/db_new.sql (recopié : yb05 ne dépend pas de python/), à resynchroniser.
+# État APRÈS la migration (`trppu_version_cle.date_creation`, `uq_crc_version_pdi` pour le CA4
+# de DSR-699) et `fix_error.sql` (totaux de `trppu_trafic_site` en decimal(35,19), ERROR 1264).
 SCHEMA_REFERENCE = """\
 CREATE TABLE `trppu_cles_repartition` (
   `id` bigint NOT NULL AUTO_INCREMENT,
@@ -169,8 +126,6 @@ def _colonnes_insérées(script: Path, table: str) -> list[str]:
         rf"INSERT INTO\s+{table}\s*\(([^)]*)\)", script.read_text(encoding="utf-8")
     )
     assert liste is not None, f"aucun INSERT INTO {table} dans {script.name}"
-    # Les commentaires en fin de ligne ne peuvent pas apparaître dans une liste de colonnes,
-    # un simple découpage sur les virgules suffit.
     return [c.strip() for c in liste.group(1).split(",") if c.strip()]
 
 
@@ -188,12 +143,7 @@ def _load_data(script: Path) -> str:
 
 
 def _colonnes_chargées(script: Path) -> tuple[list[str], list[str]]:
-    """Colonnes alimentées par le `LOAD DATA` : `(depuis le fichier, depuis le SET)`.
-
-    Les champs captés dans une variable utilisateur (``@regate_etab``…) ne sont pas des
-    colonnes : ils sont écartés de la première liste et réapparaissent, convertis, dans la
-    seconde.
-    """
+    """Colonnes du `LOAD DATA` : `(depuis le fichier hors variables @…, depuis le SET)`."""
     sql = _load_data(script)
 
     liste = re.search(r"IGNORE\s+\d+\s+ROWS\s*\(([^)]*)\)", sql)
@@ -215,11 +165,7 @@ def _instructions(script: Path) -> list[str]:
 
 
 def _sql_sans_commentaires(script: Path) -> str:
-    """Contenu du script privé de ses lignes de commentaire.
-
-    Les commentaires citent les tickets — donc leurs erreurs, anciens noms compris : seul le
-    SQL exécutable doit être confronté au schéma.
-    """
+    """Script sans ses lignes de commentaire (qui citent les noms erronés des tickets)."""
     return "\n".join(
         ligne
         for ligne in script.read_text(encoding="utf-8").splitlines()
@@ -233,7 +179,7 @@ def _sql_sans_commentaires(script: Path) -> str:
 
 
 def _patch_connect_interdit(monkeypatch):
-    """Fait échouer tout appel à aiomysql.connect (vérifie l'absence de connexion)."""
+    """Fait échouer tout appel à aiomysql.connect."""
 
     async def fake_connect(**kwargs):
         raise AssertionError("aiomysql.connect ne devait pas être appelé")
@@ -268,8 +214,7 @@ def test_nombre_d_instructions(script, attendu):
 
 
 def test_dsr697_purge_avant_de_charger():
-    """RG6 : « chargement après suppression des données déjà présentes pour le référentiel ».
-    Inversé, le DELETE emporterait les lignes qui viennent d'être chargées."""
+    """RG6 : purge du référentiel avant chargement."""
     verbes = [first_keyword(s) for s in _instructions(CHARGEMENT)]
 
     assert verbes[:2] == ["SET", "SET"], "les paramètres doivent précéder tout accès"
@@ -277,8 +222,7 @@ def test_dsr697_purge_avant_de_charger():
 
 
 def test_dsr697_ne_charge_que_des_colonnes_existantes():
-    """La liste du `LOAD DATA` décrit les champs du FICHIER — mais tout ce qui n'est pas
-    capté dans une variable `@…` est écrit tel quel dans une colonne, qui doit exister."""
+    """Tout champ du fichier non capté dans une variable `@…` vise une colonne existante."""
     fichier, affectees = _colonnes_chargées(CHARGEMENT)
     schema = _colonnes_du_schema("trppu_cles_repartition")
 
@@ -291,8 +235,7 @@ def test_dsr697_ne_charge_que_des_colonnes_existantes():
 
 
 def test_dsr697_convertit_les_quatre_champs_vides_en_null():
-    """RG3. Sans `NULLIF`, les deux colonnes texte prendraient `''` et les deux colonnes
-    numériques 0 — or 0 et « inconnu » ne se confondent pas pour un potentiel IP."""
+    """RG3 : sans `NULLIF`, un champ vide deviendrait `''` ou 0 au lieu de NULL."""
     sql = _load_data(CHARGEMENT)
 
     for colonne in ("co_regate_etablissement", "lb_etablissement", "nb_pre", "potentielip"):
@@ -311,12 +254,7 @@ def test_dsr697_pose_les_colonnes_d_historisation():
 
 
 def test_dsr697_laisse_echouer_les_doublons_de_pdi():
-    """Ni `IGNORE` ni `REPLACE` entre le chemin et `INTO TABLE` : un doublon de
-    (id_pdi, id_referentiel) doit faire échouer le chargement en 1062, pas disparaître.
-
-    La déduplication RG4 porte sur la ligne entière : deux lignes d'un même PDI aux trafics
-    différents y survivent toutes les deux, et c'est `uk_pdi_ref` qui les arrête.
-    """
+    """Ni `IGNORE` ni `REPLACE` : un doublon (id_pdi, id_referentiel) échoue en 1062 (RG4)."""
     sql = _load_data(CHARGEMENT)
 
     assert re.search(r"LOAD DATA (LOCAL )?INFILE '[^']+'\s+INTO TABLE", sql), (
@@ -325,8 +263,7 @@ def test_dsr697_laisse_echouer_les_doublons_de_pdi():
 
 
 def test_dsr697_durcit_le_mode_sql():
-    """Hors mode strict, `LOAD DATA` ramène une valeur non numérique à 0 et tronque les
-    chaînes trop longues, sur un simple avertissement : le référentiel serait chargé faux."""
+    """Hors mode strict, `LOAD DATA` met 0 / tronque sur simple avertissement."""
     sql_seul = _sql_sans_commentaires(CHARGEMENT)
 
     assert "STRICT_ALL_TABLES" in sql_seul
@@ -334,16 +271,14 @@ def test_dsr697_durcit_le_mode_sql():
 
 @pytest.mark.parametrize("script", TOUS_LES_SCRIPTS, ids=lambda p: p.name)
 def test_aucun_script_ne_reprend_le_count_sans_parentheses(script):
-    """Les contrôles de DSR-697 sont écrits `SELECT COUNT FROM …` dans le ticket : sans
-    parenthèses, `COUNT` est lu comme un nom de colonne — `ERROR 1054`."""
+    """`SELECT COUNT FROM …` du ticket DSR-697 : `ERROR 1054`."""
     assert not re.search(
         r"\bCOUNT\s+FROM\b", _sql_sans_commentaires(script), re.IGNORECASE
     )
 
 
 def test_dsr696_enchaine_bien_delete_puis_insert():
-    """L'ordre porte le CA4 : purger avant de recalculer, pour que les sites sans PDI
-    actif disparaissent au lieu de conserver un total périmé."""
+    """CA4 : purger avant de recalculer (un site sans PDI actif ne garde pas de total)."""
     verbes = [first_keyword(s) for s in _instructions(SITE_TRAFIC)]
 
     assert verbes.index("DELETE") < verbes.index("INSERT")
@@ -351,9 +286,7 @@ def test_dsr696_enchaine_bien_delete_puis_insert():
 
 
 def test_dsr698_calcule_deja_avant_toute_ecriture():
-    """`@deja` doit être figé AVANT l'UPDATE : c'est ce qui rend le script rejouable.
-    Calculé après, il vaudrait toujours 0 (l'UPDATE ayant désactivé la version) et chaque
-    exécution créerait une version de plus."""
+    """Rejouabilité : `@deja` est figé avant l'UPDATE (après, il vaudrait toujours 0)."""
     verbes = [first_keyword(s) for s in _instructions(VERSION_CLE)]
     instructions = _instructions(VERSION_CLE)
 
@@ -367,7 +300,7 @@ def test_dsr698_calcule_deja_avant_toute_ecriture():
 
 
 def test_dsr696_n_insere_que_des_colonnes_existantes():
-    """`id_site`, annoncé par le ticket, n'existe pas : la colonne est `co_regate_site`."""
+    """`id_site` du ticket n'existe pas : la colonne est `co_regate_site`."""
     colonnes = _colonnes_insérées(SITE_TRAFIC, "trppu_trafic_site")
     schema = _colonnes_du_schema("trppu_trafic_site")
 
@@ -379,8 +312,7 @@ def test_dsr696_n_insere_que_des_colonnes_existantes():
 
 
 def test_dsr698_n_insere_que_des_colonnes_existantes():
-    """Les trois colonnes horodatées portent un DEFAULT : l'INSERT ne doit en citer aucune,
-    sous peine de figer une valeur là où la base sait faire."""
+    """Les colonnes à DEFAULT ou AUTO_INCREMENT ne sont pas citées par l'INSERT."""
     colonnes = _colonnes_insérées(VERSION_CLE, "trppu_version_cle")
     schema = _colonnes_du_schema("trppu_version_cle")
 
@@ -392,24 +324,20 @@ def test_dsr698_n_insere_que_des_colonnes_existantes():
 
 @pytest.mark.parametrize("script", TOUS_LES_SCRIPTS, ids=lambda p: p.name)
 def test_aucun_script_ne_reprend_la_colonne_fantome_du_ticket(script):
-    """Garde-fou de non-régression sur l'erreur de spécification de DSR-696."""
+    """Non-régression sur la colonne `id_site` de DSR-696."""
     assert not re.search(r"\bid_site\b", _sql_sans_commentaires(script))
 
 
 @pytest.mark.parametrize("script", TOUS_LES_SCRIPTS, ids=lambda p: p.name)
 def test_aucun_script_ne_vise_l_ancien_nom_de_table(script):
-    """La table a été renommée `trppu_site_trafic` → `trppu_trafic_site`. L'ancien nom ne
-    survit que dans le nom de fichier et dans celui de l'index `uq_site_trafic`, conservé
-    pour rester détectable là où la migration a déjà été jouée."""
+    """Le nom correct est `trppu_trafic_site` (l'ancien ne survit que dans le nom de fichier)."""
     sql_seul = _sql_sans_commentaires(script)
 
     assert "trppu_site_trafic" not in sql_seul
 
 
 def test_dsr698_restitue_les_trois_dates():
-    """Le contrôle final doit montrer les trois dates de la version : création (colonne du
-    ticket, rétablie par la migration), début et fin de validité (colonnes du schéma
-    ré-extrait). En omettre une masquerait l'écart entre le ticket et la base."""
+    """Le contrôle final montre création, début et fin de validité de la version."""
     sql_seul = _sql_sans_commentaires(VERSION_CLE)
 
     for colonne in ("date_creation", "date_debut_validite", "date_fin_validite"):
@@ -417,8 +345,7 @@ def test_dsr698_restitue_les_trois_dates():
 
 
 def test_dsr698_clot_la_version_desactivee():
-    """La désactivation pose `date_fin_validite` en même temps que `actif = 'N'` : sans
-    elle, une version inactive garderait une fin de validité vide."""
+    """La désactivation pose `date_fin_validite` avec `actif = 'N'`."""
     update = next(
         s for s in _instructions(VERSION_CLE) if first_keyword(s) == "UPDATE"
     )
@@ -428,7 +355,7 @@ def test_dsr698_clot_la_version_desactivee():
 
 
 def test_les_listes_insert_et_select_ont_la_meme_longueur():
-    """Un décalage entre les deux listes ne se voit qu'à l'exécution, en base."""
+    """Un décalage ne se verrait qu'en base."""
     contenu = SITE_TRAFIC.read_text(encoding="utf-8")
     colonnes = _colonnes_insérées(SITE_TRAFIC, "trppu_trafic_site")
 
@@ -472,8 +399,7 @@ def test_dsr699_listes_insert_et_select_ont_la_meme_longueur():
 
 
 def test_dsr699_calcule_deja_avant_toute_ecriture():
-    """Même garde-fou que DSR-698, ici au service du CA4 : une version déjà calculée n'est
-    jamais retouchée. Calculé après l'INSERT, `@deja` ne protégerait plus rien."""
+    """CA4 : `@deja` figé avant l'INSERT, une version déjà calculée n'est jamais retouchée."""
     instructions = _instructions(CLES_CALCULEES)
     verbes = [first_keyword(s) for s in instructions]
 
@@ -482,8 +408,7 @@ def test_dsr699_calcule_deja_avant_toute_ecriture():
 
 
 def test_dsr699_durcit_le_mode_sql():
-    """Sans ce durcissement, un serveur non strict accepterait une division par zéro en la
-    ramenant à NULL puis à 0 : le script chargerait des clés fausses au lieu d'échouer."""
+    """Sans mode strict, une division par zéro donnerait silencieusement une clé à 0."""
     sql_seul = _sql_sans_commentaires(CLES_CALCULEES)
 
     assert "ERROR_FOR_DIVISION_BY_ZERO" in sql_seul
@@ -491,9 +416,7 @@ def test_dsr699_durcit_le_mode_sql():
 
 
 def test_dsr699_ne_masque_aucun_denominateur_nul():
-    """Décision de conception : aucun `NULLIF` ne protège les dénominateurs, et le seul
-    `COALESCE` porte sur `potentielip`, numérateur nullable. Un COALESCE de plus signerait le
-    retour du masquage — une clé à 0 indistinguable d'une clé réellement nulle."""
+    """Aucun dénominateur masqué : pas de `NULLIF`, un seul `COALESCE` (sur `potentielip`)."""
     sql_seul = _sql_sans_commentaires(CLES_CALCULEES)
 
     assert "NULLIF" not in sql_seul.upper()
@@ -501,9 +424,7 @@ def test_dsr699_ne_masque_aucun_denominateur_nul():
 
 
 def test_dsr699_cast_la_cle_potentiel_ip():
-    """`potentielip` (smallint) / `potentielip_total` (bigint) est une division entière :
-    MySQL rendrait quatre décimales là où la cible en attend dix-huit. Le CAST est ce qui
-    évite une clé juste à 10⁻⁴ près, stockée comme si elle valait mieux."""
+    """Division entière smallint/bigint : sans CAST, 4 décimales au lieu de 18."""
     sql_seul = _sql_sans_commentaires(CLES_CALCULEES)
 
     assert re.search(
@@ -518,20 +439,12 @@ def test_dsr699_cast_la_cle_potentiel_ip():
 
 @pytest.mark.parametrize("script", SCRIPTS_METIER, ids=lambda p: p.name)
 def test_les_scripts_metier_sont_purement_transactionnels(script):
-    """Aucun DDL : ces scripts sont intégralement annulables par un ROLLBACK. Vaut aussi
-    pour le `LOAD DATA` de DSR-697, qui ne provoque pas de commit implicite — contrairement
-    au TRUNCATE qu'on serait tenté de lui substituer pour purger plus vite."""
+    """Aucun DDL (ni TRUNCATE) : les scripts métier sont annulables par ROLLBACK."""
     assert not any(is_ddl(s) for s in _instructions(script))
 
 
 def test_le_ddl_de_la_migration_echappe_a_la_detection():
-    """Comportement contre-intuitif, verrouillé ici parce qu'il est piégeux.
-
-    Les ALTER de la migration voyagent dans une chaîne exécutée par PREPARE/EXECUTE, ce qui
-    les rend invisibles à `is_ddl` : l'avertissement « DDL en mode transactionnel » du socle
-    ne se déclenchera pas, alors que le commit implicite a bien lieu. D'où la consigne de
-    jouer ce fichier avec `transactional=False`.
-    """
+    """Piège : l'ALTER via PREPARE/EXECUTE échappe à `is_ddl` (jouer en `transactional=False`)."""
     instructions = _instructions(MIGRATION)
 
     assert not any(is_ddl(s) for s in instructions)
@@ -542,8 +455,7 @@ def test_le_ddl_de_la_migration_echappe_a_la_detection():
 
 
 def test_le_ddl_du_fix_echappe_aussi_a_la_detection():
-    """`fix_error.sql` emploie le même emballage `PREPARE`/`EXECUTE` que la migration, et
-    appelle donc la même consigne : `transactional=False`."""
+    """Même emballage PREPARE/EXECUTE que la migration : `transactional=False`."""
     instructions = _instructions(FIX)
 
     assert not any(is_ddl(s) for s in instructions)
@@ -556,12 +468,7 @@ def test_le_ddl_du_fix_echappe_aussi_a_la_detection():
 
 
 def _alter_du_fix() -> str:
-    """Chaîne d'`ALTER` portée par le `SET @sql` du correctif.
-
-    Les commentaires sont retirés AVANT la recherche : `sqlparse` rattache à l'instruction
-    qui suit la bannière qui la précède, et l'en-tête du fichier parle lui aussi d'`ALTER
-    TABLE` — le chercher dans le texte brut désignerait la première instruction venue.
-    """
+    """`ALTER` du `SET @sql` du correctif, cherché hors commentaires (l'en-tête cite ALTER)."""
     nettoyees = (
         "\n".join(
             ligne for ligne in s.splitlines() if not ligne.lstrip().startswith("--")
@@ -572,9 +479,7 @@ def _alter_du_fix() -> str:
 
 
 def test_fix_elargit_les_trois_totaux_a_la_meme_definition():
-    """Les trois familles de trafic ont le même défaut : n'en élargir qu'une déplacerait
-    l'`ERROR 1264` sur la suivante. `NOT NULL` est répété dans chaque `MODIFY` — une clause
-    omise vaut suppression de la contrainte."""
+    """Les trois totaux, chacun avec `NOT NULL` (omis, `MODIFY` lèverait la contrainte)."""
     alter = _alter_du_fix()
 
     for colonne in ("trafic_colis_total", "trafic_oo_total", "trafic_3s_total"):
@@ -584,8 +489,7 @@ def test_fix_elargit_les_trois_totaux_a_la_meme_definition():
 
 
 def test_fix_accorde_la_definition_cible_au_schema_de_reference():
-    """Le schéma recopié dans ce test et le correctif doivent dire la même chose : c'est le
-    seul garde-fou contre une correction appliquée en base mais jamais répercutée ici."""
+    """SCHEMA_REFERENCE et le correctif doivent concorder."""
     corps = re.search(
         r"CREATE TABLE `trppu_trafic_site` \((.*?)\n\) ENGINE", SCHEMA_REFERENCE, re.S
     ).group(1)
@@ -597,14 +501,12 @@ def test_fix_accorde_la_definition_cible_au_schema_de_reference():
 
 
 def test_fix_ne_touche_pas_au_potentiel_ip():
-    """`potentielip_total` est un `bigint` : il contient largement la somme des `smallint`
-    de la source. L'élargir n'apporterait rien et reconstruirait la table pour rien."""
+    """`potentielip_total` (bigint) contient déjà la somme des smallint."""
     assert "potentielip_total" not in _alter_du_fix()
 
 
 def test_fix_est_garde_par_la_definition_et_non_par_le_nom():
-    """Rejouabilité. Un garde-fou qui testerait l'existence de la colonne serait toujours
-    vrai et reconstruirait la table à chaque exécution ; c'est la largeur qui décide."""
+    """Rejouabilité : le garde-fou teste la largeur, pas l'existence de la colonne."""
     garde = next(s for s in _instructions(FIX) if "@sql :=" in s)
 
     assert "NUMERIC_PRECISION" in garde
@@ -612,29 +514,19 @@ def test_fix_est_garde_par_la_definition_et_non_par_le_nom():
 
 
 def test_le_suivi_est_strictement_en_lecture():
-    """`suivi.sql` se joue depuis une SECONDE session, pendant qu'un traitement écrit.
-
-    Sa seule garantie, c'est de ne rien faire : `SET` de variables de session et `SELECT`, pas
-    un verbe de plus. Une écriture glissée ici s'exécuterait en concurrence d'un chargement de
-    24 M de lignes — au mieux une attente de verrou, au pire une corruption du référentiel en
-    cours d'écriture.
-    """
+    """`suivi.sql` tourne en parallèle d'un traitement : `SET` et `SELECT` uniquement."""
     verbes = {first_keyword(s) for s in _instructions(SUIVI)}
 
     assert verbes <= {"SET", "SELECT"}, f"verbes interdits : {verbes - {'SET', 'SELECT'}}"
     assert not any(is_ddl(s) for s in _instructions(SUIVI))
-    # Les `UPDATE` d'activation de l'instrumentation `performance_schema` sont donnés en
-    # commentaire, à jouer à la main : ils modifient le serveur entier.
-    # (`UPDATE_TIME`, colonne lue au bloc 4, n'est évidemment pas concernée.)
+    # Les `UPDATE performance_schema` restent en commentaire : ils modifient tout le serveur.
     assert not re.search(
         r"\bUPDATE\s+performance_schema", _sql_sans_commentaires(SUIVI), re.IGNORECASE
     )
 
 
 def test_le_suivi_ne_compte_pas_les_lignes_de_la_table_source():
-    """`COUNT(*)` sur `trppu_cles_repartition` (24 M) à chaque rafraîchissement ferait du
-    script de suivi une charge de plus sur un serveur déjà occupé. La volumétrie de cette
-    table se lit dans `information_schema.TABLES`, approximative mais instantanée."""
+    """Volumétrie de la source (24 M) lue dans `information_schema.TABLES`, pas par COUNT(*)."""
     sql_seul = _sql_sans_commentaires(SUIVI)
 
     assert "information_schema.TABLES" in sql_seul
@@ -644,8 +536,7 @@ def test_le_suivi_ne_compte_pas_les_lignes_de_la_table_source():
 
 
 def test_fix_conserve_l_echelle_de_la_source():
-    """19 décimales, comme `trppu_cles_repartition.trafic_*`. À 18, la somme serait arrondie
-    et le contrôle CA1+CA3 de DSR-696 afficherait des `ecart_*` non nuls."""
+    """19 décimales comme la source, sinon `ecart_*` non nuls au contrôle CA1+CA3 de DSR-696."""
     corps = re.search(
         r"CREATE TABLE `trppu_cles_repartition` \((.*?)\n\) ENGINE", SCHEMA_REFERENCE, re.S
     ).group(1)

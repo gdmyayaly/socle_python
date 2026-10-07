@@ -1,55 +1,15 @@
 """Chargement du référentiel des clés de répartition des PDI, depuis un CSV.
 
-    fichier CSV (S3 ou disque local)  →  trppu_cles_repartition
+Source : bucket S3, ou fichier local (`chemin_local`). Règles (DSR-697) : RG1 un seul
+`id_referentiel` (le fichier fait foi, toute autre valeur est refusée), RG3 vides → NULL,
+RG5 unicité via `uk_pdi_ref`, RG6 purge par `TRUNCATE` (DDL, commit implicite, vide toute
+la table, droit DROP : joué seulement si aucun autre référentiel n'est présent).
 
-La source nominale est le bucket S3. Un fichier du disque local peut la remplacer
-(`chemin_local`) : seul l'accès au fichier change, les règles ci-dessous s'appliquent à
-l'identique.
-
-Les règles de gestion viennent du chargement historique, écrit en SQL pur dans le projet
-voisin (`yb05/db/DSR-697_chargement_cles_repartition.sql`) :
-
-    RG1  toutes les lignes chargées portent le même `id_referentiel`
-    RG3  champs vides convertis en NULL — co_regate_etablissement, lb_etablissement,
-         nb_pre, potentielip
-    RG5  unicité (id_pdi, id_referentiel) — garantie en base par `uk_pdi_ref`
-    RG6  purge avant chargement — par `TRUNCATE TABLE` (cf. plus bas)
-
-Deux écarts assumés avec ce script, tous deux dus au format de fichier, qui a évolué :
-
-* le CSV porte désormais lui-même `id_referentiel`, `date_debut_validite` et
-  `date_fin_validite` ; le script les forçait (RG2). **Le fichier fait foi**, et le
-  paramètre de la commande ne sert qu'à cibler la purge — toute ligne portant un autre
-  référentiel fait échouer le chargement, c'est le seul moyen de ne pas charger un fichier
-  sous un référentiel qui n'est pas le sien ;
-* le chargement se fait **par lots commités**, pas en une transaction unique. Sur 22 M de
-  lignes, le journal d'annulation, la durée de connexion et le coût du ROLLBACK sont le
-  vrai risque. Un échec laisse donc un chargement partiel : c'est la purge (RG6) qui rend
-  la commande rejouable, et le rapport dit combien de lignes étaient passées.
-
-Index (cf. `index_chargement.py`) : ils restent **toujours en place**. Les lignes sont
-insérées par lots de `CHARGEMENT_TAILLE_LOT`, chacun commité seul — plus lent qu'un
-chargement sans index, mais aucune instruction longue (une reconstruction finale était un
-ALTER de plusieurs minutes, coupé par le réseau pour inactivité). Un doublon est rejeté dès
-son insertion par `uk_pdi_ref`, avec son numéro de ligne. Le lot suivant est lu et converti
-pendant l'insertion du courant.
-
-Sites dont un total de trafic est nul : ils sont chargés comme les autres ; le calcul des
-clés (DSR-699) leur enregistre des clés à 0 et le rapport de `init` les liste.
-
-La purge RG6 est un `TRUNCATE TABLE`, quasi instantané là où un `DELETE` de 22 M de lignes
-prend longtemps. Il vide **toute** la table et ne s'annule pas (DDL, commit implicite) : il
-n'est donc joué que si la table ne contient aucun autre référentiel que celui chargé —
-vérifié avant toute écriture — et il exige le droit `DROP` sur la table.
-
-Avec `ignorer_erreurs` (option `--skip-errors`), une ligne non conforme — champ obligatoire
-vide, valeur mal formée, autre référentiel, doublon ou valeur refusée par MySQL — est écartée
-au lieu d'arrêter le chargement. Elle figure dans les avertissements du rapport, et le total
-dans `LIGNES_IGNOREES`. Un en-tête faux ou une panne technique (connexion, verrou, droits)
-restent bloquants : ce ne sont pas des défauts d'une ligne.
-
-Le traitement **ne lève pas** : il rend un `Rapport` dont `reussi` vaut `False`. C'est la
-CLI qui en déduit le code de retour du processus.
+Lots de `CHARGEMENT_TAILLE_LOT` commités un à un, index gardés en place (un ALTER final
+long était coupé par le réseau) ; un échec laisse un chargement partiel, la purge rend la
+commande rejouable. Le lot suivant est préparé pendant l'insertion du courant.
+`--skip-errors` écarte les lignes non conformes (en-tête faux et pannes restent bloquants).
+Ne lève pas : rend un `Rapport`.
 """
 
 from __future__ import annotations
@@ -84,8 +44,7 @@ logger = logging.getLogger(__name__)
 
 TITRE = "CHARGEMENT DES CLES DE REPARTITION"
 
-# En-tête attendu, dans l'ordre du fichier. Le vérifier au premier enregistrement fait
-# échouer un fichier au mauvais format tout de suite, et non à la millionième ligne.
+# En-tête attendu, dans l'ordre du fichier, vérifié avant toute insertion.
 COLONNES_CSV = (
     "id",
     "pdi_rattache",
@@ -107,8 +66,7 @@ COLONNES_CSV = (
     "date_fin_validite",
 )
 
-# `id` (auto-incrément) n'est pas alimenté : la colonne `id` du CSV est le PDI, elle part
-# dans `id_pdi`.
+# La colonne `id` du CSV est le PDI (`id_pdi`) ; l'auto-incrément `id` n'est pas alimenté.
 INSERT_SQL = """
 INSERT INTO trppu_cles_repartition
     (id_pdi, pdi_rattache, trafic_colis, trafic_oo, trafic_3s, nature,
@@ -118,9 +76,7 @@ INSERT INTO trppu_cles_repartition
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
-# RG6. La purge est un `TRUNCATE` (`index_chargement.vider_table`) : il vide **tous** les
-# référentiels et, étant du DDL, interdit tout retour arrière. Il n'est joué que derrière ce
-# garde-fou, servi par `idx_cr_ref_actif` (id_referentiel en tête) : un parcours d'index.
+# Garde-fou RG6 : le TRUNCATE vide tous les référentiels, sans retour arrière.
 AUTRE_REFERENTIEL_SQL = """
 SELECT id_referentiel FROM trppu_cles_repartition WHERE id_referentiel <> %s LIMIT 1
 """
@@ -128,16 +84,12 @@ SELECT id_referentiel FROM trppu_cles_repartition WHERE id_referentiel <> %s LIM
 LIGNES_PRESENTES_SQL = (
     "SELECT COUNT(*) AS nb FROM trppu_cles_repartition WHERE id_referentiel = %s"
 )
-# Erreurs MySQL imputables à UNE ligne : doublon (1062), valeur hors bornes (1264), date
-# invalide (1292), valeur incorrecte (1366), texte trop long (1406). Toute autre erreur
-# (connexion, verrou, droits) arrête le chargement, même avec --skip-errors.
+# Erreurs MySQL imputables à une ligne (doublon, hors bornes, date, valeur, longueur) ;
+# toute autre erreur arrête le chargement, même avec --skip-errors.
 CODES_ERREUR_LIGNE = frozenset({1062, 1264, 1292, 1366, 1406})
 
-# Couverte par `idx_cr_ref_actif` (id_referentiel, date_fin_validite, …) : un parcours
-# d'index, sans lire les 22 M de lignes de la table. Ni `COUNT(DISTINCT id_pdi)` — il
-# exigeait une table temporaire de 22 M de valeurs, alors que `uk_pdi_ref`, en place pendant
-# tout le chargement, garantit déjà l'unicité — ni `MIN(date_debut_validite)`, calculé à la
-# lecture.
+# Couverte par `idx_cr_ref_actif` : parcours d'index seul. L'unicité est garantie par
+# `uk_pdi_ref` et la date min est calculée à la lecture.
 CONTROLE_FINAL_SQL = """
 SELECT COUNT(*)                             AS nb_lignes,
        SUM(date_fin_validite IS NULL)       AS nb_actives
@@ -156,12 +108,7 @@ def _texte(valeur: str | None) -> str:
 
 
 def _obligatoire(ligne: dict[str, str], colonne: str, numero: int) -> str:
-    """Champ NOT NULL en base : un vide doit faire échouer le chargement.
-
-    C'est la transposition du `sql_mode` durci du script SQL — hors mode strict, MySQL
-    convertit silencieusement, et mieux vaut une erreur au chargement qu'un trafic ramené
-    à zéro sans que personne ne le sache.
-    """
+    """Champ NOT NULL : un vide échoue au lieu d'être converti silencieusement par MySQL."""
     valeur = _texte(ligne.get(colonne))
     if not valeur:
         raise TraitementImpossible(
@@ -201,7 +148,7 @@ def _decimal(ligne: dict[str, str], colonne: str, numero: int) -> Decimal:
         raise TraitementImpossible(
             f"Ligne {numero} : '{colonne}' = '{valeur}' n'est pas un décimal."
         ) from erreur
-    # `Decimal` accepte « NaN » et « Infinity », que MySQL refuserait à l'insertion.
+    # `Decimal` accepte « NaN » et « Infinity », que MySQL refuserait.
     if not nombre.is_finite():
         raise TraitementImpossible(
             f"Ligne {numero} : '{colonne}' = '{valeur}' n'est pas un décimal."
@@ -211,9 +158,7 @@ def _decimal(ligne: dict[str, str], colonne: str, numero: int) -> Decimal:
 
 def _date(ligne: dict[str, str], colonne: str, numero: int) -> date:
     valeur = _obligatoire(ligne, colonne, numero)
-    # Chemin rapide pour la forme canonique AAAA-MM-JJ : `fromisoformat` est en C, dix fois
-    # plus rapide que `strptime` — sur 22 M de lignes × 2 dates, cela se compte en minutes.
-    # Les autres formes passent par `strptime`, qui garde exactement l'ancien comportement.
+    # Chemin rapide AAAA-MM-JJ : `fromisoformat` est bien plus rapide que `strptime`.
     if len(valeur) == 10 and valeur[4] == "-" and valeur[7] == "-":
         try:
             return date.fromisoformat(valeur)
@@ -234,20 +179,12 @@ def _date_optionnelle(ligne: dict[str, str], colonne: str, numero: int) -> date 
 
 
 def _texte_optionnel(ligne: dict[str, str], colonne: str) -> str | None:
-    """RG3 : chaîne vide convertie en NULL.
-
-    Sans cette conversion, `co_regate_etablissement` vaudrait `''` et se propagerait comme
-    une clé de jointure fantôme sur l'établissement.
-    """
+    """RG3 : chaîne vide convertie en NULL (évite une clé de jointure `''`)."""
     return _texte(ligne.get(colonne)) or None
 
 
 def convertir(ligne: dict[str, str], numero: int, id_referentiel: int) -> tuple[Any, ...]:
-    """Transforme une ligne du CSV en paramètres d'insertion, dans l'ordre de `INSERT_SQL`.
-
-    `numero` est le numéro de ligne dans le fichier, en-tête compris : c'est ce que
-    l'exploitant lit dans son éditeur.
-    """
+    """Ligne CSV → paramètres de `INSERT_SQL` ; `numero` compte l'en-tête."""
     referentiel_ligne = _entier(ligne, "id_referentiel", numero)
     if referentiel_ligne != id_referentiel:
         raise TraitementImpossible(
@@ -289,11 +226,7 @@ def verifier_entete(colonnes: list[str] | None) -> None:
 
 
 def _lire_lot(lecteur: Iterator[dict[str, str]], taille: int) -> list[dict[str, str]]:
-    """Consomme jusqu'à `taille` lignes du lecteur CSV.
-
-    Isolée pour être appelée dans un thread : la lecture tire sur le réseau et bloquerait
-    la boucle asyncio.
-    """
+    """Consomme jusqu'à `taille` lignes (appelée dans un thread : lecture réseau bloquante)."""
     lot: list[dict[str, str]] = []
     for ligne in lecteur:
         lot.append(ligne)
@@ -367,13 +300,7 @@ async def charger_cles_repartition(
     chemin_local: str | None = None,
     ignorer_erreurs: bool = False,
 ) -> Rapport:
-    """Charge `trppu_cles_repartition` depuis le CSV du bucket S3, ou d'un fichier local.
-
-    `fichier` surcharge `CSV_CLES_REPARTITION` pour un rechargement ponctuel depuis S3.
-    `chemin_local`, s'il est renseigné, désigne un fichier du disque : S3 n'est alors pas
-    sollicité et `fichier` est ignoré. `ignorer_erreurs` écarte les lignes non conformes
-    au lieu d'échouer (cf. docstring du module).
-    """
+    """Charge `trppu_cles_repartition` depuis S3 (`fichier`) ou le disque (`chemin_local`)."""
     debut = time.perf_counter()
     nom_fichier = chemin_local or fichier or CSV_CLES_REPARTITION
     rapport = Rapport(
@@ -416,16 +343,11 @@ async def charger_cles_repartition(
 
     try:
         # --- Garde-fous, avant toute écriture -----------------------------
-        #
-        # Pas de contrôle sur `trppu_referentiel` : la table est vouée à disparaître. Le seul
-        # garde-fou sur le référentiel est la concordance ligne à ligne avec le fichier (RG1).
         presentes = await db_write.fetch_one(LIGNES_PRESENTES_SQL, (id_referentiel,))
         nb_presentes = int(presentes["nb"]) if presentes else 0
 
-        # Avant la localisation du fichier et toute écriture : la purge est un TRUNCATE,
-        # qui ne se rattrape pas et ne doit jamais emporter un autre référentiel. Lu sur
-        # l'instance d'écriture, comme le comptage ci-dessus : une réplique en retard ne doit
-        # pas décider d'un TRUNCATE.
+        # Lu sur l'instance d'écriture : une réplique en retard ne doit pas décider d'un
+        # TRUNCATE qui emporterait un autre référentiel.
         autre = await db_write.fetch_one(AUTRE_REFERENTIEL_SQL, (id_referentiel,))
         if autre:
             raise TraitementImpossible(
@@ -434,15 +356,13 @@ async def charger_cles_repartition(
             )
         rapport.ok(f"Aucun autre référentiel que {id_referentiel} dans la table")
 
-        # Localiser le fichier avant de purger : découvrir son absence après avoir
-        # supprimé 22 M de lignes coûterait un rechargement complet.
+        # Localiser le fichier avant de purger.
         taille = await asyncio.to_thread(localiser, cle)
         rapport.ok(f"Fichier '{cle}' présent {libelle_source} ({taille} octets)")
 
         # --- RG6 : purge -------------------------------------------------
         await index_chargement.vider_table()
-        # TRUNCATE ne rend pas de nombre de lignes : c'est le comptage fait juste avant, que
-        # le garde-fou garantit être le contenu entier de la table.
+        # TRUNCATE ne rend pas de nombre de lignes : on reprend le comptage préalable.
         supprimees = nb_presentes
         logger.info(
             "Purge du référentiel effectuée %s",
@@ -451,8 +371,7 @@ async def charger_cles_repartition(
         rapport.ok(f"Purge (TRUNCATE) : {supprimees} ligne(s) supprimée(s)")
 
         # --- Index en place ------------------------------------------------
-        # Table vide : recréer un index absent (essai précédent interrompu) est instantané,
-        # et garantit que l'unicité est contrôlée dès la première ligne.
+        # Table vide : recréer un index manquant est instantané (unicité dès la 1re ligne).
         recrees = await index_chargement.completer_index()
         rapport.ok(
             "Index en place pendant le chargement"
@@ -492,8 +411,7 @@ async def charger_cles_repartition(
 
     rapport.ok(f"{lignes_inserees} ligne(s) insérée(s) en {lots} lot(s)")
     if rejets is not None:
-        # Écarter des lignes est toléré, n'en garder aucune ne l'est pas : un fichier dont
-        # toutes les lignes sont fausses n'est pas un référentiel.
+        # Écarter des lignes est toléré, n'en garder aucune ne l'est pas.
         rapport.ajouter(
             lignes_inserees > 0 or rejets.total == 0,
             f"{rejets.total} ligne(s) non conforme(s) ignorée(s) (--skip-errors)",
@@ -524,7 +442,7 @@ async def charger_cles_repartition(
 
 
 def _reporter_rejets(rapport: Rapport, rejets: _Rejets | None) -> None:
-    """Porte les lignes écartées dans le rapport — y compris sur un chargement interrompu."""
+    """Porte les lignes écartées dans le rapport, même sur un chargement interrompu."""
     if rejets is None:
         return
     rapport.etats["LIGNES_IGNOREES"] = rejets.total
@@ -534,12 +452,7 @@ def _reporter_rejets(rapport: Rapport, rejets: _Rejets | None) -> None:
 async def _charger(
     ouvrir, cle: str, id_referentiel: int, debut: float, rejets: _Rejets | None = None
 ) -> tuple[int, int]:
-    """Lit le CSV en streaming et insère par lots. Retourne (lignes, lots).
-
-    `ouvrir` est `s3.ouvrir_objet` ou `fichier_local.ouvrir` : même signature, un
-    gestionnaire de contexte qui rend un flux texte. `rejets`, s'il est fourni, reçoit les
-    lignes non conformes au lieu de faire échouer le chargement.
-    """
+    """Lit le CSV en streaming et insère par lots ; rend (lignes, lots, date_debut_min)."""
     lignes_inserees = 0
     lots = 0
     date_debut_min: date | None = None
@@ -554,8 +467,8 @@ async def _charger(
                 asyncio.to_thread(_preparer_lot, lecteur, id_referentiel, rejets)
             )
 
-        # Le lot suivant est lu et converti (thread) pendant que MySQL insère le courant :
-        # CPU et base travaillent en même temps. Deux lots au plus en mémoire.
+        # Le lot suivant est préparé (thread) pendant que MySQL insère le courant ;
+        # deux lots au plus en mémoire.
         suivant = preparer()
         try:
             while True:
@@ -575,9 +488,8 @@ async def _charger(
                     _journaliser_avancement(id_referentiel, lignes_inserees, lots, debut)
                     prochain_jalon += CHARGEMENT_LOG_TOUTES_LES
         finally:
-            # Un thread ne s'annule pas : on attend la préparation en cours avant de fermer
-            # le flux qu'elle lit, et on absorbe son éventuelle erreur (déjà remontée, ou
-            # sans objet puisqu'on sort).
+            # Un thread ne s'annule pas : attendre la préparation en cours avant de fermer
+            # le flux, en absorbant son éventuelle erreur.
             await asyncio.gather(suivant, return_exceptions=True)
 
     return lignes_inserees, lots, date_debut_min
@@ -586,16 +498,11 @@ async def _charger(
 def _preparer_lot(
     lecteur: Iterator[dict[str, str]], id_referentiel: int, rejets: _Rejets | None
 ) -> tuple[list[tuple[Any, ...]], list[int], int, date | None] | None:
-    """Lit et convertit un lot (appelé dans un thread). None en fin de fichier.
-
-    Rend aussi la plus petite `date_debut_validite` du lot : la calculer ici, sur des valeurs
-    déjà en mémoire, évite une relecture complète de la table en fin de chargement.
-    """
+    """Lit et convertit un lot (thread), avec sa date de début min ; None en fin de fichier."""
     brutes = _lire_lot(lecteur, CHARGEMENT_TAILLE_LOT)
     if not brutes:
         return None
-    # `lecteur.line_num` porte le numéro de la dernière ligne lue, en-tête compris : on
-    # remonte au premier enregistrement du lot pour numéroter chaque ligne.
+    # `line_num` = dernière ligne lue : on remonte au premier enregistrement du lot.
     premiere = lecteur.line_num - len(brutes) + 1
     valeurs: list[tuple[Any, ...]] = []
     numeros: list[int] = []
@@ -624,20 +531,16 @@ async def _inserer_lot(
     except Exception as erreur:  # noqa: BLE001 - retraduit puis relancé
         if rejets is None or _code_mysql(erreur) not in CODES_ERREUR_LIGNE:
             raise _traduire_erreur_insertion(erreur, premiere) from erreur
-        # Le lot a été annulé en bloc : on le rejoue ligne à ligne pour n'écarter que la ou
-        # les lignes fautives : un doublon (rejeté par `uk_pdi_ref`) ou une valeur refusée
-        # par MySQL.
+        # Lot annulé en bloc : rejeu ligne à ligne pour n'écarter que les fautives.
         return await _inserer_ligne_a_ligne(valeurs, numeros, rejets)
 
 
 async def _inserer_ligne_a_ligne(
     valeurs: list[tuple[Any, ...]], numeros: list[int], rejets: _Rejets
 ) -> int:
-    """Rejoue un lot refusé ligne à ligne, dans une seule transaction. Retourne les insérées.
+    """Rejoue un lot refusé ligne à ligne, en une transaction ; rend le nombre d'insérées.
 
-    InnoDB n'annule que l'instruction fautive, pas la transaction : les lignes valides du
-    lot sont commitées ensemble à la fin. Ce chemin n'est pris que pour un lot en erreur,
-    le coût du ligne à ligne reste marginal.
+    InnoDB n'annule que l'instruction fautive : les lignes valides sont commitées ensemble.
     """
     inserees = 0
     async with db_write.transaction() as tx:
@@ -656,14 +559,7 @@ async def _inserer_ligne_a_ligne(
 def _journaliser_avancement(
     id_referentiel: int, lignes: int, lots: int, debut: float
 ) -> None:
-    """Trace la progression d'un chargement long.
-
-    Le batch tourne sous ordonnanceur, sans `-v` : sans ces lignes, un chargement d'une
-    heure ne laisserait aucune trace de son avancement, et l'exploitant ne saurait pas
-    distinguer un traitement lent d'un traitement bloqué. Le total de lignes est inconnu
-    (le fichier est lu en streaming, jamais compté d'avance) : on journalise un volume et
-    un débit, pas un pourcentage.
-    """
+    """Trace volume et débit d'un chargement long (total inconnu : pas de pourcentage)."""
     ecoule = time.perf_counter() - debut
     logger.info(
         "Avancement chargement clés de répartition %s",
@@ -706,11 +602,7 @@ async def _controles_finaux(
 ) -> None:
     """Relit la table pour confirmer ce qui a été écrit.
 
-    Sur l'instance d'**écriture** : une réplique aurait du retard sur 22 M d'insertions, et
-    compterait une table incomplète — elle conclurait à tort à une volumétrie incohérente.
-
-    Les doublons `(id_pdi, id_referentiel)` ne sont pas recomptés : `uk_pdi_ref`, en place
-    pendant tout le chargement, les rend impossibles.
+    Sur l'instance d'écriture : une réplique en retard compterait une table incomplète.
     """
     debut = time.perf_counter()
     logger.info("Début contrôles finaux chargement %s", ctx(id_referentiel=id_referentiel))
@@ -737,8 +629,7 @@ async def _controles_finaux(
     )
     rapport.ok("Unicité (PDI, référentiel) garantie par l'index uk_pdi_ref")
     rapport.ok(f"Lignes actives (date_fin_validite NULL) : {nb_actives}")
-    # Conservé, et pas seulement affiché : c'est le nombre de clés que DSR-699 devra produire.
-    # La commande `init` s'en sert pour vérifier son CA1 sans recompter 24 M de lignes.
+    # Nombre de clés que DSR-699 devra produire : `init` s'en sert pour son CA1.
     rapport.etats["LIGNES_ACTIVES"] = nb_actives
     if date_debut_min is not None:
         rapport.etats["DATE_DEBUT_VALIDITE_MIN"] = date_debut_min

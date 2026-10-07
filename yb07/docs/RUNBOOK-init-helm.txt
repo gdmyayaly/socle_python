@@ -251,7 +251,13 @@ Libelle / commentaire des versions : ajouter "- '--libelle'" puis
 
 
 ETAPE 7 - Calcul des cles                   duree : PLUSIEURS HEURES
-Rejouable : NON - IRREVERSIBLE
+Rejouable : NON une fois terminee - IRREVERSIBLE
+Interrompue : se REPREND (relancer --etape cles), seules les cles
+manquantes sont ecrites, aucune cle existante n'est modifiee.
+
+Ecrite par lots de CHARGEMENT_TAILLE_LOT lignes (1000), un commit
+par lot : une transaction unique depassait la limite de la
+replication de groupe MySQL (erreur 3231).
 
 AVANT DE LANCER :
 - rapport de l'etape 6 relu : aucun site en echec ;
@@ -268,8 +274,9 @@ AVANT DE LANCER :
         - cles
 
 A verifier : CA1 (une cle par PDI actif), CA2, CA3 (sommes a 1).
-Aucun avancement n'est affiche pendant l'etape : suivre depuis un
-client MySQL avec yb05/db/suivi.sql.
+Avancement dans les logs apres chaque paquet de lots :
+"Avancement calcul des cles (lots=.., lots_total=.., pct=..,
+cles_ecrites=.., debit_lignes_s=..)".
 
 
 ------------------------------------------------------------------------

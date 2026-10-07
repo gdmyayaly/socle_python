@@ -1,12 +1,5 @@
-"""Découpage et modèles de résultat pour l'exécution de scripts SQL (fichiers .sql).
-
-Ce module est volontairement **pur et synchrone** : aucune I/O, aucun asyncio, aucune
-dépendance vers ``app.db.mysql``. Il isole l'usage de ``sqlparse`` et reste testable
-sans base de données.
-
-L'exécution proprement dite est portée par les méthodes ``execute_sql_file`` /
-``execute_sql_files`` / ``execute_sql_script`` de la classe ``Database``.
-"""
+"""Découpage de scripts SQL et modèles de résultat ; module pur (sans I/O), l'exécution
+est dans ``Database.execute_sql_*``."""
 
 from __future__ import annotations
 
@@ -18,16 +11,14 @@ import sqlparse
 DEFAULT_DELIMITER = ";"
 PREVIEW_MAX_LENGTH = 120
 
-# Mots-clés provoquant un COMMIT IMPLICITE en MySQL : ces instructions ne sont pas
-# annulables par un ROLLBACK (cf. doc MySQL « Statements That Cause an Implicit Commit »).
+# Mots-clés provoquant un COMMIT implicite MySQL (non annulables par ROLLBACK).
 DDL_KEYWORDS = frozenset({
     "CREATE", "DROP", "ALTER", "TRUNCATE", "RENAME",
     "GRANT", "REVOKE", "FLUSH", "LOCK", "UNLOCK",
     "ANALYZE", "OPTIMIZE", "REPAIR", "INSTALL", "UNINSTALL",
 })
 
-# La directive DELIMITER n'est pas du SQL : c'est une instruction du client `mysql`,
-# qui exige qu'elle soit seule sur sa ligne.
+# DELIMITER est une directive du client `mysql`, seule sur sa ligne.
 _DELIMITER_LINE_RE = re.compile(r"^\s*DELIMITER\s+(\S+)\s*$", re.IGNORECASE)
 
 
@@ -120,27 +111,17 @@ class SqlScriptError(RuntimeError):
 
 
 def split_sql_script(script: str) -> list[str]:
-    """Découpe un script SQL en instructions exécutables une par une.
+    """Découpe un script en instructions (``sqlparse`` + directive ``DELIMITER``).
 
-    - S'appuie sur ``sqlparse.split`` (qui gère guillemets, backticks et commentaires
-      ``--`` / ``#`` / ``/* */``) pour les segments à délimiteur ``;``.
-    - Gère la directive MySQL ``DELIMITER``, que ``sqlparse`` ne connaît pas, via un
-      pré-passage ligne à ligne.
-    - Supprime les fragments vides ou composés uniquement de commentaires.
-    - Retire le délimiteur final de chaque instruction.
-
-    Limite connue : dans un segment à délimiteur personnalisé (corps de procédure ou
-    de trigger), le découpage est **textuel**. Un délimiteur qui apparaîtrait à
-    l'intérieur d'une chaîne littérale du corps couperait donc à tort — cas que les
-    dumps ``mysqldump`` ne produisent pas en pratique.
+    Limite : avec un délimiteur personnalisé le découpage est textuel (un délimiteur
+    dans une chaîne littérale couperait à tort).
     """
     statements: list[str] = []
     for segment, delimiter in _split_on_delimiter_directives(script):
         if delimiter == DEFAULT_DELIMITER:
             fragments = sqlparse.split(segment)
         else:
-            # Délimiteur personnalisé : découpage textuel, les ``;`` internes au corps
-            # de la procédure doivent être préservés.
+            # Découpage textuel : préserve les ``;`` internes au corps de procédure.
             fragments = segment.split(delimiter)
         for fragment in fragments:
             cleaned = _clean_fragment(fragment, delimiter)
@@ -150,11 +131,7 @@ def split_sql_script(script: str) -> list[str]:
 
 
 def _split_on_delimiter_directives(script: str):
-    """Génère des couples ``(texte, délimiteur courant)``.
-
-    Une ligne ``DELIMITER x`` n'est pas du SQL : elle est consommée ici et ferme le
-    segment en cours.
-    """
+    """Génère des couples ``(texte, délimiteur courant)`` ; les lignes DELIMITER sont consommées."""
     delimiter = DEFAULT_DELIMITER
     buffer: list[str] = []
     for line in script.splitlines(keepends=True):
@@ -193,11 +170,7 @@ def _is_comment_only(text: str) -> bool:
 
 
 def first_keyword(statement: str) -> str:
-    """Premier mot-clé SQL significatif, en majuscules (``""`` si indéterminable).
-
-    Ignore les commentaires en tête : ``sqlparse.split`` rattache les bannières
-    ``-- ==== `` d'un dump à l'instruction qui suit.
-    """
+    """Premier mot-clé SQL en majuscules, commentaires de tête ignorés (``""`` sinon)."""
     parsed = sqlparse.parse(statement)
     if not parsed:
         return ""
@@ -211,11 +184,7 @@ def is_ddl(statement: str) -> bool:
 
 
 def statement_preview(statement: str, max_length: int = PREVIEW_MAX_LENGTH) -> str:
-    """Aperçu mono-ligne, commentaires retirés, tronqué — destiné aux logs.
-
-    Les scripts de données peuvent contenir des informations personnelles et les logs
-    partent dans Kibana : on ne journalise **jamais** l'instruction complète.
-    """
+    """Aperçu mono-ligne tronqué pour les logs : jamais le SQL complet (données personnelles)."""
     text = sqlparse.format(statement, strip_comments=True)
     text = " ".join(text.split())
     if len(text) <= max_length:

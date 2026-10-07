@@ -1,10 +1,5 @@
-"""Injection des paramètres de session dans un script SQL.
-
-Ces tests portent sur `app/db/sql_parametres.py`, mais plusieurs se jouent sur le **texte réel**
-des scripts de `db/` : l'intérêt n'est pas de vérifier une regex sur un exemple choisi, c'est de
-prouver que la substitution tient sur les fichiers qui seront réellement exécutés — bannières de
-commentaires, `SET SESSION` et variables de travail comprises.
-"""
+"""Tests de `app/db/sql_parametres.py`, dont plusieurs sur le texte réel des scripts de `db/`
+(bannières, `SET SESSION`, variables de travail)."""
 
 from __future__ import annotations
 

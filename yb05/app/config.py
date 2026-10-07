@@ -24,26 +24,20 @@ MYSQL_RETRY_DELAY = float(os.getenv("SGBD_RETRY_DELAY", "1.0"))
 
 
 def _entier_positif(nom: str, defaut: int) -> int:
-    """Entier strictement positif lu dans l'environnement ; le défaut sinon.
-
-    Un batch d'exploitation ne refuse pas de démarrer pour une variable mal saisie.
-    """
+    """Entier > 0 lu dans l'environnement, le défaut si la valeur est mal saisie."""
     try:
         return max(1, int(os.getenv(nom, "")))
     except (TypeError, ValueError):
         return defaut
 
 
-# Âge maximal (s) d'une connexion inactive du pool avant renouvellement : MySQL la couperait
-# au-delà de `wait_timeout`, et la requête suivante échouerait (« server has gone away »).
+# Recyclage (s) des connexions inactives, avant que MySQL ne les coupe (`wait_timeout`).
 MYSQL_POOL_RECYCLE = _entier_positif("MYSQL_POOL_RECYCLE", 600)
-# Keepalive TCP (s d'inactivité avant la première sonde). Pendant une requête longue, MySQL
-# n'envoie rien : un équipement réseau à délai d'inactivité (souvent 300 s) couperait la
-# connexion (erreur 2013). Les sondes la maintiennent visible.
+# Keepalive TCP (s) : pendant une requête longue la connexion est muette et le réseau la
+# coupe après ~300 s d'inactivité (erreur 2013).
 MYSQL_TCP_KEEPALIVE = _entier_positif("SGBD_TCP_KEEPALIVE", 60)
-# Classement des connexions. Vide = celui de la base (`@@collation_database`) : pymysql ouvre en
-# utf8mb4_general_ci, les tables sont en utf8mb4_0900_ai_ci — un littéral ou une variable de
-# script comparé à une colonne lèverait l'erreur 1267. Lettres, chiffres et `_` seulement.
+# Collation de connexion ; vide = celle de la base. pymysql ouvre en utf8mb4_general_ci,
+# les tables sont en utf8mb4_0900_ai_ci : erreur 1267. Lettres, chiffres et `_` seulement.
 _collation = os.getenv("SGBD_COLLATION", "").strip()
 MYSQL_COLLATION = _collation if _collation.replace("_", "").isalnum() else ""
 
@@ -57,23 +51,13 @@ LOGS_DIR = os.getenv("LOGS_DIR", "")
 # Debug
 DEBUG_SHOW_QUERY = os.getenv("DEBUG_SHOW_QUERY", "false").lower() == "true"
 
-# Calcul des trafics (DSR-702) — correspondance code produit -> famille de clé de répartition.
-#
-# `trppu_cles_repartition_calcule` porte quatre clés (colis, oo, 3s, potentielip) alors que
-# `trppu_produit` contient des codes objets alimentés dynamiquement depuis Databricks (OO, OS,
-# PR, PPI, CO, IP…). Rien en base ne dit à quelle famille appartient un code : la
-# correspondance est donc une donnée de configuration, corrigeable sans livraison.
-#
-# Format : `CODE:famille,CODE:famille`. Familles reconnues : colis, oo, 3s, potentielip.
+# DSR-702 : code produit -> famille de clé (colis, oo, 3s, potentielip). Rien en base ne
+# porte cette correspondance, d'où la configuration. Format `CODE:famille,CODE:famille`.
 CLES_PAR_PRODUIT_DEFAUT = "CO:colis,OO:oo,IP:potentielip,OS:3s,PR:3s,PPI:3s"
 
 
 def _parse_cles_par_produit(brut: str) -> dict[str, str]:
-    """Transforme `CO:colis,OO:oo` en `{"CO": "colis", "OO": "oo"}`.
-
-    Une entrée malformée lève : une correspondance produit/clé silencieusement ignorée
-    produirait des trafics faux, ce qui est bien pire qu'un démarrage refusé.
-    """
+    """`CO:colis,OO:oo` -> `{"CO": "colis", ...}` ; lève si malformé (plutôt que trafic faux)."""
     mapping: dict[str, str] = {}
     for entree in brut.split(","):
         entree = entree.strip()
@@ -96,12 +80,7 @@ CLES_PAR_PRODUIT = _parse_cles_par_produit(
 
 
 def _parse_nb_worker(brut: str) -> int:
-    """Nombre de scénarios traités simultanément par le mode ALL (DSR-704).
-
-    Toute valeur inexploitable — vide, non numérique, nulle ou négative — est ramenée à 1,
-    c'est-à-dire au mode séquentiel qui est le défaut du ticket. Un batch d'exploitation ne
-    doit pas refuser de démarrer pour une variable d'environnement mal saisie.
-    """
+    """Scénarios traités en parallèle par ALL (DSR-704) ; valeur inexploitable -> 1 (séquentiel)."""
     try:
         return max(1, int(brut))
     except (TypeError, ValueError):

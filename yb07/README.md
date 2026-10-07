@@ -31,9 +31,10 @@ journalisation JSON, vérifications de ressources, exécution de scripts `.sql`)
 ajoute l'accès S3, l'injection de paramètres dans les scripts et les traitements métier.
 
 **Point d'attention majeur : l'étape `cles` est irréversible.** Le CA4 de DSR-699 interdit de
-recalculer les clés d'une version existante ; un calcul partiel fige donc les sites restants.
+modifier une clé existante. Le calcul se fait par lots commités un par un : interrompu, il se
+**reprend** (seules les clés manquantes sont écrites) ; terminé, il ne se rejoue plus.
 Toute la conception de `init` (prérequis avant écriture, arrêt net à la première étape en
-échec, refus de rejouer `cles`) découle de cette contrainte — voir
+échec, refus de rejouer un `cles` complet) découle de cette contrainte — voir
 [`init`](#init--initialiser-les-clés-de-répartition) et [`db/README.md`](db/README.md).
 
 > **Historique.** Ce projet s'est appelé `yb06/`, puis `yb04/` (le périmètre YB06 défini par
@@ -584,14 +585,21 @@ résultats seraient jetés alors que plusieurs balaient 24 M de lignes (ré-agr�
 vérification des agrégats, anti-jointure des PDI sans clé, sommes par site…). `init` ne joue
 donc **que** les `SET` et les écritures (`skip_selects`) ; les contrôles utiles sont rejoués
 par `controles_init.py`, par des requêtes indexées. Les scripts eux-mêmes sont inchangés.
-Sur une table des clés calculées **vide** (première initialisation), `uq_crc_version_pdi` est
-retiré le temps du calcul puis reconstruit en une passe — même raison que pour le
-chargement ; sur une table déjà remplie, il n'est pas touché (il sert les lectures de l'API).
+
+**Étape `cles` par lots** — le calcul des clés est joué par tranches de
+`CHARGEMENT_TAILLE_LOT` lignes de `trppu_cles_repartition` (1 000 par défaut, la même variable
+que le chargement), sur la clé primaire `id` : chaque lot est un `INSERT … SELECT` **commité
+seul** (autocommit), `LOTS_CLES_PAR_CONNEXION` lots par connexion. Une transaction unique de
+22 M de lignes dépassait la limite de la réplication de groupe MySQL (erreur 3231,
+`group_replication_transaction_size_limit`). L'index `uq_crc_version_pdi` reste en place
+pendant tout le calcul — il sert l'anti-jointure qui rend la reprise sûre ; absent (essai
+interrompu d'une version antérieure qui le retirait), il est recréé avant le premier lot.
+Une ligne `Avancement calcul des clés` (lots, pourcentage, clés écrites, débit) est
+journalisée après chaque paquet de lots.
 
 **Ne pas lancer `init` d'un bloc au premier passage sur un référentiel réel.** Deux étapes se
-comptent en heures (`migration` construit un index sur 24 M de lignes, `cles` en écrit autant)
-et n'émettent aucun avancement : ce sont des `INSERT … SELECT` monolithiques, le socle ne rend
-la main qu'à la fin. Dérouler `--etape` par `--etape`, en relevant le `duration_ms` de chaque
+comptent en heures (`migration` construit un index sur 24 M de lignes, `cles` en écrit autant).
+`migration` n'émet aucun avancement ; `cles` en émet un par paquet de lots. Dérouler `--etape` par `--etape`, en relevant le `duration_ms` de chaque
 ligne `Fin étape`, dit si la chaîne entière tiendra dans la fenêtre d'exploitation. Pendant ce
 temps, `yb05/db/suivi.sql` joué depuis un second terminal donne la seule visibilité disponible.
 
@@ -609,9 +617,14 @@ REPRENDRE_A = versions
 ```
 
 Relancer `--depuis versions` est sans dommage : DSR-698 ne fait rien pour un site qui a déjà
-sa version active. En revanche, **une fois l'étape `cles` passée, le référentiel est figé** —
-le CA4 de DSR-699 interdit de recalculer les clés d'une version existante, et `init` refuse de
-rejouer l'étape plutôt que de rendre un `[OK]` sur un script qui n'aurait rien écrit.
+sa version active.
+
+**Étape `cles` interrompue** (lot en échec, coupure) : les lots déjà commités restent. Relancer
+`--etape cles` **reprend** le calcul — le rapport l'annonce (`Reprise du calcul : N clé(s) déjà
+présente(s)…`) et seules les clés manquantes sont écrites, aucune clé existante n'est modifiée
+(CA4). **Une fois l'étape `cles` terminée, le référentiel est figé** : `init` refuse de la
+rejouer (autant de clés que de PDI actifs) plutôt que de parcourir tous les lots pour n'écrire
+aucune ligne.
 
 ### Ajouter une commande métier
 

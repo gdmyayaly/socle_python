@@ -1,13 +1,6 @@
-"""DSR-701 — contrôle d'éligibilité d'un scénario au calcul des trafics.
+"""DSR-701 — contrôle d'éligibilité d'un scénario : douze règles, lecture seule (CA-05).
 
-Douze règles, aucune écriture : le traitement ne fait que lire et rendre un verdict (CA-05 du
-ticket). C'est la raison pour laquelle la fonction ne reçoit que `db_read` — la violation est
-impossible, pas seulement interdite.
-
-Les onze règles qui suivent la première sont **toutes** évaluées, même quand l'une échoue :
-l'intérêt d'un mode contrôle est de rendre d'un coup la liste complète des motifs bloquants,
-pas de s'arrêter au premier. Seule l'absence de scénario court-circuite le reste, puisque plus
-rien n'est alors évaluable.
+Les règles 2 à 12 sont toutes évaluées pour lister d'un coup les motifs bloquants.
 """
 
 from __future__ import annotations
@@ -54,8 +47,6 @@ async def controle_eligibilite(id_scenario: int, *, db_lecture=db_read) -> Rappo
             ctx(verdict=rapport.statut, duration_ms=duration_ms),
         )
     else:
-        # Les motifs bloquants étaient perdus : seul leur nombre était journalisé,
-        # alors que c'est la liste qui dit à l'exploitant quoi corriger.
         logger.warning(
             "Rejet contrôle éligibilité %s",
             ctx(
@@ -103,11 +94,7 @@ def _regles_sur_le_scenario(rapport: Rapport, scenario: dict) -> None:
 
 
 async def _regles_sur_les_donnees(rapport: Rapport, scenario: dict, db_lecture) -> None:
-    """Règles 8 à 12 — les données que le calcul consommera existent-elles ?
-
-    L'ordre suit l'exemple de sortie du ticket, qui affiche le référentiel avant la version de
-    clés, alors que sa numérotation fait l'inverse. C'est la sortie que l'exploitant compare.
-    """
+    """Règles 8 à 12 (données du calcul) ; référentiel affiché avant la version, cf. ticket."""
     co_regate = scenario["co_regate"]
 
     # Règle 8 — coefficients de rétention de la version PIC du scénario.
@@ -121,9 +108,7 @@ async def _regles_sur_les_donnees(rapport: Rapport, scenario: dict, db_lecture) 
     # Règle 9 — version de clés active du site (lue avant la règle 10, qui s'y compare).
     version = await scn.version_cle_active(db_lecture, co_regate)
 
-    # Règle 10 — référentiel actif du site : celui de sa version de clés active. Le ticket
-    # propose `trppu_referentiel` « ou » `trppu_version_cle` ; la seconde est retenue par le
-    # rédacteur des tickets (02/10/2026), la première n'étant alimentée par aucun ticket.
+    # Règle 10 — référentiel lu dans la version de clés active (`trppu_referentiel` non utilisée).
     referentiel = scn.referentiel_de_la_version(version)
     rapport.ajouter(
         referentiel is not None,

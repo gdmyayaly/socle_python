@@ -1,15 +1,7 @@
-"""DSR-703 — calcul des trafics Agrébal d'un scénario, par agrégation des trafics PDI.
+"""DSR-703 — trafics Agrébal : somme des trafics PDI par Agrébal × produit × jour × couleur.
 
-Aucune formule métier ici : ni coefficient de rétention, ni clé de répartition (CA-06). Le
-traitement somme les trafics PDI déjà calculés par DSR-702, par
-(scénario, Agrébal, produit, jour, couleur PIC).
-
-L'agrégation est faite **en SQL** — trois `INSERT … SELECT … GROUP BY`, un par couleur. Les
-volumes ne transitent jamais par l'application : c'est plus rapide d'un ordre de grandeur sur
-les volumes en jeu, et `volume` étant un `decimal(12,4)`, aucun arrondi n'est introduit.
-
-Le verrou n'est pas repris : ce traitement tourne sous celui posé par DSR-702, et c'est sa mise
-à jour finale qui le libère — `calcul_trafic_en_cours = 0` marque la fin du calcul complet.
+Aucune formule métier (CA-06) ; agrégation en SQL (`INSERT … SELECT … GROUP BY` par couleur).
+Tourne sous le verrou posé par DSR-702, que sa mise à jour finale libère.
 """
 
 from __future__ import annotations
@@ -29,8 +21,7 @@ TITRE = "Calcul des trafics Agrébal"
 
 COULEURS = (("DENSE", "dense"), ("FAIBLE1", "faible1"), ("FAIBLE2", "faible2"))
 
-# `trppu_trafic_agrebal.id_agrebal` est un `int` alors que `trppu_trafic_pdi.id_agrebal` est un
-# `bigint` : au-delà de cette borne, l'insertion échouerait (ou tronquerait). Contrôlé avant.
+# `id_agrebal` : `int` côté Agrébal, `bigint` côté PDI — contrôlé avant insertion.
 ID_AGREBAL_MAX = 2147483647
 
 SELECT_ETAT_PDI_SQL = """
@@ -45,8 +36,7 @@ SELECT_ETAT_PDI_SQL = """
 
 DELETE_TRAFIC_AGREBAL_SQL = "DELETE FROM trppu_trafic_agrebal WHERE id_scenario = %s"
 
-# Une insertion par couleur PIC ; `{colonne}` est l'une des trois colonnes de trafic PDI, jamais
-# une valeur venue de l'extérieur (cf. COULEURS).
+# Une insertion par couleur ; `{colonne}` vient toujours de COULEURS, jamais de l'extérieur.
 INSERT_AGREGAT_SQL = """
     INSERT INTO trppu_trafic_agrebal
         (id_scenario, co_regate, id_agrebal, agrebal_uuid, co_produit, jour_semaine,
@@ -145,8 +135,7 @@ async def calcul_trafic_agrebal(
     rapport.ok(f"{nb_lignes} lignes Agrébal créées")
     rapport.etats["TRAFIC_AGREBAL_CALCULE"] = 1
     rapport.etats["CALCUL_TRAFIC_EN_COURS"] = 0
-    # Les données sont écrites et le scénario déverrouillé, mais un écart de totaux reste une
-    # anomalie : le verdict la reflète, sinon l'exploitant lirait SUCCES sur un calcul douteux.
+    # Un écart de totaux rend le verdict ECHEC, même données écrites.
     rapport.statut = SUCCES if rapport.reussi else ECHEC
     logger.info(
         "Fin calcul trafics Agrébal %s",
@@ -204,11 +193,7 @@ async def _agreger(
 
 
 async def _controler_totaux(rapport: Rapport, id_scenario: int, etat: dict, db_lecture) -> None:
-    """La somme des volumes Agrébal doit égaler la somme des trafics PDI.
-
-    C'est le seul contrôle qui vérifie réellement l'agrégation : un écart signale un PDI compté
-    deux fois ou un `GROUP BY` incomplet, ce qu'aucun décompte de lignes ne montrerait.
-    """
+    """Vérifie que la somme des volumes Agrébal égale celle des trafics PDI."""
     total_pdi = sum(
         int(etat.get(cle) or 0)
         for cle in ("total_dense", "total_faible1", "total_faible2")

@@ -1,20 +1,7 @@
-"""DSR-704 — mode `ALL` : orchestration de la chaîne de calcul des trafics.
+"""DSR-704 — mode `ALL` : traite les scénarios éligibles sur `NB_WORKER` workers.
 
-Le mode nominal d'exploitation : trouver les scénarios à calculer, les traiter sur `NB_WORKER`
-workers, rendre un bilan.
-
-Son CA-09 est la contrainte structurante — « le mode ALL ne doit contenir aucune règle métier
-propre au calcul ». Ce module ne décide donc rien : ni de l'éligibilité, ni du verrou, ni de la
-formule, ni de la journalisation. Il choisit quoi lancer, quand, et combien de fois en même
-temps. Tout le reste appartient à DSR-701, DSR-702 et DSR-703.
-
-Deux conséquences directes :
-
-* **la réservation du ticket n'est pas réimplémentée**. Elle existe déjà : `calcul_trafic_pdi`
-  pose le verrou par un `UPDATE … WHERE calcul_trafic_en_cours = 0`, atomique, dont zéro ligne
-  affectée signifie qu'un autre worker a été plus rapide. C'est exactement le mécanisme décrit
-  par le ticket, et il est déjà couvert par des tests ;
-* **rien n'est écrit ici**, sauf le filet de sécurité ci-dessous, qui répare au lieu de décider.
+CA-09 : aucune règle métier ici. La réservation est le verrou posé par `calcul_trafic_pdi` ;
+seul le filet de sécurité (libération du verrou) écrit.
 """
 
 from __future__ import annotations
@@ -36,8 +23,7 @@ logger = logging.getLogger(__name__)
 
 TITRE = "YB05 - Mode ALL"
 
-# Critères du ticket, mot pour mot. Un scénario déjà calculé n'y répond plus : c'est ce qui rend
-# le mode ALL rejouable sans précaution particulière.
+# Critères du ticket ; un scénario déjà calculé n'y répond plus, d'où la rejouabilité.
 SELECT_SCENARIOS_ELIGIBLES_SQL = """
     SELECT id_scenario, co_regate, co_roc
       FROM trppu_scenario
@@ -49,8 +35,7 @@ SELECT_SCENARIOS_ELIGIBLES_SQL = """
      ORDER BY id_scenario
 """
 
-# Hors critères ci-dessus, donc jamais repris automatiquement : un scénario dont le calcul PDI a
-# abouti mais pas l'Agrébal. Lu uniquement pour le signaler dans le bilan.
+# PDI calculé sans Agrébal : jamais repris automatiquement, seulement signalé au bilan.
 SELECT_SCENARIOS_A_MOITIE_CALCULES_SQL = """
     SELECT id_scenario
       FROM trppu_scenario
@@ -171,12 +156,9 @@ async def _worker(
         except asyncio.QueueEmpty:
             return
 
-        # Pose du scénario dans le contexte de log : en mode ALL les workers
-        # s'entrelacent, et c'est ce qui permet de reconstituer la trace d'un
-        # scénario donné — y compris les lignes émises par `app.db.mysql`.
+        # Contexte de log par scénario : les workers s'entrelacent.
         jeton = set_id_scenario(id_scenario)
-        # Site et ROC connus dès la liste : même la ligne « Début » les porte. Inconnus (un
-        # seul scénario demandé), `charger_scenario` les posera à la première lecture.
+        # Site inconnu (scénario unique) : posé plus tard par `charger_scenario`.
         jeton_site = set_site(*(sites or {}).get(id_scenario, (None, None)))
         logger.info("Début traitement scénario %s", ctx(worker=numero))
         try:
@@ -192,13 +174,10 @@ async def _worker(
 
 
 async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> None:
-    """Les trois étapes du ticket, pour un scénario."""
-    # Étape 1 — éligibilité. Non éligible : abandon, pas échec. Le ticket distingue les deux dans
-    # son bilan, et aucun verrou n'a été posé à ce stade.
+    """Éligibilité, trafics PDI puis trafics Agrébal pour un scénario."""
+    # Étape 1 — éligibilité. Non éligible ≠ échec dans le bilan ; aucun verrou posé.
     eligibilite = await controle_eligibilite(id_scenario, db_lecture=db_lecture)
     if not eligibilite.reussi:
-        # Un traitement ne lève pas, il rend un rapport : sans cette ligne le
-        # verdict ne vivrait que dans le `Bilan` en mémoire.
         logger.warning(
             "Rejet traitement scénario %s",
             ctx(
@@ -210,12 +189,8 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
         bilan.ajouter(id_scenario, NON_ELIGIBLE, " ; ".join(eligibilite.motifs))
         return
 
-    # Étape 2 — calcul des trafics PDI. C'est lui qui pose le verrou, donc qui réserve.
-    #
-    # L'éligibilité est ainsi contrôlée deux fois : ici, et à l'entrée de calcul_trafic_pdi.
-    # C'est VOULU — le second contrôle est ce qui rend la commande calcul-trafic-pdi sûre
-    # lancée seule, et le premier ne coûte que quelques SELECT. Ne pas « optimiser » l'un des
-    # deux sans mesurer ce qu'on y perd.
+    # Étape 2 — trafics PDI, qui pose le verrou. Double contrôle d'éligibilité voulu : le
+    # second rend `calcul-trafic-pdi` sûr lancé seul.
     rapport_pdi = await calcul_trafic_pdi(
         id_scenario, db_lecture=db_lecture, db_ecriture=db_ecriture
     )
@@ -236,10 +211,8 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
         bilan.ajouter(id_scenario, SUCCES)
         return
 
-    # Filet de sécurité — le ticket exige qu'un scénario ne reste JAMAIS verrouillé. Or DSR-703
-    # s'arrête sur ses contrôles préalables sans libérer le verrou, et il a raison : lancé seul,
-    # il ne le détient pas et le relâcher couperait le calcul d'un autre processus. Ici, nous
-    # savons qu'il est à nous, puisque l'étape 2 vient de le poser.
+    # Filet de sécurité : DSR-703 ne libère pas un verrou qu'il ne détient pas ; ici l'étape 2
+    # vient de le poser, on le libère pour qu'aucun scénario ne reste verrouillé.
     logger.warning(
         "Rejet traitement scénario %s",
         ctx(
@@ -254,8 +227,7 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
 
 
 def _journaliser_avancement(bilan: Bilan, debut: float) -> None:
-    """Une ligne après chaque scénario : en mode ALL sur des centaines de scénarios, c'est ce
-    qui distingue une file qui avance d'une file bloquée, et donne une idée du temps restant."""
+    """Log d'avancement (progression, débit) après chaque scénario."""
     traites = len(bilan.resultats)
     total = len(bilan.scenarios_trouves)
     ecoule = max(time.monotonic() - debut, 1e-9)

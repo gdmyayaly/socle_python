@@ -86,7 +86,7 @@ et sans trace. Le référentiel est alors incomplet — et, par le CA4 du même 
 | 3 | `correctif` | `fix_error.sql` | `@id_referentiel` | **`False`** |
 | 4 | `agregats` | `DSR-696_site_trafic.sql` | `@id_referentiel`, `@co_regate` | `True` |
 | 5 | `versions` | `DSR-698_version_cle.sql` | `@id_referentiel`, `@co_regate`, `@commentaire`, `@libelle` | `True` |
-| 6 | `cles` | `DSR-699_cles_calculees.sql` | `@id_referentiel`, `@co_regate` | `True` |
+| 6 | `cles` | `DSR-699_cles_calculees.sql` | `@id_referentiel`, `@co_regate`, `@id_debut`, `@id_fin` | **lots commités** (autocommit, `CHARGEMENT_TAILLE_LOT` lignes) |
 
 Les paramètres ne se modifient **pas** dans les fichiers : `app/db/sql_parametres.py` remplace
 le bloc `SET @…` de tête au vol, à partir des arguments de la commande. Les `SET SESSION
@@ -124,14 +124,15 @@ pendant qu'une étape travaille. Il reste disponible dans `yb05/db/`.
 | `fix_error.sql` | ne reconstruit rien — le garde-fou teste la largeur courante des colonnes |
 | `DSR-696_site_trafic.sql` | **recalcule** — `DELETE` ciblé puis `INSERT` |
 | `DSR-698_version_cle.sql` | **ne fait rien** si le site a déjà une version active sur ce référentiel |
-| `DSR-699_cles_calculees.sql` | **ne fait rien** si une version du périmètre porte déjà des clés (CA4) |
+| `DSR-699_cles_calculees.sql` | **n'écrit que les clés absentes** — couple (version, PDI) — et ne modifie jamais une clé existante (CA4) |
 
-**Le CA4 de DSR-699 est un cliquet.** Une seule version calculée fige le référentiel : les
-clés d'une version existante ne sont jamais recalculées. C'est pourquoi `init` refuse de jouer
-l'étape `cles` si une version du périmètre porte déjà des clés, et pourquoi il ne propose
-**aucune option pour ne traiter qu'un site** — elle calculerait un site et rendrait tous les
-autres définitivement incalculables sur ces versions. La seule sortie après un calcul partiel
-est de créer une nouvelle série de versions, qui désactive les précédentes.
+**Le CA4 de DSR-699 est un cliquet.** Une clé calculée n'est jamais recalculée ni réécrite :
+l'`INSERT` saute tout couple (version, PDI) déjà présent (`NOT EXISTS`, servi par
+`uq_crc_version_pdi`). C'est ce qui permet à `init` de jouer l'étape `cles` **par lots
+commités** (`@id_debut` / `@id_fin` bornent la tranche d'`id` de `trppu_cles_repartition`) et de
+la **reprendre** après une interruption : seuls les lots manquants écrivent. Une fois le
+référentiel entièrement calculé, `init` refuse de rejouer l'étape. Pour recalculer, il faut
+une nouvelle série de versions, qui désactive les précédentes.
 
 ## Duplication avec `yb05/db/`
 

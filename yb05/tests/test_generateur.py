@@ -1,9 +1,7 @@
 """Générateur de scénarios de test (`app/traitements/generateur.py`).
 
-Le test central ne se contente pas de compter des INSERT : il reconstruit, à partir de ce que
-le générateur a réellement écrit, les réponses que liraient DSR-701 et DSR-702, puis joue le
-vrai contrôle d'éligibilité et le vrai calcul. Un scénario généré qui ne passerait pas les
-douze règles, ou que le calcul refuserait, ferait échouer ce test.
+Le test central rejoue la vraie éligibilité (DSR-701) et le vrai calcul (DSR-702) sur les
+données réellement écrites par le générateur.
 """
 
 from __future__ import annotations

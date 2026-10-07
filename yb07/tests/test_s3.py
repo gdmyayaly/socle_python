@@ -1,10 +1,5 @@
-"""Tests de l'accès S3 (`app/services/s3.py`).
-
-Aucun appel réseau : `boto3.client` est remplacé par une doublure qui enregistre les
-options reçues et rend des corps de réponse en mémoire. Ce qui est vérifié, c'est la
-**résolution de la configuration** — quels identifiants sont utilisés, quel adressage —
-et la traduction des erreurs boto3 en messages actionnables.
-"""
+"""Tests de `app/services/s3.py` : configuration du client, lecture, traduction des erreurs,
+diagnostic, TLS. `boto3.client` est remplacé par une doublure, sans réseau."""
 
 from __future__ import annotations
 
@@ -395,8 +390,7 @@ def test_taille_lisible(octets, attendu):
 
 @pytest.fixture(autouse=True)
 def tls_par_defaut(monkeypatch):
-    """Isole tous les tests du `.env` local : un S3_CA_BUNDLE pointant vers un fichier pas
-    encore déposé ferait échouer des tests qui n'ont rien à voir avec TLS."""
+    """Isole du `.env` local : un S3_CA_BUNDLE absent du disque ferait échouer tous les tests."""
     monkeypatch.setattr(s3, "S3_VERIFY_SSL", True)
     monkeypatch.setattr(s3, "S3_CA_BUNDLE", "")
 
@@ -410,7 +404,7 @@ def test_tls_standard_laisse_boto3_decider(tls_par_defaut, bouchonner_boto3):
 
 
 def test_bundle_ca_transmis_a_boto3(monkeypatch, tmp_path, tls_par_defaut, bouchonner_boto3):
-    """Même mécanisme que l'API jours fermés de python/ : le proxy TLS de l'entreprise."""
+    """Le bundle du proxy TLS de l'entreprise est passé tel quel à boto3."""
     bundle = tmp_path / "cacert.pem"
     bundle.write_text("-----BEGIN CERTIFICATE-----\n", encoding="ascii")
     monkeypatch.setattr(s3, "S3_CA_BUNDLE", str(bundle))

@@ -1,14 +1,5 @@
-"""Traitements métier du batch YB05 — chaîne de calcul des trafics d'un scénario.
-
-    ELIGIBILITE            DSR-701   contrôle, sans aucune écriture
-    CALCUL_TRAFIC_PDI      DSR-702   TMH × coefficient × clé, par PDI (et DSR-700)
-    CALCUL_TRAFIC_AGREBAL  DSR-703   agrégation des trafics PDI par Agrébal
-    ALL                    DSR-704   orchestration des trois, sur NB_WORKER workers
-
-Chaque fonction retourne un `Rapport` — un `Bilan` pour le mode ALL, qui traite plusieurs
-scénarios. Aucune ne lève ni n'écrit sur la sortie standard : c'est la CLI (`app/main.py`) qui
-choisit de l'afficher en texte ou en JSON, et qui en déduit le code de retour du processus.
-"""
+"""Chaîne de calcul des trafics : éligibilité (DSR-701), PDI (DSR-702), Agrébal (DSR-703),
+ALL (DSR-704). Chaque traitement retourne un `Rapport` (`Bilan` pour ALL) ; la CLI l'affiche."""
 
 from app.traitements.eligibilite import controle_eligibilite
 from app.traitements.erreurs import TraitementImpossible

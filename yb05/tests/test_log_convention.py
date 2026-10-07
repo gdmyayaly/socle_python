@@ -1,11 +1,4 @@
-"""Tests de la convention de log (`app/log_utils.py` + `app/json_formatter.py`).
-
-Deux briques : le rendu du bloc de contexte, et l'identifiant de corrélation
-`id_scenario` que `JsonFormatter` pose sur chaque ligne. En mode ALL les workers
-s'entrelacent — c'est ce champ qui permet de reconstituer la trace d'un scénario.
-
-Cf. `yb05/docs/CONVENTION-LOGS.md`.
-"""
+"""Convention de log : rendu de `ctx` et corrélation `id_scenario` (cf. docs/CONVENTION-LOGS.md)."""
 
 import asyncio
 import json
@@ -25,7 +18,6 @@ from app.log_utils import (
 
 
 def _format(message: str = "message de test") -> dict:
-    """Formate un enregistrement de log et retourne le JSON décodé."""
     record = logging.LogRecord(
         name="yb05",
         level=logging.INFO,
@@ -75,11 +67,7 @@ def test_valeur_longue_tronquee():
 
 
 def test_rendu_paresseux(caplog):
-    """Le contexte ne doit pas être rendu quand le niveau est désactivé.
-
-    C'est la raison d'être de l'objet retourné par `ctx` : les `logger.debug` des
-    étapes de calcul ne sont visibles qu'avec `-v` et ne doivent rien coûter sinon.
-    """
+    """Le contexte n'est pas rendu quand le niveau est désactivé (debug gratuit)."""
     rendus: list[int] = []
 
     class Espion:
@@ -92,8 +80,7 @@ def test_rendu_paresseux(caplog):
     logger.debug("message %s", ctx(champ=Espion()))
     assert rendus == [], "le contexte a été rendu alors que DEBUG est désactivé"
 
-    # « au moins un » et non « exactement un » : un handler peut formater le même
-    # enregistrement plusieurs fois.
+    # « au moins un » : un handler peut formater le même enregistrement plusieurs fois.
     with caplog.at_level(logging.INFO, logger="test.paresse"):
         logger.info("message %s", ctx(champ=Espion()))
     assert rendus, "le contexte n'a pas été rendu alors que INFO est actif"
@@ -176,11 +163,7 @@ def test_champ_present_sur_un_log_d_exception():
 
 
 def test_isolation_entre_taches_asyncio():
-    """Le mode ALL fait tourner NB_WORKER scénarios en parallèle.
-
-    Chaque tâche doit voir son propre scénario : sans cette isolation, les lignes
-    de log seraient attribuées au mauvais scénario.
-    """
+    """ContextVar isolé par tâche asyncio : chaque worker du mode ALL voit son scénario."""
     vus: dict[int, int | None] = {}
 
     async def worker(numero: int, id_scenario: int) -> None:

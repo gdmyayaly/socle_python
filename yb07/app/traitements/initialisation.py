@@ -1,31 +1,9 @@
-"""Chaîne d'initialisation des clés de répartition des PDI — tickets DSR-696 à DSR-699.
+"""Chaîne d'initialisation des clés de répartition des PDI (DSR-696 à DSR-699), en six étapes.
 
-    CSV (S3) ─chargement─→ trppu_cles_repartition
-                                  │
-                      migration + correctif : le schéma que la suite exige
-                                  │
-                           agregats ─→ trppu_trafic_site      (les DÉNOMINATEURS)
-                                  │
-                           versions ─→ trppu_version_cle      (les CONTENEURS)
-                                  │
-                              cles ─→ trppu_cles_repartition_calcule
-
-Six étapes, un ordre non négociable. L'enjeu n'est pas la difficulté de chacune — elles sont
-toutes écrites — mais le fait qu'une erreur d'enchaînement **ne se voit pas** : DSR-699 joint
-les trois tables et écarte sans un mot les sites auxquels il manque un agrégat ou une version.
-Le référentiel est alors incomplet, et le CA4 du même ticket interdit de le recalculer.
-
-D'où la forme de ce traitement : des prérequis joués avant toute écriture, une étape qui s'arrête
-net dès qu'un contrôle échoue, et un rapport qui nomme l'étape à laquelle reprendre. Sur une
-chaîne dont deux étapes se comptent en heures, c'est la sortie la plus utile.
-
-Les scripts vivent dans `db/` et gardent leur forme SQL — ils sont relus en recette, et leurs
-contrôles d'acceptation font foi. Ce module ne les réécrit pas : il substitue leurs paramètres
-de session au vol (`app/db/sql_parametres.py`) et rejoue en Python les contrôles dont le socle
-perd le résultat (`controles_init.py`).
-
-Le traitement **ne lève pas** : il rend un `Rapport` dont `reussi` vaut `False`. C'est la CLI qui
-en déduit le code de retour du processus.
+L'ordre est impératif : DSR-699 écarte sans erreur les sites sans agrégat ou sans version, et
+le CA4 interdit ensuite de recalculer. D'où des prérequis vérifiés avant toute écriture, un
+arrêt au premier contrôle en échec et un rapport qui nomme l'étape de reprise. Ne lève pas :
+rend un `Rapport` dont la CLI déduit le code de retour.
 """
 
 from __future__ import annotations
@@ -40,11 +18,12 @@ from typing import Any
 
 from app.config import (
     CHARGEMENT_LOCK_WAIT_TIMEOUT,
+    CHARGEMENT_TAILLE_LOT,
     INIT_LOG_TOUS_LES_SITES,
     INIT_MAX_ANOMALIES_LOGUEES,
     INIT_VERSIONS_TAILLE_LOT,
 )
-from app.db.mysql import db_read, db_write
+from app.db.mysql import db_write
 from app.db.sql_parametres import injecter_parametres, instructions_parametrees
 from app.db.sql_script import SqlScriptError, statement_preview
 from app.erreurs import TraitementImpossible
@@ -64,35 +43,27 @@ AGREGATS = "agregats"
 VERSIONS = "versions"
 CLES = "cles"
 
-#: Ordre d'exécution. Sert aussi de `choices=` à argparse et d'index à `--depuis` — une seule
-#: source de vérité, pour que la CLI ne puisse pas diverger de la chaîne.
+#: Ordre d'exécution ; sert aussi de `choices=` à argparse et d'index à `--depuis`.
 ETAPES = (CHARGEMENT, MIGRATION, CORRECTIF, AGREGATS, VERSIONS, CLES)
 
-#: Fichier et mode d'exécution de chaque étape scriptée.
-#:
-#: `transactional=False` sur la migration et le correctif n'est pas un réglage de confort :
-#: leurs `ALTER` voyagent dans une chaîne exécutée par `PREPARE`/`EXECUTE`, ce qui les rend
-#: rejouables mais **invisibles** à la détection de DDL du socle (`is_ddl`). L'avertissement
-#: « DDL en mode transactionnel » ne se déclencherait donc pas, alors que le COMMIT implicite,
-#: lui, a bien lieu — on ouvrirait une transaction qui ne protège rien.
+#: Fichier et mode transactionnel de chaque étape scriptée. Migration et correctif hors
+#: transaction : leurs `ALTER` passent par `PREPARE`/`EXECUTE`, invisibles à `is_ddl`, mais
+#: le COMMIT implicite a bien lieu.
 SCRIPTS: dict[str, tuple[str, bool]] = {
     MIGRATION: ("DSR-696-699_migration.sql", False),
     CORRECTIF: ("fix_error.sql", False),
     AGREGATS: ("DSR-696_site_trafic.sql", True),
     VERSIONS: ("DSR-698_version_cle.sql", True),
-    CLES: ("DSR-699_cles_calculees.sql", True),
+    # Par lots en autocommit (cf. `_etape_cles`) : limite de la réplication de groupe.
+    CLES: ("DSR-699_cles_calculees.sql", False),
 }
 
 #: Étapes dont le script modifie le schéma (ALTER) : leur attente de verrou est bornée.
 SCRIPTS_DDL = frozenset({MIGRATION, CORRECTIF})
 
-#: Prérequis à vérifier selon l'étape de **départ**. Ils ne portent que sur le point d'entrée :
-#: les prérequis des étapes suivantes sont produits par les précédentes au cours du même passage.
-#:
-#: Les deux garde-fous propres au calcul des clés — dénominateurs nuls et périmètre déjà calculé —
-#: n'apparaissent pas ici : ils sont joués par l'étape elle-même, à chaque fois. Ils dépendent en
-#: effet d'une table que le chargement ne purge pas (`trppu_cles_repartition_calcule`), donc une
-#: chaîne complète relancée sur un référentiel déjà calculé doit s'y heurter, elle aussi.
+#: Prérequis selon l'étape de départ. Les garde-fous du calcul des clés (dénominateurs nuls,
+#: périmètre déjà calculé) sont joués par l'étape elle-même : le chargement ne purge pas
+#: `trppu_cles_repartition_calcule`.
 PREREQUIS: dict[str, tuple[str, ...]] = {
     CHARGEMENT: (),
     MIGRATION: ("lignes",),
@@ -102,8 +73,7 @@ PREREQUIS: dict[str, tuple[str, ...]] = {
     CLES: ("lignes", "schema", "agregats", "versions"),
 }
 
-#: Répertoire des scripts, résolu depuis le module et non depuis le répertoire courant : un
-#: batch lancé par un ordonnanceur ne choisit pas son `cwd`.
+#: Résolu depuis le module : un batch lancé par un ordonnanceur ne choisit pas son `cwd`.
 REPERTOIRE_SQL = Path(__file__).resolve().parents[2] / "db"
 
 ENCODAGE_SQL = "utf-8-sig"
@@ -119,14 +89,11 @@ APERCU_INSERT_AGREGATS = "INSERT INTO trppu_trafic_site"
 APERCU_INSERT_VERSION = "INSERT INTO trppu_version_cle"
 APERCU_INSERT_CLES = "INSERT INTO trppu_cles_repartition_calcule"
 
-#: Index unique de `trppu_cles_repartition_calcule`, retiré le temps du calcul quand la table
-#: est vide (première initialisation). Même raison que pour le chargement : maintenu ligne à
-#: ligne sur 22 M d'insertions dans le désordre, il fait de l'étape une affaire d'heures.
+#: Index unique de `trppu_cles_repartition_calcule`, recréé avant le calcul s'il manque.
 TABLE_CLES = "trppu_cles_repartition_calcule"
 INDEX_UNIQUE_CLES = "uq_crc_version_pdi"
 DEFINITION_INDEX_UNIQUE_CLES = "UNIQUE KEY `uq_crc_version_pdi` (`id_version_cle`, `id_pdi`)"
-# Sur l'instance d'écriture : ils décident d'un DDL.
-CLES_CALCULEES_PRESENTES_SQL = "SELECT 1 AS ok FROM trppu_cles_repartition_calcule LIMIT 1"
+# Sur l'instance d'écriture : il décide d'un DDL.
 INDEX_UNIQUE_CLES_PRESENT_SQL = """
 SELECT COUNT(*) AS nb
   FROM information_schema.STATISTICS
@@ -134,6 +101,15 @@ SELECT COUNT(*) AS nb
    AND TABLE_NAME = 'trppu_cles_repartition_calcule'
    AND INDEX_NAME = 'uq_crc_version_pdi'
 """
+
+
+# Étendue des `id` découpée en lots par l'étape « cles » (lecture instantanée par la PK).
+BORNES_CLES_REPARTITION_SQL = (
+    "SELECT MIN(id) AS id_min, MAX(id) AS id_max FROM trppu_cles_repartition"
+)
+
+#: Lots de l'étape « cles » par connexion ; chaque lot reste commité seul (autocommit).
+LOTS_CLES_PAR_CONNEXION = 100
 
 
 @dataclass
@@ -152,10 +128,9 @@ class _Etat:
     controles_longs: bool = True
     ignorer_erreurs: bool = False
 
-    #: Nombre de PDI actifs, rendu par l'étape « chargement ». Rend le CA1 de DSR-699 gratuit
-    #: quand la chaîne tourne de bout en bout ; vaut `None` en reprise.
+    #: PDI actifs rendus par le « chargement » (CA1 de DSR-699) ; `None` en reprise.
     lignes_actives: int | None = None
-    #: Nombre d'agrégats par référentiel avant l'étape « agregats » — sert à prouver le CA5.
+    #: Agrégats par référentiel avant l'étape « agregats » (preuve du CA5).
     photo_referentiels: dict[Any, int] = field(default_factory=dict)
     #: Sites du référentiel, lus une fois par l'étape « versions ».
     nb_sites: int = 0
@@ -177,16 +152,14 @@ async def initialiser_cles_repartition(
     dry_run: bool = False,
     controles_longs: bool = True,
     ignorer_erreurs: bool = False,
-    db_lecture=db_read,
+    db_lecture=db_write,
     db_ecriture=db_write,
 ) -> Rapport:
-    """Joue la chaîne d'initialisation, en totalité ou à partir d'une étape.
+    """Joue la chaîne entière, à partir de `depuis`, ou la seule `etape` (exclusifs).
 
-    `depuis` reprend à cette étape et enchaîne les suivantes ; `etape` n'en joue qu'une. Les deux
-    s'excluent. `dry_run` lit et découpe les scripts sans rien écrire — l'étape « chargement »
-    est alors sautée, elle n'a pas de mode à blanc. `ignorer_erreurs` est transmis à
-    l'étape « chargement » : les lignes non conformes du CSV y sont écartées et listées
-    dans les avertissements du rapport, au lieu d'arrêter la chaîne.
+    `dry_run` découpe les scripts sans écrire (chargement sauté). Lectures par défaut sur
+    l'instance d'écriture : le réplica peut être en retard (le CA3 de DSR-698 y avait compté
+    2000 versions sur 2022).
     """
     debut = time.perf_counter()
     rapport = Rapport(
@@ -210,8 +183,7 @@ async def initialiser_cles_repartition(
     try:
         a_jouer = _resoudre_etapes(depuis, etape)
 
-        # Lecture et découpage AVANT toute écriture : un fichier absent ou mal encodé doit
-        # échouer sans que la base ait été touchée.
+        # Scripts lus avant toute écriture : un fichier illisible échoue base intacte.
         etat = _Etat(
             id_referentiel=id_referentiel,
             rapport=rapport,
@@ -305,12 +277,7 @@ async def initialiser_cles_repartition(
 
 
 def _resoudre_etapes(depuis: str | None, etape: str | None) -> tuple[str, ...]:
-    """Étapes à jouer, dans l'ordre.
-
-    La validation des noms revient à argparse (`choices=ETAPES`), qui refuse avant toute
-    connexion. Les contrôles ci-dessous sont la bretelle : ce traitement est aussi appelable
-    comme bibliothèque.
-    """
+    """Étapes à jouer, dans l'ordre (revalidées : appelable hors CLI)."""
     if depuis and etape:
         raise TraitementImpossible("« depuis » et « etape » s'excluent : n'en passer qu'un.")
     for valeur in (depuis, etape):
@@ -342,11 +309,7 @@ def _lire_scripts(a_jouer: tuple[str, ...]) -> dict[str, str]:
 
 
 def _message_script(erreur: SqlScriptError) -> str:
-    """Message d'échec d'un script, sans jamais le SQL complet.
-
-    `erreur.statement` porte l'instruction entière ; le rapport part en JSON vers une supervision
-    et les logs vers Kibana. On s'en tient à l'aperçu tronqué, comme le socle le fait lui-même.
-    """
+    """Message d'échec d'un script, avec un aperçu tronqué et jamais le SQL complet."""
     apercu = statement_preview(erreur.statement) if erreur.statement else ""
     args = getattr(erreur.original, "args", ())
     conseil = (
@@ -373,26 +336,20 @@ async def _executer_script(
 ):
     """Injecte les paramètres du script de l'étape et le joue sur la base d'écriture.
 
-    `suffixe_label` distingue les exécutions répétées d'un même script : sans lui, les lignes
-    `Début`/`Fin script SQL` du socle seraient identiques pour les milliers de sites de
-    l'étape « versions », et `id_traitement` vaut le référentiel, pas le site.
+    `suffixe_label` distingue dans les logs les exécutions répétées (un site, par exemple).
     """
     fichier, transactional = SCRIPTS[nom]
     texte = injecter_parametres(etat.scripts[nom], parametres)
     if nom in SCRIPTS_DDL:
-        # Un ALTER qui attend un verrou (client SQL resté en transaction sur la table, API)
-        # attendrait jusqu'à un an, et toutes les requêtes des autres sessions sur la table
-        # s'empileraient derrière lui. Borné, il échoue en clair et se rejoue.
+        # Attente de verrou bornée : sinon l'ALTER attend jusqu'à un an et bloque la table.
         texte = f"SET SESSION lock_wait_timeout = {CHARGEMENT_LOCK_WAIT_TIMEOUT};\n{texte}"
     return await etat.db_ecriture.execute_sql_script(
         texte,
         label=f"db/{fichier}{suffixe_label}",
         transactional=transactional,
         dry_run=etat.dry_run,
-        # Les SELECT des scripts sont des constats pour une exécution manuelle : leurs
-        # résultats seraient jetés, et plusieurs balaient 24 M de lignes (ré-agrégation de
-        # vérification, anti-jointure des PDI sans clé, sommes par site…). Les contrôles
-        # utiles sont rejoués par `controles_init`, par des requêtes indexées.
+        # SELECT de constat pour l'exécution manuelle, coûteux (24 M de lignes) : les
+        # contrôles utiles sont rejoués par `controles_init`.
         skip_selects=True,
     )
 
@@ -467,8 +424,7 @@ async def _etape_correctif(etat: _Etat, rang: int, total: int) -> bool:
 
 
 async def _etape_agregats(etat: _Etat, rang: int, total: int) -> bool:
-    # Photo prise avant l'écriture : comparée à celle d'après, elle prouve le CA5, ce que la
-    # simple lecture de la table après coup ne saurait pas faire.
+    # Photo avant écriture, comparée à celle d'après pour prouver le CA5.
     if not etat.dry_run:
         etat.photo_referentiels = await controles_init.photo_referentiels(etat.db_lecture)
 
@@ -495,15 +451,9 @@ async def _etape_agregats(etat: _Etat, rang: int, total: int) -> bool:
 
 
 async def _etape_versions(etat: _Etat, rang: int, total: int) -> bool:
-    """DSR-698, un site à la fois — la règle de gestion du ticket raisonne par site.
-
-    La liste vient de `trppu_trafic_site`, et non de `trppu_cles_repartition` : quelques milliers
-    de lignes servies par `uq_site_trafic` au lieu d'un balayage de 24 M entrées, et ce sont
-    exactement les sites qui ont un dénominateur, donc ceux que le calcul des clés saura traiter.
-    """
+    """DSR-698 site par site, pour les sites de `trppu_trafic_site` (ayant un dénominateur)."""
     if etat.dry_run:
-        # La liste des sites n'est pas lue : la marche à blanc doit pouvoir valider le
-        # découpage et la substitution des paramètres sans dépendre de l'état de la base.
+        # Marche à blanc sans lire la base : un site fictif suffit à valider le découpage.
         resultat = await _executer_script(
             etat, VERSIONS, _parametres_version(etat, CO_REGATE_A_BLANC)
         )
@@ -535,8 +485,7 @@ async def _etape_versions(etat: _Etat, rang: int, total: int) -> bool:
     debut = time.perf_counter()
     bilan = _BilanVersions()
     traites = 0
-    # Par lots : une connexion et une transaction pour INIT_VERSIONS_TAILLE_LOT sites, au lieu
-    # d'une par site — l'ouverture de connexion et le commit coûtaient l'essentiel du temps.
+    # Une connexion et une transaction par lot de sites : la connexion et le commit coûtent.
     for debut_lot in range(0, len(sites), INIT_VERSIONS_TAILLE_LOT):
         lot = [str(site) for site in sites[debut_lot : debut_lot + INIT_VERSIONS_TAILLE_LOT]]
         await _versionner_lot(etat, lot, bilan)
@@ -579,19 +528,16 @@ class _BilanVersions:
     creees: int = 0
     deja_a_jour: int = 0
     echecs: list[str] = field(default_factory=list)
-    # Pour le rapport d'échec : le motif de chaque site, et les causes regroupées — une cause
-    # unique (colonne trop courte, droit manquant…) touche souvent tous les sites à la fois.
+    # Motif par site et causes regroupées (une cause touche souvent tous les sites).
     motifs: dict[str, str] = field(default_factory=dict)
     causes: Counter = field(default_factory=Counter)
 
 
 async def _versionner_lot(etat: _Etat, lot: list[str], bilan: _BilanVersions) -> None:
-    """Crée les versions d'un lot de sites, sur une connexion et dans une transaction.
+    """Crée les versions d'un lot de sites dans une transaction.
 
-    Un site en échec annule tout le lot (c'est une transaction) : le lot est alors rejoué site
-    par site, chacun dans sa propre transaction, pour n'écarter que les sites fautifs et
-    rendre au rapport leur motif exact. Rejouer est sans risque : l'annulation n'a rien
-    laissé, et le script saute un site déjà versionné.
+    En cas d'échec le lot est annulé puis rejoué site par site, pour n'écarter que les sites
+    fautifs ; sans risque, le script saute un site déjà versionné.
     """
     fichier, transactional = SCRIPTS[VERSIONS]
     unites = [
@@ -644,8 +590,7 @@ async def _versionner_site(etat: _Etat, site: str, bilan: _BilanVersions) -> Non
             etat, VERSIONS, _parametres_version(etat, site), suffixe_label=f"@{site}"
         )
     except SqlScriptError as erreur:
-        # Un site n'explique pas le suivant : on poursuit, quitte à échouer l'étape. Ce qui
-        # est interdit, c'est de passer au calcul des clés — voir `_etape_versions`.
+        # On poursuit les autres sites ; l'étape échouera et bloquera le calcul des clés.
         bilan.echecs.append(site)
         bilan.motifs[site] = _message_script(erreur)
         bilan.causes[_cause(erreur)] += 1
@@ -676,8 +621,7 @@ def _insertions(resultat, label: str, debut_apercu: str) -> int:
 
 
 def _cause(erreur: SqlScriptError) -> str:
-    """Cause d'un échec, sans ce qui varie d'un site à l'autre (valeurs citées, nombres) :
-    c'est la clé de regroupement du rapport."""
+    """Cause d'un échec sans les valeurs propres au site : clé de regroupement du rapport."""
     origine = erreur.original
     args = getattr(origine, "args", ())
     code = f"({args[0]}) " if args and isinstance(args[0], int) else ""
@@ -744,102 +688,153 @@ def _journaliser_avancement(
 
 
 async def _etape_cles(etat: _Etat, rang: int, total: int) -> bool:
-    """DSR-699. Deux garde-fous avant d'écrire, parce que l'écriture est un cliquet.
+    """DSR-699 par lots d'`id`, chacun commité seul (autocommit).
 
-    Ils sont joués à chaque passage, et pas seulement en reprise : le chargement purge
-    `trppu_cles_repartition`, jamais `trppu_cles_repartition_calcule`. Une chaîne complète
-    relancée sur un référentiel déjà calculé se heurterait donc au CA4 sans que rien ne le dise,
-    le script se terminant en succès après avoir écrit zéro ligne.
+    Une transaction unique dépasse `group_replication_transaction_size_limit` (erreur 3231).
+    Reprenable : relancer `--etape cles` n'insère que les clés absentes (`NOT EXISTS`), sans
+    modifier les existantes (CA4). `uq_crc_version_pdi` sert cette anti-jointure.
     """
-    if not etat.dry_run and not await controles_init.verifier_prerequis(
-        etat.rapport, etat.db_lecture, etat.id_referentiel, ("denominateurs", "non_calcule")
-    ):
-        return False
-
-    index_retire = False if etat.dry_run else await _retirer_index_cles(etat)
-    try:
-        resultat = await _executer_script(
-            etat, CLES, {"id_referentiel": etat.id_referentiel, "co_regate": None}
-        )
-    finally:
-        # Recréé dans tous les cas : sur échec, le script (transactionnel) a été annulé, la
-        # table est vide et la reconstruction instantanée ; sur succès, c'est une passe triée.
-        if index_retire:
-            await _recreer_index_cles(etat)
-
     if etat.dry_run:
+        resultat = await _executer_script(etat, CLES, _parametres_cles(etat, 0, None))
         etat.rapport.ok(
-            _ligne_etape(rang, total, CLES, f"{resultat.total_count} instruction(s)")
+            _ligne_etape(rang, total, CLES, f"{resultat.total_count} instruction(s) par lot")
         )
         return True
 
-    ecrites = controles_init.rowcount(resultat, APERCU_INSERT_CLES)
+    if not await controles_init.verifier_prerequis(
+        etat.rapport, etat.db_lecture, etat.id_referentiel, ("denominateurs",)
+    ):
+        return False
+    deja = await controles_init.verifier_reprise_cles(
+        etat.rapport, etat.db_lecture, etat.id_referentiel, etat.lignes_actives
+    )
+    if deja is None:
+        return False
+
+    present = await etat.db_ecriture.fetch_one(INDEX_UNIQUE_CLES_PRESENT_SQL)
+    if not (present and present["nb"]):
+        await _recreer_index_cles(etat)
+        if not etat.rapport.reussi:
+            return False
+
+    bornes = await etat.db_ecriture.fetch_one(BORNES_CLES_REPARTITION_SQL)
+    id_min, id_max = (bornes or {}).get("id_min"), (bornes or {}).get("id_max")
+    if id_min is None or id_max is None:
+        etat.rapport.ko(
+            "trppu_cles_repartition est vide : aucune clé à calculer. Jouer l'étape « chargement »."
+        )
+        return False
+
+    ecrites = await _calculer_cles_par_lots(etat, int(id_min), int(id_max))
     etat.rapport.etats["CLES_CALCULEES"] = ecrites
 
     if ecrites == 0:
         etat.rapport.ko(
-            "Aucune clé écrite alors que des PDI actifs étaient attendus : périmètre déjà "
-            "calculé, ou jointure sans correspondance. Rien n'a été modifié."
+            "Aucune clé écrite alors que des PDI actifs étaient attendus : jointure sans "
+            "correspondance (site sans agrégat ou sans version active). Rien n'a été modifié."
         )
         return False
 
-    etat.rapport.ok(_ligne_etape(rang, total, CLES, f"{ecrites} clé(s) calculée(s)"))
+    suite = f"{ecrites} clé(s) calculée(s)"
+    if deja:
+        suite += f" — reprise, {deja} déjà présente(s)"
+    etat.rapport.ok(_ligne_etape(rang, total, CLES, suite))
     await controles_init.controler_cles(
         etat.rapport,
         etat.db_lecture,
         etat.id_referentiel,
-        ecrites,
+        deja + ecrites,
         lignes_attendues=etat.lignes_actives,
         controles_longs=etat.controles_longs,
     )
     return etat.rapport.reussi
 
 
-async def _retirer_index_cles(etat: _Etat) -> bool:
-    """Retire `uq_crc_version_pdi` si la table des clés est vide. Rend True s'il l'a été.
+def _parametres_cles(etat: _Etat, id_debut: int, id_fin: int | None) -> dict[str, Any]:
+    parametres = {
+        "id_referentiel": etat.id_referentiel,
+        "co_regate": None,
+        "id_debut": id_debut,
+    }
+    if id_fin is not None:
+        parametres["id_fin"] = id_fin
+    return parametres
 
-    Seulement sur table vide : ailleurs, l'index sert les lectures de l'API
-    (`WHERE id_version_cle = ?`) et sa reconstruction porterait sur tous les référentiels
-    déjà calculés. Sans droit ALTER, le calcul se fait index en place — plus lent, correct.
-    """
-    if await etat.db_ecriture.fetch_one(CLES_CALCULEES_PRESENTES_SQL):
-        logger.info(
-            "Fin préparation calcul des clés %s",
-            ctx(index=INDEX_UNIQUE_CLES, action="conservé", motif="table non vide"),
-        )
-        return False
-    present = await etat.db_ecriture.fetch_one(INDEX_UNIQUE_CLES_PRESENT_SQL)
-    if not (present and present["nb"]):
-        return True  # déjà absent (calcul précédent interrompu) : à recréer après
-    try:
-        await index_chargement.executer_ddl(
-            f"ALTER TABLE {TABLE_CLES} DROP INDEX `{INDEX_UNIQUE_CLES}`",
-            etape="index-retrait",
-            prefixe="cles",
-            table=TABLE_CLES,
-            db=etat.db_ecriture,
-        )
-    except index_chargement.DroitManquant as erreur:
-        logger.warning("Rejet retrait index clés %s", ctx(motif=str(erreur)))
-        etat.rapport.avertissements.append(
-            f"Index {INDEX_UNIQUE_CLES} conservé pendant le calcul (droit ALTER manquant) : "
-            "étape nettement plus lente."
-        )
-        return False
+
+async def _calculer_cles_par_lots(etat: _Etat, id_min: int, id_max: int) -> int:
+    """Joue le calcul par tranches d'`id` en autocommit ; rend le nombre de clés écrites."""
+    debut = time.perf_counter()
+    fichier, _ = SCRIPTS[CLES]
+    tranches = [
+        (borne, min(borne + CHARGEMENT_TAILLE_LOT, id_max))
+        for borne in range(id_min - 1, id_max, CHARGEMENT_TAILLE_LOT)
+    ]
     logger.info(
-        "Fin préparation calcul des clés %s",
-        ctx(index=INDEX_UNIQUE_CLES, action="retiré", motif="table vide"),
+        "Début calcul des clés par lots %s",
+        ctx(
+            id_referentiel=etat.id_referentiel,
+            lots=len(tranches),
+            taille_lot=CHARGEMENT_TAILLE_LOT,
+            id_min=id_min,
+            id_max=id_max,
+        ),
     )
-    return True
+
+    ecrites = 0
+    lots_faits = 0
+    for depart in range(0, len(tranches), LOTS_CLES_PAR_CONNEXION):
+        paquet = tranches[depart : depart + LOTS_CLES_PAR_CONNEXION]
+        unites = [
+            (
+                f"db/{fichier}@{bas + 1}-{haut}",
+                instructions_parametrees(
+                    etat.scripts[CLES], _parametres_cles(etat, bas, haut)
+                ),
+            )
+            for bas, haut in paquet
+        ]
+        try:
+            resultat = await etat.db_ecriture.execute_sql_units(
+                unites, transactional=False, skip_selects=True
+            )
+        except SqlScriptError:
+            logger.warning(
+                "Rejet calcul des clés par lots %s",
+                ctx(
+                    id_referentiel=etat.id_referentiel,
+                    lots_commites=lots_faits,
+                    cles_ecrites=ecrites,
+                    suite="relancer --etape cles : seules les clés manquantes seront écrites",
+                ),
+            )
+            etat.rapport.avertissements.append(
+                f"Calcul des clés interrompu après {lots_faits} lot(s) commité(s) "
+                f"({ecrites} clé(s) écrite(s), conservées). Relancer « --etape cles » : "
+                f"seules les clés manquantes seront calculées."
+            )
+            raise
+        for label, _ in unites:
+            ecrites += max(_insertions(resultat, label, APERCU_INSERT_CLES), 0)
+        lots_faits += len(paquet)
+
+        ecoule = max(time.perf_counter() - debut, 1e-9)
+        logger.info(
+            "Avancement calcul des clés %s",
+            ctx(
+                id_referentiel=etat.id_referentiel,
+                lots=lots_faits,
+                lots_total=len(tranches),
+                pct=round(100 * lots_faits / len(tranches), 1),
+                cles_ecrites=ecrites,
+                debit_lignes_s=round(ecrites / ecoule, 1),
+                duration_ms=round(ecoule * 1000, 1),
+            ),
+        )
+    return ecrites
 
 
 async def _recreer_index_cles(etat: _Etat) -> None:
-    """Recrée `uq_crc_version_pdi` en une passe triée. Un échec est porté au rapport.
-
-    Un doublon (version, PDI) est impossible par construction — une version active par site,
-    un PDI unique par référentiel (`uk_pdi_ref`) : si la reconstruction échoue, c'est
-    l'invariant qui est cassé, et le CA4 ne peut plus être affirmé.
-    """
+    """Recrée `uq_crc_version_pdi` s'il manque ; un échec (invariant cassé) va au rapport."""
     debut = time.perf_counter()
     logger.info("Début reconstruction index clés %s", ctx(index=INDEX_UNIQUE_CLES))
     try:

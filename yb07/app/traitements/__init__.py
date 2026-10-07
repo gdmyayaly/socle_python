@@ -1,14 +1,6 @@
-"""Traitements métier du module.
+"""Traitements métier : chargement des clés (S3 ou local) et initialisation DSR-696→699.
 
-| Traitement | Commande | Description |
-| --- | --- | --- |
-| `charger_cles_repartition` | `charger-cles-repartition` | Charge `trppu_cles_repartition` depuis un CSV déposé sur S3 |
-| `charger_cles_repartition(..., chemin_local=...)` | `charger-cles-repartition-local` | Idem, depuis un CSV du disque local |
-| `initialiser_cles_repartition` | `init` | Enchaîne la chaîne DSR-696→699 : chargement, migration, agrégats, versions, clés |
-
-Chaque traitement retourne un `Rapport`. **Aucun ne lève ni n'écrit sur la sortie
-standard** : c'est la CLI (`app/main.py`) qui choisit de l'afficher en texte ou en JSON, et
-qui en déduit le code de retour du processus.
+Chaque traitement rend un `Rapport` sans lever ni écrire sur la sortie : la CLI l'affiche.
 """
 
 from app.erreurs import TraitementImpossible

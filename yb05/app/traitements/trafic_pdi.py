@@ -2,20 +2,11 @@
 
     trafic = TMH × coefficient de rétention × clé de répartition du PDI
 
-pour chaque combinaison PDI × produit × jour × densité, écrite dans `trppu_trafic_pdi`.
+par PDI × produit × jour × densité, écrit dans `trppu_trafic_pdi`. DSR-700 = étape 3
+(référentiel et version de clés mémorisés dans le scénario avant le calcul, CA-03).
 
-DSR-700 n'a pas de traitement propre : son exigence — un scénario mémorise le référentiel et la
-version de clés utilisés, et les conserve — est satisfaite par l'étape 3 ci-dessous, qui écrit
-`id_referentiel` et `id_version_cle` dans le scénario avant le premier calcul.
-
-Ordre des écritures, et pourquoi :
-
-1. le verrou (`calcul_trafic_en_cours = 1`) est posé et commité **seul**, sinon il resterait
-   invisible des autres processus jusqu'au commit final — trop tard pour empêcher un doublon ;
-2. le référentiel et la version de clés sont écrits ensuite, également commités seuls (CA-03 :
-   mémorisés avant le premier calcul) ;
-3. purge et insertion des trafics forment **une seule transaction** : à aucun moment la base ne
-   doit contenir un demi-calcul.
+Ordre des écritures : verrou commité seul (sinon invisible des autres processus),
+traçabilité commitée seule, puis purge + insertion en une seule transaction.
 """
 
 from __future__ import annotations
@@ -41,8 +32,7 @@ TITRE = "Calcul des trafics PDI"
 JOURS_SEMAINE = ("LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI")
 
 # `trppu_pic_coefficients.densite` (0, 1, 2) vers les colonnes de `trppu_trafic_pdi`.
-# L'association n'est écrite nulle part : elle suit l'ordre des colonnes de la table cible et
-# la contrainte `chk_pic_densite`. À confirmer par le métier.
+# Association déduite de l'ordre des colonnes : à confirmer par le métier.
 COLONNES_PAR_DENSITE = {0: "dense", 1: "faible1", 2: "faible2"}
 
 # Familles de clés de `trppu_cles_repartition_calcule`, cibles du mapping CLES_PAR_PRODUIT.
@@ -53,16 +43,14 @@ COLONNE_PAR_FAMILLE = {
     "potentielip": "cle_potentielip",
 }
 
-# `dense`, `faible1` et `faible2` sont des `smallint unsigned` : au-delà, MySQL refuse la ligne
-# (mode strict) ou la tronque en silence. On préfère l'échec explicite.
+# Colonnes en `smallint unsigned` (65535) : on échoue explicitement plutôt que de laisser
+# MySQL refuser ou tronquer.
 TRAFIC_MAX = 65535
 
 TAILLE_LOT = 5000
 
-# TMH retenu : somme des lignes non exclues, hors produits mis de côté par le scénario.
-# `trppu_tmh` autorise plusieurs lignes par produit depuis la migration du 24/06/2026, et deux
-# mécanismes d'exclusion coexistent — `bl_exclu` sur la ligne, `trppu_scenario_exclusions` sur
-# le produit.
+# TMH retenu : somme des lignes par produit, hors `bl_exclu` (ligne) et
+# `trppu_scenario_exclusions` (produit).
 SELECT_TMH_SQL = """
     SELECT t.co_produit,
            SUM(t.moyenne_hebdo) AS tmh
@@ -150,11 +138,8 @@ async def calcul_trafic_pdi(
     scenario = await scn.charger_scenario(db_lecture, id_scenario)
     raison = await scn.determiner_raison(db_lecture, scenario)
 
-    # Étape 2 — verrou. 0 ligne affectée : un autre processus a pris le scénario entre le
-    # contrôle et maintenant. Il est propriétaire, on ne touche à rien.
+    # Étape 2 — verrou. 0 ligne affectée : un autre processus détient le scénario.
     if not await scn.prendre_verrou(db_ecriture, id_scenario):
-        # Rejet métier jusqu'ici silencieux : sans cette ligne, une collision entre
-        # deux workers ne laisse aucune trace côté log.
         logger.warning(
             "Rejet calcul trafics PDI %s",
             ctx(verdict=ECHEC, motif="verrou déjà pris par un autre calcul"),
@@ -207,9 +192,8 @@ async def _calculer(
     co_regate = scenario["co_regate"]
     debut_phase = time.perf_counter()
 
-    # Étape 3 — traçabilité (DSR-700). Commitée avant le calcul, comme l'exige le CA-03.
-    # Référentiel et version lus sur la même ligne de `trppu_version_cle` (cf.
-    # `scn.version_cle_active`) : `trppu_referentiel` n'est plus consultée.
+    # Étape 3 — traçabilité (DSR-700, CA-03), commitée avant le calcul. Référentiel lu dans
+    # `trppu_version_cle` (`trppu_referentiel` n'est plus utilisée).
     version = await scn.version_cle_active(db_lecture, co_regate)
     if version is None:
         raise TraitementImpossible(f"Aucune version de clés active pour le site {co_regate}")
@@ -347,12 +331,7 @@ async def _charger_tmh(db_lecture, id_scenario: int) -> dict[str, Decimal]:
 async def _charger_coefficients(
     db_lecture, id_pic_version: int
 ) -> dict[tuple[str, str], dict[int, Decimal]]:
-    """Coefficients indexés par (produit, jour) puis par densité.
-
-    `dt_effet` et `dt_fin` ne sont pas filtrés : la clé unique
-    `(id_pic_version, co_produit, jour_semaine, densite)` garantit déjà une seule ligne par
-    combinaison, ces deux dates ne discriminent donc rien.
-    """
+    """Coefficients par (produit, jour) puis densité ; dates non filtrées (clé unique)."""
     lignes = await db_lecture.fetch_all(SELECT_COEFFICIENTS_SQL, (id_pic_version,))
     coefficients: dict[tuple[str, str], dict[int, Decimal]] = {}
     for ligne in lignes:
@@ -403,12 +382,7 @@ async def _charger_mapping_agrebal(db_lecture, co_regate: str) -> dict[int, tupl
 def _signaler_ecarts_de_perimetre(
     rapport: Rapport, cles: dict[int, Any], agrebal_par_pdi: dict[int, Any]
 ) -> None:
-    """Compte les PDI connus d'un seul des deux côtés.
-
-    Un PDI sans Agrébal ne peut pas être écrit (`id_agrebal` est NOT NULL) et un PDI sans clé
-    n'a pas de trafic : dans les deux cas c'est un référentiel désynchronisé, pas une ligne à
-    inventer. Le rapport le dit plutôt que de le taire.
-    """
+    """Signale au rapport les PDI ignorés car présents d'un seul côté (clés / Agrébals)."""
     sans_agrebal = sorted(set(cles) - set(agrebal_par_pdi))
     sans_cle = sorted(set(agrebal_par_pdi) - set(cles))
     if sans_agrebal:
@@ -424,16 +398,9 @@ def _signaler_ecarts_de_perimetre(
 
 
 def _jours_a_calculer(scenario: dict, coefficients: dict[tuple[str, str], Any]) -> list[str]:
-    """Jours du calcul : la semaine du scénario, limitée aux jours réellement coefficientés.
+    """Jours de la semaine du scénario (5 ou 6) coefficientés par au moins un produit.
 
-    Aucun ticket ne dit quels jours calculer. `nb_jours_semaine` (5 ou 6) donne la semaine
-    d'exploitation du scénario ; les coefficients disent ce qui est paramétré.
-
-    La tolérance s'arrête ici, au niveau de la **version PIC** : un jour qu'aucun produit ne
-    coefficiente n'est simplement pas calculé. En revanche, une fois le jour retenu, un produit
-    qui n'a pas de coefficient pour ce jour est une anomalie de paramétrage — c'est
-    `_construire_lignes` qui la refuse. Les deux cas sont différents : ne pas exploiter le
-    samedi est un choix, oublier le samedi d'un seul produit est un oubli.
+    Un jour retenu sans coefficient pour un produit est refusé par `_construire_lignes`.
     """
     nb_jours = scenario.get("nb_jours_semaine") or 6
     attendus = JOURS_SEMAINE[: 6 if int(nb_jours) >= 6 else 5]
@@ -499,7 +466,7 @@ def _construire_lignes(
 
 
 def _colonne_cle(produit: str) -> str:
-    """Colonne de clé à utiliser pour un produit, via le mapping de configuration."""
+    """Colonne de clé du produit ; produit inconnu = échec plutôt que trafic faux."""
     famille = CLES_PAR_PRODUIT.get(produit.upper())
     if famille is None:
         raise TraitementImpossible(

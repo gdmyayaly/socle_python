@@ -4,11 +4,9 @@ from __future__ import annotations
 
 
 class TraitementImpossible(RuntimeError):
-    """Le traitement ne peut pas aboutir sur des données correctes.
+    """Donnée manquante ou hors schéma : on échoue plutôt que de produire un trafic faux.
 
-    Levée plutôt que corrigée à la volée dès qu'une donnée manque ou dépasse ce que le schéma
-    accepte : un trafic faux se propage à tout le calcul des scénarios et ne se voit plus.
-    Le message est destiné à l'exploitant — il doit dire quoi corriger.
+    Le message, destiné à l'exploitant, doit dire quoi corriger.
     """
 
 

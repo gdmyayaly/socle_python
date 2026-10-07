@@ -1,20 +1,5 @@
-"""Les scripts SQL de `db/`, vérifiés sans base ni réseau.
-
-Trois familles d'assertions :
-
-* le **découpage** — chaque script rend le nombre d'instructions attendu, et le `dry_run` du
-  socle les liste sans ouvrir de connexion ;
-* l'**ordre des instructions** — c'est lui qui porte la rejouabilité : `@deja` calculé avant
-  toute écriture, purge avant rechargement. Une réécriture qui l'inverserait casserait une
-  garantie que rien d'autre ne vérifie ;
-* le **périmètre** — aucun DDL de schéma, aucun `LOAD DATA`. Ces deux-là ne sont pas des
-  détails de forme : ils délimitent ce que ce module a le droit de faire, et la note dans un
-  README ne l'empêcherait pas de dériver.
-
-Les scripts sont dupliqués depuis `yb05/db/`, comme le socle l'est entre modules. Les nombres
-d'instructions figés ci-dessous sont le seul garde-fou contre une divergence silencieuse entre
-les deux copies : les faire évoluer ensemble est délibéré.
-"""
+"""Scripts SQL de `db/`, sans base : découpage, ordre des instructions, colonnes, périmètre.
+Les nombres d'instructions figés gardent la copie alignée sur `yb05/db/`."""
 
 from __future__ import annotations
 
@@ -47,7 +32,7 @@ INSTRUCTIONS_ATTENDUES = {
     CORRECTIF: 9,
     AGREGATS: 9,
     VERSIONS: 10,
-    CLES: 11,
+    CLES: 12,
 }
 
 
@@ -55,11 +40,8 @@ INSTRUCTIONS_ATTENDUES = {
 # Schéma de référence
 # ---------------------------------------------------------------------------
 
-# Extrait du schéma réel, limité aux tables écrites par ces scripts. Recopié plutôt que lu
-# depuis le projet voisin : yb07 ne doit pas dépendre de l'arborescence de yb05 ni de python/.
-# À resynchroniser si le schéma évolue.
-#
-# État APRÈS la migration et le correctif : c'est celui que supposent les scripts de données.
+# Extrait du schéma réel (tables écrites par ces scripts), état APRÈS migration et correctif.
+# Recopié, non lu depuis yb05/ ou python/ : à resynchroniser si le schéma évolue.
 SCHEMA_REFERENCE = """\
 CREATE TABLE `trppu_cles_repartition` (
   `id` bigint NOT NULL AUTO_INCREMENT,
@@ -212,12 +194,21 @@ def test_dsr698_calcule_deja_avant_toute_ecriture():
     assert rang_deja < verbes.index("UPDATE") < verbes.index("INSERT")
 
 
-def test_dsr699_calcule_deja_avant_toute_ecriture():
-    """CA4 : une version déjà calculée n'est jamais retouchée."""
-    instructions = _instructions(CLES)
-    rang_deja = next(i for i, s in enumerate(instructions) if "@deja :=" in s)
-    verbes = [first_keyword(s) for s in instructions]
-    assert rang_deja < verbes.index("INSERT")
+def test_dsr699_n_insere_que_les_cles_absentes():
+    """CA4 : l'INSERT saute les couples (version, PDI) déjà présents, d'où la reprise par lots."""
+    insert = next(s for s in _instructions(CLES) if first_keyword(s) == "INSERT")
+    texte = " ".join(insert.split())
+    assert "NOT EXISTS (SELECT 1 FROM trppu_cles_repartition_calcule k" in texte
+    assert "k.id_version_cle = v.id_version_cle AND k.id_pdi = c.id_pdi" in texte
+    assert "@deja" not in CLES.read_text(encoding="utf-8-sig").split("Calcul des clés")[1]
+
+
+def test_dsr699_borne_le_lot_sur_l_id():
+    """Un lot = une tranche ]@id_debut ; @id_fin] de la clé primaire : borne la transaction."""
+    insert = " ".join(
+        next(s for s in _instructions(CLES) if first_keyword(s) == "INSERT").split()
+    )
+    assert "WHERE c.id > @id_debut AND c.id <= @id_fin" in insert
 
 
 def test_dsr699_durcit_le_mode_sql_avant_de_calculer():
@@ -281,16 +272,10 @@ def test_dsr699_preserve_la_precision_de_la_cle_potentiel_ip():
 
 
 def test_le_repertoire_db_ne_contient_aucun_ddl_de_schema():
-    """Créer ou détruire des tables relève de DSR-721 / MD01, pas de ce module.
-
-    Le garde-fou vit ici, et pas seulement dans une note du README : c'est la seule chose qui
-    empêche `database.sql` — 22 `DROP TABLE` — d'arriver un jour dans ce répertoire par
-    copie machinale, et d'effacer 24 M de lignes au premier `init`.
-    """
-    # Sur le texte brut et non sur les instructions découpées : le DDL de la migration et du
-    # correctif voyage dans des chaînes `SET @sql := 'ALTER TABLE …'`, qu'un contrôle par
-    # mot-clé d'instruction ne verrait pas. `TRUNCATE\s+TABLE` et non `TRUNCATE` : c'est aussi
-    # une fonction, dont `fix_error.sql` se sert pour compter des chiffres entiers.
+    """Créer ou détruire des tables relève de DSR-721 / MD01 (ex. `database.sql` copié ici
+    effacerait tout au premier `init`)."""
+    # Texte brut : le DDL voyage dans des chaînes `SET @sql := 'ALTER TABLE …'`.
+    # `TRUNCATE\s+TABLE` car `TRUNCATE()` est aussi une fonction, utilisée par `fix_error.sql`.
     interdits = re.compile(
         r"\b(DROP\s+TABLE|CREATE\s+TABLE|CREATE\s+DATABASE|TRUNCATE\s+TABLE)\b",
         re.IGNORECASE,
@@ -301,12 +286,7 @@ def test_le_repertoire_db_ne_contient_aucun_ddl_de_schema():
 
 
 def test_le_repertoire_db_ne_contient_aucun_load_data():
-    """Le chargement passe par S3 et des lots commités, pas par un LOAD DATA côté serveur.
-
-    `LOAD DATA INFILE` est lu par le serveur MySQL, son chemin est un littéral non
-    paramétrable, et le socle n'active pas la variante `LOCAL` : le script DSR-697 n'a rien à
-    faire ici. Ce test le prouve, plutôt que de compter sur la mémoire de qui copiera.
-    """
+    """Le chargement passe par S3 et des lots commités : le script DSR-697 n'a rien à faire ici."""
     for script in DB_DIR.glob("*.sql"):
         assert "LOAD DATA" not in script.read_text(encoding="utf-8-sig").upper(), script.name
 
@@ -319,17 +299,13 @@ def test_les_scripts_de_donnees_sont_purement_transactionnels(script: Path):
 
 @pytest.mark.parametrize("script", SCRIPTS_SCHEMA, ids=lambda p: p.name)
 def test_le_ddl_de_schema_echappe_a_la_detection_du_socle(script: Path):
-    """Leur DDL voyage dans PREPARE/EXECUTE : `is_ddl` ne le voit pas.
-
-    C'est ce qui rend ces scripts rejouables (MySQL ne connaît pas `ADD INDEX IF NOT EXISTS`),
-    et c'est aussi ce qui rend `transactional=False` obligatoire : l'avertissement du socle ne
-    se déclenchera pas, alors que le COMMIT implicite, lui, a bien lieu.
-    """
+    """DDL en PREPARE/EXECUTE, invisible à `is_ddl` : `transactional=False` est obligatoire,
+    le COMMIT implicite a lieu sans avertissement du socle."""
     assert "ALTER TABLE" in script.read_text(encoding="utf-8-sig")
     assert not [s for s in _instructions(script) if is_ddl(s)]
 
 
 @pytest.mark.parametrize("script", TOUS_LES_SCRIPTS, ids=lambda p: p.name)
 def test_aucun_ancien_nom_de_table(script: Path):
-    """`trppu_site_trafic` a été renommé `trppu_trafic_site` le 17/08/2026."""
+    """`trppu_site_trafic` est l'ancien nom de `trppu_trafic_site`."""
     assert "trppu_site_trafic" not in script.read_text(encoding="utf-8-sig")

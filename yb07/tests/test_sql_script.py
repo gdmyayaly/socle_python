@@ -1,9 +1,5 @@
-"""Tests du découpage et de l'exécution des scripts SQL.
-
-Aucune base MySQL n'est nécessaire : ``aiomysql.connect`` est remplacé par une
-connexion factice. Le code async est exécuté via ``asyncio.run`` pour ne pas
-dépendre de pytest-asyncio.
-"""
+"""Tests du découpage et du runner de scripts SQL, sur connexion factice.
+`asyncio.run` évite de dépendre de pytest-asyncio."""
 
 import asyncio
 import logging
@@ -145,12 +141,10 @@ def test_split_instructions_simples():
 
 
 def test_split_ignore_bloc_de_commentaires_seul():
-    """Une bannière de commentaires seule ne produit aucune instruction."""
     assert split_sql_script("-- ==========\n-- Titre\n-- ==========\n") == []
 
 
 def test_split_ne_coupe_pas_sur_point_virgule_dans_chaine():
-    """Un ';' à l'intérieur d'une chaîne littérale ne coupe pas l'instruction."""
     stmts = split_sql_script("INSERT INTO t (c) VALUES ('a;b');")
     assert len(stmts) == 1
     assert "a;b" in stmts[0]
@@ -165,13 +159,11 @@ def test_split_enum_avec_quotes_et_virgules():
 
 
 def test_split_derniere_instruction_sans_point_virgule():
-    """La dernière instruction est retournée même sans ';' final."""
     assert split_sql_script("SELECT 1;\nSELECT 2") == ["SELECT 1", "SELECT 2"]
 
 
 @pytest.mark.parametrize("contenu", ["", "\n\n   \n", "   "])
 def test_split_fichier_vide_ou_blanc(contenu):
-    """Un script vide ou uniquement composé de blancs ne produit rien."""
     assert split_sql_script(contenu) == []
 
 
@@ -261,7 +253,6 @@ def test_is_ddl_faux(sql):
 
 
 def test_is_ddl_ignore_le_commentaire_en_tete():
-    """Une bannière en tête d'instruction ne masque pas le mot-clé DDL."""
     assert is_ddl("-- ===== TABLE t =====\nCREATE TABLE t (a int)") is True
 
 
@@ -281,7 +272,6 @@ def test_preview_retire_commentaires_et_tronque():
 
 
 def test_script_ordre_et_commit(monkeypatch):
-    """Les instructions passent dans l'ordre et la transaction est validée."""
     conn = FakeConnection()
     _patch_connect(monkeypatch, conn)
 
@@ -350,7 +340,6 @@ def test_continue_on_error_poursuit_et_valide(monkeypatch):
 
 
 def test_dry_run_nouvre_aucune_connexion(monkeypatch):
-    """Le dry_run analyse le script sans ouvrir la moindre connexion."""
     _patch_connect_interdit(monkeypatch)
 
     res = asyncio.run(_db().execute_sql_script("SELECT 1; DROP TABLE t;", dry_run=True))
@@ -399,7 +388,6 @@ def test_multi_fichiers_une_seule_transaction(monkeypatch, tmp_path):
 
 
 def test_fichier_absent_avant_toute_connexion(monkeypatch, tmp_path):
-    """Un fichier manquant échoue sans qu'aucune connexion n'ait été ouverte."""
     _patch_connect_interdit(monkeypatch)
     existant = _ecrire(tmp_path, "ok.sql", "SELECT 1;\n")
 
@@ -421,7 +409,6 @@ def test_non_transactionnel_autocommit(monkeypatch):
 
 
 def test_transactionnel_autocommit_false(monkeypatch):
-    """transactional=True (défaut) ouvre la connexion avec autocommit désactivé."""
     conn = FakeConnection()
     captured = _patch_connect(monkeypatch, conn)
 
@@ -461,7 +448,6 @@ def test_database_selon_le_parametre(monkeypatch):
 
 
 def test_avertissement_ddl_en_mode_transactionnel(monkeypatch, caplog):
-    """Le DDL en mode transactionnel déclenche un avertissement explicite."""
     conn = FakeConnection()
     _patch_connect(monkeypatch, conn)
 
@@ -473,7 +459,6 @@ def test_avertissement_ddl_en_mode_transactionnel(monkeypatch, caplog):
 
 
 def test_pas_davertissement_ddl_sans_ddl(monkeypatch, caplog):
-    """Un script purement DML ne déclenche aucun avertissement DDL."""
     conn = FakeConnection()
     _patch_connect(monkeypatch, conn)
 
@@ -519,7 +504,6 @@ def test_pas_de_retry_sur_instruction(monkeypatch):
 
 
 def test_le_runner_nutilise_pas_le_pool(monkeypatch):
-    """Le script passe par une connexion dédiée, jamais par le pool."""
     conn = FakeConnection()
     _patch_connect(monkeypatch, conn)
 
@@ -622,8 +606,7 @@ def test_runner_sans_option_joue_tout(monkeypatch):
 
 
 def test_suivi_des_ecritures_dans_les_logs(monkeypatch, caplog):
-    """Chaque écriture est tracée en INFO avec son volume et sa durée ; la fin de script
-    rappelle sa source et le nombre de SELECT non joués."""
+    """Chaque écriture est tracée (début, fin, volume) ; la fin de script compte les SELECT sautés."""
     db, _ = _runner_espion(monkeypatch)
 
     with caplog.at_level(logging.INFO, logger="app.db.mysql"):
@@ -647,8 +630,7 @@ def test_suivi_des_ecritures_dans_les_logs(monkeypatch, caplog):
 
 
 def test_agregats_et_cles_lisent_la_table_en_une_passe():
-    """Conditions minimales : sans cache InnoDB confortable, seul un parcours séquentiel des
-    22 M lignes reste rapide. Les deux INSERT … SELECT l'imposent."""
+    """Sans cache InnoDB confortable, seul un parcours séquentiel des 22 M lignes reste rapide."""
     from pathlib import Path
 
     db = Path(__file__).resolve().parent.parent / "db"

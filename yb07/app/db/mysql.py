@@ -1,5 +1,4 @@
-"""Connexion asynchrone à MySQL avec pool de connexions, retry, transactions et
-exécution de scripts SQL (fichiers .sql)."""
+"""Connexion MySQL asynchrone : pools, retry, transactions et exécution de scripts .sql."""
 
 import asyncio
 import logging
@@ -43,20 +42,15 @@ from app.log_utils import ctx
 
 logger = logging.getLogger(__name__)
 
-# Sentinelle pour le paramètre `database` des exécutions de script :
-#   ""     -> utiliser self.database (comportement par défaut)
-#   None   -> se connecter SANS schéma sélectionné
-#   "xxx"  -> schéma explicite
+# Sentinelle de `database` : "" = self.database, None = sans schéma, "xxx" = schéma explicite.
 _CONFIGURED_DB = ""
 
 
 def _activer_keepalive(conn: Any) -> None:
-    """Active les sondes TCP keepalive sur la socket d'une connexion (une seule fois).
+    """Active le keepalive TCP sur la socket d'une connexion (une seule fois).
 
-    Sans elles, une instruction longue (ALTER de reconstruction d'index, INSERT … SELECT de
-    24 M de lignes) laisse la connexion muette de bout en bout : un équipement réseau à délai
-    d'inactivité la coupe (« Connection reset by peer », erreur 2013), alors que MySQL, lui,
-    travaillait encore. Les options absentes de la plateforme sont ignorées.
+    Une instruction longue laisse la connexion muette : un équipement réseau à délai
+    d'inactivité la couperait (erreur 2013) alors que MySQL travaille encore.
     """
     if getattr(conn, "_yb07_keepalive", False):
         return
@@ -83,16 +77,14 @@ def _activer_keepalive(conn: Any) -> None:
         pass
 
 
-# Suivi d'une instruction longue, lu sur une autre connexion que la sienne.
-# PROCESSLIST : état et durée côté serveur, toujours disponible pour ses propres sessions.
+# Suivi d'une instruction longue, lu depuis une autre connexion : état côté serveur.
 SUIVI_ETAT_SQL = """
 SELECT STATE AS etat, TIME AS secondes_serveur
   FROM information_schema.PROCESSLIST
  WHERE ID = %s
 """
-# performance_schema : phase et avancement d'un ALTER InnoDB (lecture, tri, insertion…).
-# Vide si les instruments `stage/innodb/alter%` ou le consommateur `events_stages_current`
-# sont désactivés — c'est un réglage du serveur, pas du batch.
+# Phase et avancement d'un ALTER InnoDB ; vide si les instruments performance_schema
+# correspondants sont désactivés côté serveur.
 SUIVI_ETAPE_SQL = """
 SELECT s.EVENT_NAME AS etape, s.WORK_COMPLETED AS fait, s.WORK_ESTIMATED AS estime
   FROM performance_schema.events_stages_current s
@@ -111,12 +103,10 @@ def _thread_id(conn: Any) -> int | None:
 
 
 def _init_command() -> str:
-    """Instruction jouée à l'ouverture de chaque connexion : aligne son classement.
+    """Instruction d'ouverture de connexion alignant son classement sur celui de la base.
 
-    Les littéraux et les variables de session (`SET @co_regate := '…'`) prennent le classement
-    de la connexion. pymysql l'ouvre en utf8mb4_general_ci ; les tables sont en
-    utf8mb4_0900_ai_ci : `co_regate = @co_regate` lèverait l'erreur 1267. On prend celui de la
-    base, sauf classement imposé par SGBD_COLLATION.
+    Sinon littéraux et variables `@…` (utf8mb4_general_ci) comparés aux colonnes
+    (utf8mb4_0900_ai_ci) lèvent l'erreur 1267. SGBD_COLLATION peut l'imposer.
     """
     if MYSQL_COLLATION:
         return f"SET collation_connection = '{MYSQL_COLLATION}'"
@@ -164,8 +154,7 @@ class Database:
                     minsize=self.min_connections,
                     maxsize=self.max_connections,
                     autocommit=True,
-                    # Renouvelle une connexion restée inactive : MySQL la couperait au-delà
-                    # de `wait_timeout`, pendant les étapes longues.
+                    # Renouvelle une connexion inactive avant que `wait_timeout` ne la coupe.
                     pool_recycle=MYSQL_POOL_RECYCLE,
                 )
                 logger.info(
@@ -248,14 +237,7 @@ class Database:
 
     @asynccontextmanager
     async def transaction(self):
-        """Context manager pour exécuter des requêtes dans une transaction.
-
-        Usage:
-            async with db.transaction() as tx:
-                await tx.execute("INSERT INTO ...", (...))
-                await tx.execute("UPDATE ...", (...))
-            # commit automatique à la sortie, rollback en cas d'exception
-        """
+        """Transaction : commit à la sortie du bloc, rollback sur exception."""
         pool = await self._ensure_pool()
         conn = await pool.acquire()
         _activer_keepalive(conn)
@@ -285,11 +267,7 @@ class Database:
         disable_foreign_keys: bool = False,
         skip_selects: bool = False,
     ) -> ScriptResult:
-        """Exécute un fichier .sql, instruction par instruction.
-
-        Équivalent à ``execute_sql_files([path], ...)`` — voir cette méthode pour le
-        détail des options et les limites.
-        """
+        """Exécute un fichier .sql (cf. ``execute_sql_files``)."""
         return await self.execute_sql_files(
             [path],
             transactional=transactional,
@@ -313,52 +291,13 @@ class Database:
         disable_foreign_keys: bool = False,
         skip_selects: bool = False,
     ) -> ScriptResult:
-        """Exécute plusieurs fichiers .sql **dans l'ordre**, sur une seule connexion.
+        """Exécute plusieurs fichiers .sql dans l'ordre, sur une seule connexion dédiée.
 
-        Tous les fichiers sont lus et découpés **avant** l'ouverture de la connexion :
-        un fichier manquant ou mal encodé échoue sans que la base ait été touchée.
-
-        Args:
-            paths: chemins des fichiers, exécutés dans l'ordre donné.
-            transactional: si True (défaut), l'ensemble des fichiers est encadré par
-                un unique BEGIN/COMMIT, avec ROLLBACK en cas d'échec. Si False, chaque
-                instruction est validée immédiatement (autocommit).
-            continue_on_error: si False (défaut), la première erreur interrompt le
-                script et lève ``SqlScriptError``. Si True, l'erreur est journalisée,
-                enregistrée dans le résultat, et l'exécution se poursuit.
-            dry_run: lit et découpe les fichiers sans **aucune** connexion à la base ;
-                le résultat liste les instructions avec ``skipped=True``.
-            encoding: encodage de lecture. Le défaut ``utf-8-sig`` décode aussi
-                l'UTF-8 nu et absorbe le BOM ajouté par certains outils de dump.
-            database: schéma à sélectionner. Par défaut celui de l'instance ; ``None``
-                pour se connecter **sans schéma** (nécessaire si le script fait lui-même
-                ``CREATE DATABASE`` puis ``USE``).
-            disable_foreign_keys: exécute ``SET FOREIGN_KEY_CHECKS = 0`` avant la
-                première instruction, sur la même connexion.
-            skip_selects: ne joue pas les ``SELECT`` de pure consultation (cf.
-                ``is_display_select``) : leurs résultats seraient jetés, alors que la base
-                ferait tout le travail. Ils figurent dans le résultat avec ``skipped=True``.
-
-        Returns:
-            ScriptResult: détail instruction par instruction (aperçu, rowcount, durée,
-            erreur éventuelle) et compteurs agrégés.
-
-        Raises:
-            SqlScriptError: échec d'une instruction avec ``continue_on_error=False``.
-                L'exception porte le fichier, l'index 1-based, le SQL complet,
-                l'exception d'origine et le ``ScriptResult`` partiel.
-            FileNotFoundError, UnicodeDecodeError: à la lecture, avant toute connexion.
-
-        LIMITE IMPORTANTE — MySQL effectue un COMMIT IMPLICITE sur les instructions
-        DDL (CREATE, DROP, ALTER, TRUNCATE, RENAME…). Le mode ``transactional=True``
-        ne garantit donc l'atomicité QUE pour le DML (INSERT/UPDATE/DELETE). Un script
-        de schéma qui échoue à mi-parcours laisse la base dans un état intermédiaire :
-        prévoir un script rejouable (``DROP TABLE IF EXISTS`` / ``CREATE TABLE``).
-        Un avertissement est journalisé dès qu'une instruction DDL est détectée en
-        mode transactionnel.
-
-        Note: à utiliser via ``db_write`` — ``db_read`` porte des identifiants en
-        lecture seule.
+        Fichiers lus et découpés avant toute connexion. ``transactional`` : un seul
+        BEGIN/COMMIT, mais le DDL fait un COMMIT implicite et n'est jamais annulé.
+        ``database=None`` : connexion sans schéma. ``skip_selects`` : les SELECT
+        d'affichage ne sont pas joués (la base ferait le travail pour rien).
+        Lève ``SqlScriptError`` (avec le résultat partiel) sauf ``continue_on_error``.
         """
         units: list[tuple[str, list[str]]] = []
         for path in paths:
@@ -398,11 +337,7 @@ class Database:
         disable_foreign_keys: bool = False,
         skip_selects: bool = False,
     ) -> ScriptResult:
-        """Exécute un script SQL fourni sous forme de chaîne.
-
-        Mêmes options et mêmes limites que ``execute_sql_files`` ; ``label`` sert
-        d'identifiant de source dans le résultat et les logs.
-        """
+        """Exécute un script SQL fourni en chaîne (cf. ``execute_sql_files``)."""
         return await self._run_units(
             [(label, split_sql_script(script))],
             transactional=transactional,
@@ -424,12 +359,9 @@ class Database:
         disable_foreign_keys: bool = False,
         skip_selects: bool = False,
     ) -> ScriptResult:
-        """Exécute des scripts **déjà découpés**, `(libellé, instructions)`, dans l'ordre.
+        """Exécute des scripts déjà découpés `(libellé, instructions)`, dans l'ordre.
 
-        Tous sur **une seule connexion** et, en mode transactionnel, dans **une seule
-        transaction** : un échec annule l'ensemble. C'est ce qui permet de traiter des
-        milliers de petits scripts (un par site) sans ouvrir autant de connexions ni valider
-        autant de transactions. Mêmes options et mêmes limites que `execute_sql_files`.
+        Une seule connexion (et transaction) pour des milliers de petits scripts par site.
         """
         return await self._run_units(
             [(label, list(statements)) for label, statements in units],
@@ -443,17 +375,8 @@ class Database:
 
     @asynccontextmanager
     async def _script_connection(self, database: str | None, autocommit: bool):
-        """Connexion dédiée (HORS POOL) pour l'exécution d'un script SQL.
-
-        Hors pool volontairement : un script modifie l'état de session (``USE``,
-        ``SET FOREIGN_KEY_CHECKS``, variables de session). Rendre une telle connexion
-        au pool contaminerait toutes les requêtes applicatives suivantes. Ici l'état
-        de session disparaît avec la connexion, fermée en fin de script.
-
-        C'est aussi ce qui garantit que ``SET FOREIGN_KEY_CHECKS = 0`` et les DROP qui
-        suivent tournent bien sur la **même** session, et qui permet de choisir
-        ``autocommit`` (le pool, lui, est créé avec ``autocommit=True``).
-        """
+        """Connexion dédiée hors pool : l'état de session du script (USE, SET, @vars)
+        ne doit pas contaminer le pool, et ``autocommit`` reste au choix."""
         conn = None
         for attempt in range(1, self.max_retries + 1):
             try:
@@ -489,8 +412,7 @@ class Database:
     async def _executer_avec_suivi(
         self, conn, sql: str, label: str, index: int, apercu: str
     ) -> int:
-        """Exécute une instruction ; si elle écrit, journalise son avancement pendant qu'elle
-        tourne (`Avancement instruction SQL`, toutes les `MYSQL_SUIVI_INSTRUCTION` s)."""
+        """Exécute une instruction ; une écriture journalise son avancement en cours."""
         if not is_write(sql):
             return await self._run_statement(conn, sql)
         suivi = asyncio.ensure_future(self._suivre(conn, label, index, apercu))
@@ -501,8 +423,7 @@ class Database:
             await asyncio.gather(suivi, return_exceptions=True)
 
     async def _suivre(self, conn, label: str, index: int, apercu: str) -> None:
-        """Boucle de suivi d'une instruction en cours. Ne lève jamais : le suivi est un
-        confort, il ne doit pas faire échouer ce qu'il observe."""
+        """Boucle de suivi d'une instruction en cours ; ne lève jamais."""
         debut = time.perf_counter()
         session = _thread_id(conn)
         etapes_lisibles = session is not None
@@ -539,9 +460,8 @@ class Database:
     async def _run_statement(self, conn, sql: str) -> int:
         """Exécute une instruction unique sur la connexion du script."""
         async with conn.cursor() as cur:
-            # ATTENTION : aucun paramètre n'est transmis. PyMySQL applique
-            # `query % args` dès que `args is not None` — même un tuple vide ferait
-            # échouer toute instruction contenant un `%` (LIKE 'TRP%', DEFAULT '100%').
+            # Aucun paramètre : avec `args` non None, PyMySQL appliquerait `query % args`
+            # et casserait tout `%` littéral (LIKE 'TRP%').
             await cur.execute(sql)
             return cur.rowcount
 
@@ -639,8 +559,7 @@ class Database:
                             )
                             continue
                         if is_write(sql):
-                            # Annoncée AVANT : une écriture peut durer des minutes sans rien
-                            # émettre ; cette ligne dit laquelle est en cours.
+                            # Annoncée avant : une écriture peut durer des minutes.
                             logger.info(
                                 "Début instruction SQL %s",
                                 ctx(source=label, index=i, apercu=entry.preview),
@@ -684,8 +603,6 @@ class Database:
                                 result=result,
                             ) from e
                         entry.duration_ms = (time.perf_counter() - t0) * 1000
-                        # Suivi des actions : chaque écriture est tracée avec son volume et
-                        # sa durée — c'est ce qui dit, après coup, ce que la chaîne a fait.
                         if is_write(sql):
                             logger.info(
                                 "Fin instruction SQL %s",
@@ -764,12 +681,8 @@ class _TransactionCursor:
             return await cur.fetchall()
 
 
-# Instances globales : écriture et lecture.
-#
-# Le pool est dimensionné sur MYSQL_POOL_SIZE : un traitement parallélisé détient au plus
-# une connexion par pool et par tâche à un instant donné. Si le module en lance davantage
-# que la taille du pool, les tâches excédentaires s'attendent sur `pool.acquire()` et le
-# parallélisme annoncé n'existe pas — dimensionner la variable en conséquence.
+# Instances globales. Une tâche parallèle tient une connexion par pool : au-delà de
+# MYSQL_POOL_SIZE tâches, les suivantes attendent sur `pool.acquire()`.
 _TAILLE_POOL = MYSQL_POOL_SIZE
 
 db_write = Database(

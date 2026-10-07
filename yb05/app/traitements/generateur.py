@@ -1,24 +1,7 @@
-"""Scénarios de test complets, générés avec de fausses données, pour éprouver yb05 de bout en
-bout : `generer-scenarios N`, puis `all`.
+"""Scénarios de test complets (fausses données, éligibles DSR-701) pour éprouver `all`.
 
-Chaque scénario reçoit tout ce que DSR-701 contrôle et que DSR-702/703 consomment :
-
-    trppu_site                       un site de test dédié (ZT0001, ZT0002…)
-    trppu_produit                    les produits de CLES_PAR_PRODUIT (créés s'ils manquent)
-    trppu_pic_version                une version PIC de niveau SITE
-    trppu_pic_coefficients           produit × jour (LUNDI…SAMEDI) × densité (0, 1, 2)
-    trppu_version_cle                une version de clés active, avec son référentiel
-                                     (règles 9 et 10)
-    trppu_cles_repartition_calcule   une clé par PDI ; chaque famille somme à 1
-    trppu_agrebal_pdi                des Agrébals qui se partagent les PDI (règles 11 et 12)
-    trppu_scenario                   VALIDE, figé, non calculé, non verrouillé (règles 2 à 8)
-    trppu_tmh                        un TMH par produit, non exclu
-
-Tout est **marqué** — libellés `TEST YB05`, sites `ZT…`, référentiel 900000, PDI au-delà de
-9·10¹² et Agrébals au-delà de 9·10⁸, hors de toute plage réelle — et `supprimer_scenarios_test` efface
-exactement ces données. La génération est refusée en production (`APP_ENV=prod`).
-
-Une seule transaction pour l'ensemble : une génération interrompue ne laisse rien.
+Tout est marqué (`TEST YB05`, sites `ZT…`, identifiants hors plage réelle) pour que
+`supprimer_scenarios_test` n'efface que cela. Refusé en prod ; une seule transaction.
 """
 
 from __future__ import annotations
@@ -53,8 +36,7 @@ AGREBALS_PAR_SITE_MAX = 99
 # Hors de toute plage réelle : un PDI ou un Agrébal de test ne peut jamais en masquer un vrai.
 PDI_BASE = 9_000_000_000_000
 AGREBAL_BASE = 900_000_000
-# Référentiel porté par les versions et les clés de test. `trppu_referentiel` n'est pas
-# alimentée : le référentiel est lu dans la version de clés (DSR-701 règle 10).
+# Référentiel lu dans la version de clés (DSR-701 règle 10) : `trppu_referentiel` non alimentée.
 REFERENTIEL_TEST = 900_000
 
 JOURS = ("LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI")
@@ -123,8 +105,7 @@ INSERT INTO trppu_tmh
 VALUES (%s, %s, %s, %s, %s, %s, 0, 0, 'GENERATEUR')
 """
 
-# Suppression : sites de test d'abord identifiés, puis tout ce qui s'y rattache, enfants avant
-# parents (clés étrangères sans ON DELETE CASCADE sur plusieurs tables filles du scénario).
+# Suppression enfants avant parents : plusieurs FK filles n'ont pas ON DELETE CASCADE.
 SITES_DE_TEST_SQL = """
 SELECT co_regate FROM trppu_site WHERE co_regate LIKE 'ZT%%' AND lb_regate LIKE %s
 """
@@ -274,12 +255,11 @@ async def _dernier_id(tx) -> int:
 
 
 async def _creer_scenario(tx, numero: int, nb_pdi: int, nb_agrebals: int, nb_jours: int) -> int:
-    """Un scénario et tout son contexte. Rend l'identifiant du scénario."""
+    """Crée un scénario et tout son contexte ; rend son identifiant."""
     site, roc = _site(numero), f"{PREFIXE_ROC}{numero:04d}"
     commentaire = f"{MARQUEUR} - généré"
     await tx.execute(INSERT_SITE_SQL, (site, f"{LIBELLE_SITE} {numero:04d}", roc))
 
-    # Version PIC et ses coefficients : tous les produits, tous les jours, trois densités.
     await tx.execute(INSERT_PIC_VERSION_SQL, (MARQUEUR, site, commentaire))
     id_pic_version = await _dernier_id(tx)
     await tx.execute_many(
@@ -355,11 +335,7 @@ def _coefficient(densite: int, rang_jour: int) -> Decimal:
 
 
 def _cles(nb_pdi: int, decalage: int) -> list[Decimal]:
-    """Clés d'une famille : poids 1…N décalés selon la famille, normalisés à une somme de 1.
-
-    Le dernier PDI absorbe l'arrondi : la somme vaut exactement 1, comme l'exige le CA3 de
-    DSR-699.
-    """
+    """Clés d'une famille sommant exactement à 1 (DSR-699 CA3), arrondi sur le dernier PDI."""
     poids = [((rang + decalage) % nb_pdi) + 1 for rang in range(nb_pdi)]
     total = Decimal(sum(poids))
     cles = [(Decimal(p) / total).quantize(PRECISION_CLE) for p in poids]
@@ -368,11 +344,7 @@ def _cles(nb_pdi: int, decalage: int) -> list[Decimal]:
 
 
 def _tmh(rang_produit: int, numero: int) -> tuple[int, int, Decimal, Decimal]:
-    """(volume réalisé, volume prévisionnel, moyenne journalière, moyenne hebdo).
-
-    Moyenne hebdo de 1 000 à quelques milliers : trafic PDI = TMH × coef × clé reste très
-    en deçà de la capacité de la colonne (65 535).
-    """
+    """(réalisé, prévisionnel, moy. journalière, moy. hebdo), assez bas pour rester < 65535."""
     hebdo = Decimal(1000 * (rang_produit + 1) + (numero % 10) * 100)
     return int(hebdo * 52), int(hebdo * 52), (hebdo / 6).quantize(Decimal("0.01")), hebdo
 

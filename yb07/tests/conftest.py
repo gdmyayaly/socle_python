@@ -1,22 +1,4 @@
-"""Doublures partagées par les tests.
-
-Aucune base MySQL n'est nécessaire : `FausseBase` remplace `Database` en rendant des réponses
-indexées par fragment de requête, et journalise tout ce qui est exécuté. Les tests peuvent donc
-vérifier non seulement le résultat, mais **l'ordre** des écritures — c'est ce qui compte dès
-qu'un traitement pose un verrou ou purge avant de réécrire.
-
-Deux partis pris :
-
-* une requête sans réponse déclarée lève `KeyError`. Un test qui interroge une table à laquelle
-  il n'a pas pensé échoue bruyamment, au lieu de recevoir un `None` qui ressemble à « pas de
-  données » et fait passer le test pour la mauvaise raison ;
-* `FausseBase(lecture_seule=True)` lève sur toute écriture : c'est ainsi qu'on prouve qu'un
-  traitement de contrôle n'a rien modifié, plutôt que de le relire.
-
-Les scripts SQL sont **réellement découpés** par la doublure, avec le découpeur du socle, et non
-bouchonnés : un test d'orchestration valide donc au passage ce que l'injection de paramètres a
-produit, et un script corrompu ne peut pas passer pour joué.
-"""
+"""Doublures partagées par les tests : `FausseBase` remplace `Database`, sans MySQL."""
 
 from __future__ import annotations
 
@@ -43,12 +25,8 @@ def _normaliser(sql: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _aucune_connexion_reelle(monkeypatch):
-    """Filet de sécurité : aucun test ne doit joindre une vraie base.
-
-    Un module qui importe `db_write` sous son propre nom échappe au remplacement fait par un
-    test ; sans ce filet, il se connecterait au MySQL du poste. Un test qui a besoin de
-    simuler `create_pool` ou `connect` le remplace lui-même, après ce filet.
-    """
+    """Aucune connexion réelle : un module qui importe `db_write` sous son propre nom
+    échapperait au remplacement et joindrait le MySQL du poste."""
 
     async def interdit(*args, **kwargs):
         raise AssertionError("connexion MySQL réelle tentée pendant un test")
@@ -83,7 +61,10 @@ class FauxCurseur:
 
 
 class FausseBase:
-    """Substitut de `app.db.mysql.Database` pour les tests."""
+    """Substitut de `Database` : réponses par fragment de requête, journal ordonné des écritures.
+
+    La première réponse dont le fragment correspond l'emporte ; requête sans réponse → `KeyError` ;
+    `lecture_seule=True` lève sur toute écriture."""
 
     def __init__(
         self,
@@ -97,8 +78,7 @@ class FausseBase:
         self.reponses = {_normaliser(k): v for k, v in (reponses or {}).items()}
         self.rowcounts = {_normaliser(k): v for k, v in (rowcounts or {}).items()}
         self.lecture_seule = lecture_seule
-        # Indexés par début d'aperçu d'instruction, ex. "INSERT INTO trppu_trafic_site" : c'est
-        # ainsi qu'un test fait dire à une instruction combien de lignes elle a écrites.
+        # Indexés par début d'aperçu d'instruction, ex. "INSERT INTO trppu_trafic_site".
         self.rowcounts_scripts = {k.upper(): v for k, v in (rowcounts_scripts or {}).items()}
         # Indexés par fragment de label, ex. "DSR-698_version_cle.sql@000003".
         self.echecs_scripts = dict(echecs_scripts or {})
@@ -156,12 +136,8 @@ class FausseBase:
         disable_foreign_keys: bool = False,
         skip_selects: bool = False,
     ) -> ScriptResult:
-        """Découpe le script pour de vrai, puis rend un `ScriptResult` crédible.
-
-        Le découpage réel est le point : un test d'orchestration prouve ainsi que le texte
-        produit par l'injection de paramètres est toujours un script valide, et le nombre
-        d'instructions attendu est vérifiable sans base.
-        """
+        """Découpe réellement le script (un texte injecté corrompu ne passe pas pour joué)
+        et rend un `ScriptResult` crédible."""
         if self.lecture_seule and not dry_run:
             raise EcritureInterdite(f"écriture interdite : script {label}")
 
@@ -209,9 +185,8 @@ class FausseBase:
         disable_foreign_keys: bool = False,
         skip_selects: bool = False,
     ) -> ScriptResult:
-        """Scripts déjà découpés, une connexion, une transaction : chaque unité est
-        journalisée comme un script (même libellé), et la première unité en échec fait
-        échouer l'ensemble — comme le ROLLBACK de la vraie transaction."""
+        """Unités déjà découpées, une transaction : la première unité en échec fait
+        échouer l'ensemble, comme le ROLLBACK réel."""
         if self.lecture_seule and not dry_run:
             raise EcritureInterdite("écriture interdite : lot de scripts")
 

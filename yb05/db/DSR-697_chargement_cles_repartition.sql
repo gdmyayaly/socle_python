@@ -1,12 +1,8 @@
 -- =====================================================================================
 -- DSR-697 — Chargement initial du référentiel des PDI (fichier CSV métier)
 -- =====================================================================================
--- PREMIER maillon de la chaîne : alimente `trppu_cles_repartition` à partir du fichier CSV
--- fourni par le métier. Tout le reste en découle — les agrégats DSR-696, les versions
--- DSR-698 et les clés DSR-699 ne lisent que cette table.
---
---   fichier CSV métier  →  trppu_cles_repartition  →  trppu_trafic_site  →  …
---
+-- PREMIER maillon de la chaîne : alimente `trppu_cles_repartition` depuis le CSV métier,
+-- seule source de DSR-696, DSR-698 et DSR-699.
 -- Règles de gestion couvertes
 --   RG1  toutes les lignes chargées portent le même `id_referentiel`
 --   RG2  lignes actives : `date_debut_validite` = date du chargement, `date_fin_validite` NULL
@@ -16,38 +12,20 @@
 --   RG5  unicité (id_pdi, id_referentiel)
 --   RG6  purge du référentiel cible avant chargement
 --
--- Prérequis
---   * le fichier est DÉDOUBLONNÉ (RG4) et déposé dans le répertoire autorisé du serveur
---     MySQL — `@@secure_file_priv`, typiquement `/var/lib/mysql-files/` ;
---   * le compte utilisé porte le privilège `FILE` ;
---   * l'unicité `uk_pdi_ref (id_pdi, id_referentiel)` est en place — elle l'est dans le
---     schéma livré, et c'est elle qui rend la RG5 vraie en base.
---
--- `DSR-696-699_migration.sql` n'est PAS un prérequis de ce script : aucun des quatre objets
--- qu'elle pose n'est lu ici. L'ordre recommandé est même l'inverse — charger, PUIS migrer,
--- pour que `idx_cr_ref_actif` soit construit une fois sur la table pleine plutôt que
--- maintenu ligne à ligne pendant le chargement. Cf. `db/README.md`.
---
--- ATTENTION — le chemin du fichier ne peut pas être paramétré. `LOAD DATA` n'accepte qu'un
--- littéral, et la voie de contournement habituelle (PREPARE/EXECUTE, comme la migration)
--- n'est pas ouverte : cette instruction ne figure pas parmi les instructions préparables.
--- Le chemin de l'étape 2 est donc À ÉDITER À LA MAIN, en même temps que `@id_referentiel`.
---
--- USAGE — renseigner le paramètre et le chemin, puis :
---   mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-697_chargement_cles_repartition.sql
---
--- Le script est REJOUABLE : la purge RG6 le rend idempotent, deux exécutions consécutives
--- laissent la table dans le même état. Il ne contient aucun DDL et reste donc entièrement
--- annulable — mais sur 22 M de lignes, le ROLLBACK a un coût, cf. `db/README.md`.
+-- Prérequis : fichier DÉDOUBLONNÉ (RG4) dans `@@secure_file_priv` ; privilège `FILE` ;
+-- unicité `uk_pdi_ref (id_pdi, id_referentiel)` (RG5). La migration se joue APRÈS, pour
+-- construire `idx_cr_ref_actif` une fois sur la table pleine.
+-- ATTENTION — chemin du fichier À ÉDITER À LA MAIN : `LOAD DATA` n'accepte qu'un littéral
+-- et n'est pas préparable.
+-- Usage : mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-697_chargement_cles_repartition.sql
+-- REJOUABLE (purge RG6), sans DDL donc annulable — ROLLBACK coûteux sur 22 M de lignes.
 -- =====================================================================================
 
 
 -- -------------------------------------------------------------------------------------
 -- Paramètres
 -- -------------------------------------------------------------------------------------
--- Comme les trois autres scripts, le fichier tourne sur une connexion unique : cette
--- variable de session reste visible par toutes ses instructions. Elle alimente la purge et
--- la colonne `id_referentiel` des lignes chargées (RG1), mais PAS le chemin du fichier.
+-- Alimente la purge et `id_referentiel` (RG1), mais PAS le chemin du fichier.
 
 SET @id_referentiel := 1;      -- référentiel chargé — obligatoire
 
@@ -55,14 +33,8 @@ SET @id_referentiel := 1;      -- référentiel chargé — obligatoire
 -- -------------------------------------------------------------------------------------
 -- Durcissement du mode SQL — un fichier mal formé doit échouer, pas se tronquer
 -- -------------------------------------------------------------------------------------
--- Hors mode strict, `LOAD DATA` ne rejette presque rien : une valeur non numérique devient
--- 0, une chaîne trop longue est tronquée, une date invalide devient '0000-00-00', et le
--- chargement se termine « avec succès » sur un avertissement. C'est exactement ce qu'il ne
--- faut pas pour une photographie du référentiel dont tout le calcul des clés dépend : mieux
--- vaut une erreur au chargement qu'un trafic silencieusement ramené à zéro.
---
--- La modification ne vaut que pour la session du script ; elle ne touche ni la configuration
--- du serveur, ni les connexions applicatives.
+-- Hors mode strict, `LOAD DATA` tronque ou met à 0 sur simple avertissement : on veut une
+-- erreur plutôt qu'un trafic faux. Portée : la session seule.
 
 SET SESSION sql_mode = CONCAT(@@sql_mode, ',STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE');
 
@@ -70,16 +42,9 @@ SET SESSION sql_mode = CONCAT(@@sql_mode, ',STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZE
 -- -------------------------------------------------------------------------------------
 -- Garde-fou — état du référentiel cible et accès au fichier, AVANT toute écriture
 -- -------------------------------------------------------------------------------------
--- `repertoire_autorise` donne le seul répertoire depuis lequel le serveur acceptera de lire.
--- Trois valeurs possibles : un chemin (déposer le fichier dedans), une chaîne vide (aucune
--- restriction) ou NULL (`LOAD DATA INFILE` interdit — il faut alors passer par la variante
--- `LOCAL`, cf. `db/README.md`).
---
--- `nb_lignes_deja_presentes` annonce ce que la purge RG6 va supprimer. Sur un rechargement,
--- ce nombre doit correspondre au chargement précédent ; sur un premier chargement, il vaut 0.
---
--- `trppu_referentiel` n'est pas interrogée : aucun ticket ne l'alimente, le référentiel est
--- porté par les versions de clés (DSR-698), et la table est vouée à disparaître.
+-- `repertoire_autorise` : chemin où déposer le fichier, vide = libre, NULL = passer par
+-- `LOCAL` (cf. `db/README.md`). `nb_lignes_deja_presentes` : ce que la purge RG6 supprimera.
+-- `trppu_referentiel` n'est pas interrogée : le référentiel est porté par `trppu_version_cle`.
 SELECT @id_referentiel                                          AS id_referentiel_demande,
        @@secure_file_priv                                       AS repertoire_autorise,
        (SELECT COUNT(*) FROM trppu_cles_repartition
@@ -91,23 +56,10 @@ SELECT @id_referentiel                                          AS id_referentie
 -- -------------------------------------------------------------------------------------
 -- Étape 1 — purge du référentiel cible (RG6)
 -- -------------------------------------------------------------------------------------
--- « Le chargement est réalisé dans le référentiel cible après suppression des données
--- éventuellement déjà présentes pour le référentiel à charger. » Le filtre porte sur le seul
--- référentiel chargé : les autres sont intacts, c'est ce qui fait l'historisation.
---
--- DELETE et non TRUNCATE, bien que la table soit volumineuse et que TRUNCATE soit
--- instantané : TRUNCATE viderait TOUS les référentiels, remettrait l'AUTO_INCREMENT à zéro
--- et, étant du DDL, provoquerait un commit implicite qui interdirait tout retour arrière.
---
--- À savoir sur un rechargement complet : ce DELETE est la partie la plus lente du script et
--- construit un journal d'annulation à la mesure du nombre de lignes supprimées. Cf.
--- `db/README.md`, section « Rejouabilité », pour la marche à suivre quand il devient
--- problématique.
---
--- Les agrégats DSR-696 déjà calculés sur ce référentiel ne sont PAS purgés ici : ils
--- deviennent périmés, et c'est `DSR-696_site_trafic.sql` — dont la première écriture est
--- précisément un DELETE ciblé — qui les remplace. D'où le compteur du garde-fou ci-dessus :
--- s'il est non nul, DSR-696 est à rejouer après ce chargement.
+-- Seul le référentiel chargé est purgé (historisation). DELETE et non TRUNCATE : TRUNCATE
+-- viderait tous les référentiels et, DDL, commiterait implicitement. Partie la plus lente
+-- (cf. `db/README.md`, « Rejouabilité »).
+-- Les agrégats DSR-696 ne sont pas purgés ici : rejouer DSR-696 après ce chargement.
 
 DELETE FROM trppu_cles_repartition
  WHERE id_referentiel = @id_referentiel;
@@ -116,30 +68,12 @@ DELETE FROM trppu_cles_repartition
 -- -------------------------------------------------------------------------------------
 -- Étape 2 — chargement du fichier
 -- -------------------------------------------------------------------------------------
--- CHEMIN À ÉDITER — il ne peut pas venir d'une variable, cf. l'en-tête du fichier.
---
--- La liste de colonnes décrit l'ordre des champs DU FICHIER, pas celui de la table : le
--- mapping est positionnel. Elle suit donc exactement l'ordre du ticket. Quatre champs sont
--- captés dans des variables `@…` pour être convertis avant écriture (RG3) : sans ce détour,
--- une chaîne vide deviendrait `''` sur les deux colonnes texte et 0 sur les deux colonnes
--- numériques — or 0 et « inconnu » ne se confondent pas pour un potentiel IP.
---
--- Les quatre colonnes restantes de la table ne viennent pas du fichier :
---   * `id` est AUTO_INCREMENT ;
---   * `id_referentiel`, `date_debut_validite` et `date_fin_validite` sont posées par le SET
---     ci-dessous (RG1, RG2).
---
--- `LINES TERMINATED BY '\n'` suppose un fichier à fins de ligne Unix. Un CSV produit sous
--- Windows se termine par `\r\n` : le `\r` resterait collé au dernier champ de chaque ligne —
--- ici `@potentielip`, dont la conversion numérique échouerait alors en mode strict.
--- Remplacer par `'\r\n'` le cas échéant ; c'est le premier réflexe devant une erreur 1265
--- sur la dernière colonne.
---
--- Pas de `IGNORE` ni de `REPLACE` : un doublon de `(id_pdi, id_referentiel)` doit faire
--- ÉCHOUER le chargement (erreur 1062) et non se voir silencieusement écarté ou écrasé. Un
--- tel doublon signale un fichier dont la déduplication RG4 n'a pas suffi — elle porte sur la
--- ligne entière, pas sur le PDI : deux lignes d'un même PDI aux trafics différents y
--- survivent toutes les deux. Cf. `db/README.md`, contrôle du fichier avant dépôt.
+-- CHEMIN À ÉDITER (littéral obligatoire, cf. en-tête).
+-- Colonnes dans l'ordre DU FICHIER (mapping positionnel). Champs `@…` convertis en NULL si
+-- vides (RG3) : 0 et « inconnu » ne se confondent pas.
+-- `'\n'` suppose un CSV Unix : sous Windows, passer à `'\r\n'` (sinon erreur 1265 sur
+-- `@potentielip` en mode strict).
+-- Ni `IGNORE` ni `REPLACE` : un doublon (id_pdi, id_referentiel) doit échouer (erreur 1062).
 
 LOAD DATA INFILE '/var/lib/mysql-files/cles_repartitions_final_joined_ref1.csv'
   INTO TABLE trppu_cles_repartition
@@ -176,12 +110,8 @@ LOAD DATA INFILE '/var/lib/mysql-files/cles_repartitions_final_joined_ref1.csv'
 -- -------------------------------------------------------------------------------------
 
 -- Contrôle 1 (CA1 + CA3) : volumétrie chargée.
--- `nb_lignes` doit être égal au nombre de lignes du fichier dédoublonné, en-tête déduit, et
--- `nb_pdi_distincts` lui être égal — sinon le chargement aurait échoué sur `uk_pdi_ref`.
---
--- Le ticket écrit `SELECT COUNT FROM …` : sans parenthèses, `COUNT` est lu comme un nom de
--- colonne et l'instruction échoue en `ERROR 1054`. Corrigé ici, comme dans les contrôles
--- suivants.
+-- `nb_lignes` = lignes du fichier dédoublonné hors en-tête = `nb_pdi_distincts`.
+-- (`COUNT` du ticket corrigé en `COUNT(*)` : ERROR 1054 sinon.)
 SELECT @id_referentiel                AS id_referentiel,
        COUNT(*)                       AS nb_lignes,
        COUNT(DISTINCT id_pdi)         AS nb_pdi_distincts,
@@ -192,8 +122,7 @@ SELECT @id_referentiel                AS id_referentiel,
  WHERE id_referentiel = @id_referentiel;
 
 -- Contrôle 2 (CA3 + RG5) : aucun PDI chargé deux fois — doit renvoyer 0 ligne.
--- Garanti en base par `uk_pdi_ref` ; le contrôle reste utile là où cet index aurait été
--- retiré pour accélérer un chargement de masse.
+-- Garanti par `uk_pdi_ref`, sauf si l'index a été retiré pour un chargement de masse.
 SELECT id_pdi,
        COUNT(*) AS nb_lignes
   FROM trppu_cles_repartition
@@ -211,13 +140,8 @@ SELECT id_pdi,
  LIMIT 50;
 
 -- Contrôle 4 (CA4) : les champs métier vides sont stockés à NULL.
--- `nb_chaines_vides` doit valoir 0 — une seule chaîne vide restante signerait un `SET` de
--- l'étape 2 oublié, et se propagerait en clé de jointure fantôme pour l'établissement.
--- Les compteurs de NULL sont donnés pour mémoire : ils ne sont pas anormaux, ils mesurent la
--- part du fichier qui ne renseigne pas ces champs.
--- Le `COALESCE` du premier compteur n'est pas décoratif : sur une ligne dont les deux
--- colonnes sont NULL, la comparaison rend NULL, et `SUM` l'ignorerait — un référentiel sans
--- aucun établissement renseigné afficherait alors NULL là où l'on attend 0.
+-- `nb_chaines_vides` doit valoir 0 ; les compteurs de NULL sont pour mémoire.
+-- `COALESCE` : sans lui, un référentiel sans établissement afficherait NULL au lieu de 0.
 SELECT SUM(COALESCE(co_regate_etablissement = ''
                  OR lb_etablissement = '', 0))                     AS nb_chaines_vides,
        SUM(co_regate_etablissement IS NULL)                        AS nb_etablissement_null,
@@ -229,11 +153,8 @@ SELECT SUM(COALESCE(co_regate_etablissement = ''
  WHERE id_referentiel = @id_referentiel;
 
 -- Contrôle 5 — débordement décimal, à lire AVANT de jouer DSR-696.
--- Les trafics sources sont en `decimal(25,19)`, les totaux de `trppu_trafic_site` en
--- `decimal(24,18)` : six chiffres avant la virgule, soit 999999 au maximum. Or DSR-696 y
--- écrit la SOMME des trafics d'un site. `verdict` doit valoir OK ; en ANOMALIE, élargir les
--- trois colonnes `trafic_*_total` avant de lancer l'agrégation, qui échouerait sinon en
--- `ERROR 1264 (Out of range value)`.
+-- Totaux en `decimal(24,18)` : 999999 au plus par site. En ANOMALIE, jouer
+-- `fix_error.sql` avant DSR-696 (sinon `ERROR 1264`).
 SELECT MAX(somme_colis)                             AS max_somme_colis,
        MAX(somme_oo)                                AS max_somme_oo,
        MAX(somme_3s)                                AS max_somme_3s,
@@ -249,9 +170,7 @@ SELECT MAX(somme_colis)                             AS max_somme_colis,
          GROUP BY co_regate_site) x;
 
 -- Contrôle 6 (CA7) : historisation — un jeu de lignes par référentiel, les autres intacts.
--- C'est aussi le périmètre que DSR-696 puis DSR-699 vont traiter : `nb_sites` du référentiel
--- chargé est le nombre de lignes attendu dans `trppu_trafic_site`, et le nombre de versions
--- à créer par DSR-698.
+-- `nb_sites` = lignes attendues dans `trppu_trafic_site` et versions à créer (DSR-698).
 SELECT id_referentiel,
        COUNT(*)                       AS nb_lignes,
        COUNT(DISTINCT co_regate_site) AS nb_sites,

@@ -1,12 +1,6 @@
-"""Rapport d'exécution d'un traitement : contrôles `[OK]` / `[KO]`, verdict, motifs.
+"""Rapport d'exécution commun aux commandes : contrôles `[OK]` / `[KO]`, verdict, motifs.
 
-Format de sortie commun à toutes les commandes métier : un bandeau, une ligne par contrôle
-préfixée `[OK]` ou `[KO]`, un `RESULTAT :` final et, en cas de refus, la liste des motifs
-bloquants. Le porter une seule fois garantit que les commandes se ressemblent — et rend le
-format testable sans base.
-
-Le même objet sait se rendre en JSON (option `--json` de la CLI) : le texte est destiné à
-l'exploitant, le JSON à un ordonnanceur ou à une supervision.
+Rendu en texte pour l'exploitant ou en JSON (`--json`) pour un ordonnanceur.
 """
 
 from __future__ import annotations
@@ -16,19 +10,14 @@ from typing import Any
 
 LARGEUR_BANDEAU = 50
 
-# Verdicts — ils sont lus par l'exploitation, ne pas les reformuler à la légère.
+# Verdicts lus par l'exploitation : ne pas les reformuler.
 SUCCES = "SUCCES"
 ECHEC = "ECHEC"
 
 
 @dataclass(frozen=True)
 class Controle:
-    """Un point de contrôle, ou une information de déroulement.
-
-    `libelle` est ce qui s'affiche quand tout va bien (« Référentiel déclaré »), `motif` ce
-    qui s'affiche à la place en cas d'échec (« Le référentiel 7 n'existe pas ») — jamais les
-    deux à la fois.
-    """
+    """Un point de contrôle : `libelle` affiché si OK, `motif` à la place en cas d'échec."""
 
     libelle: str
     ok: bool = True
@@ -74,7 +63,7 @@ class Rapport:
         return controle
 
     def ajouter(self, ok: bool, libelle: str, motif: str) -> Controle:
-        """Ajoute un contrôle dont l'issue est calculée — évite un `if` chez l'appelant."""
+        """Ajoute un contrôle réussi ou en échec selon `ok`."""
         return self.ok(libelle) if ok else self.ko(motif, libelle=libelle)
 
     # ------------------------------------------------------------------

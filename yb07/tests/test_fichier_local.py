@@ -1,8 +1,4 @@
-"""Tests de l'accès aux fichiers locaux (`app/services/fichier_local.py`).
-
-Fichiers réels écrits dans le dossier temporaire de pytest : rien n'est simulé, c'est le
-comportement du disque qui est vérifié.
-"""
+"""Tests de `app/services/fichier_local.py`, sur de vrais fichiers dans `tmp_path`."""
 
 from __future__ import annotations
 

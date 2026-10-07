@@ -1,9 +1,4 @@
-"""DSR-701 — les douze règles d'éligibilité, une par une.
-
-Chaque règle est testée dans son cas bloquant : c'est là qu'une inversion de condition se voit.
-Le cas nominal, lui, vérifie surtout que les douze règles sont bien toutes évaluées et
-affichées — un contrôle oublié passerait sinon inaperçu, le verdict restant vert.
-"""
+"""DSR-701 — les douze règles d'éligibilité, chacune dans son cas bloquant."""
 
 import asyncio
 
@@ -48,10 +43,7 @@ def test_les_douze_regles_sont_toutes_evaluees():
 
 
 def test_le_controle_n_ecrit_rien():
-    """CA-05 : le traitement ELIGIBILITE n'insère, ne modifie et ne met à jour rien.
-
-    La doublure lève sur toute écriture : si le traitement en tentait une, ce test échouerait.
-    """
+    """CA-05 : ELIGIBILITE n'écrit rien (la doublure lève sur toute écriture)."""
     rapport, base = _controler(reponses_eligibles())
 
     assert rapport.reussi
@@ -132,8 +124,7 @@ def test_regle_9_aucune_version_de_cles_active():
 
 
 def test_regle_10_referentiel_lu_dans_la_version_de_cles():
-    """Le référentiel actif est celui de la version de clés active (DSR-702 étape 3, variante
-    `trppu_version_cle`, retenue par le rédacteur des tickets)."""
+    """Référentiel actif lu dans la version de clés active (DSR-702 étape 3)."""
     rapport, _ = _controler(reponses_eligibles())
 
     assert "Référentiel actif disponible (2)" in [c.libelle for c in rapport.controles]
@@ -151,7 +142,7 @@ def test_regle_10_version_sans_referentiel(valeur):
 
 
 def test_regle_10_ne_lit_jamais_trppu_referentiel():
-    """Table alimentée par aucun ticket et vouée à disparaître : plus aucune lecture."""
+    """`trppu_referentiel` n'est plus utilisée."""
     _, base = _controler(reponses_eligibles())
 
     assert not any("trppu_referentiel" in sql for _, sql, _ in base.journal)

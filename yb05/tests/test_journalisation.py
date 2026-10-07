@@ -1,11 +1,7 @@
-"""Tests de la journalisation en base (`trppu_recalcul_log`) et du verrou.
+"""Journal `trppu_recalcul_log` et verrou de calcul.
 
-`journaliser` est appelée depuis les chemins d'échec, juste après `liberer_verrou`.
-Si elle levait, son exception remplacerait l'erreur métier d'origine : l'exploitant
-lirait un incident base à la place de la cause réelle. Elle est donc best-effort.
-
-`liberer_verrou`, à l'inverse, reste propageante : un verrou non libéré laisse le
-scénario bloqué pour tous les autres processus et doit rester un échec visible.
+`journaliser` est best-effort (ne masque pas l'erreur métier) ; `liberer_verrou` propage
+(un verrou non libéré bloque le scénario pour tous).
 """
 
 import asyncio
@@ -71,7 +67,7 @@ def test_echec_d_ecriture_ne_remonte_pas(caplog):
 
 
 def test_erreur_metier_preservee_malgre_un_echec_de_journalisation():
-    """Reproduit le chemin d'échec réel : l'appelant doit voir SA cause, pas celle de l'audit."""
+    """L'appelant voit la cause métier, pas l'échec de l'audit."""
     db = BaseEnPanne(RuntimeError("audit KO"))
 
     async def chemin_d_echec() -> str:
@@ -101,7 +97,7 @@ def test_liberer_verrou_journalise_la_volumetrie(caplog):
     assert "rows_affected=1" in caplog.text
 
 
-# --- prendre_verrou : la collision entre workers, jusqu'ici muette ---------
+# --- prendre_verrou : collision entre workers ------------------------------
 
 
 def test_verrou_obtenu():

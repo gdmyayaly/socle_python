@@ -1,9 +1,4 @@
-"""DSR-703 — agrégation des trafics PDI par Agrébal.
-
-Le traitement ne calcule rien lui-même : il somme. Les tests portent donc sur les contrôles
-préalables, sur la forme des trois agrégations (une par couleur PIC), et sur la fin de calcul —
-c'est ce traitement qui libère le scénario.
-"""
+"""DSR-703 — agrégation des trafics PDI par Agrébal : contrôles, trois agrégations, libération."""
 
 import asyncio
 

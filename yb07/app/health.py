@@ -1,7 +1,6 @@
-"""Vérifications de la base de données : configuration, informations serveur, disponibilité.
+"""Vérifications de la base : configuration, informations serveur, disponibilité.
 
-Ces fonctions ne dépendent d'aucun framework : elles retournent des dictionnaires et sont
-utilisables aussi bien depuis la CLI (`app/main.py`) que depuis un module métier.
+Fonctions sans framework, qui retournent des dictionnaires.
 """
 
 import logging
@@ -17,7 +16,6 @@ from app.log_utils import ctx
 
 logger = logging.getLogger(__name__)
 
-# Informations du serveur MySQL et du schéma courant.
 SERVER_INFO_QUERY = """
     SELECT VERSION()      AS version,
            DATABASE()     AS schema_courant,
@@ -55,10 +53,7 @@ def describe_connection(db: Database) -> dict:
 
 
 async def fetch_server_info(db: Database | None = None) -> dict:
-    """Interroge le serveur MySQL : version, schéma courant, utilisateur, nombre de tables.
-
-    Retourne `{"status": "ok", ...}` ou `{"status": "disconnected", "error": "..."}`.
-    """
+    """Version, schéma, utilisateur et nombre de tables ; `status` ok ou disconnected."""
     db = db if db is not None else db_read
     try:
         info = await db.fetch_one(SERVER_INFO_QUERY) or {}
@@ -95,10 +90,7 @@ async def _ping(db: Database, libelle: str) -> str:
 
 
 async def check_resources() -> dict:
-    """Teste la disponibilité réelle des deux instances MySQL (lecture et écriture).
-
-    Ne lève jamais : chaque ressource est reportée à `connected`, `error` ou `disconnected`.
-    """
+    """Teste les instances lecture et écriture ; ne lève jamais."""
     mysql_read_status = await _ping(db_read, "lecture")
     mysql_write_status = await _ping(db_write, "écriture")
 

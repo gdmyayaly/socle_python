@@ -1,13 +1,6 @@
-"""Petits utilitaires de logging partagés.
+"""Utilitaires de logging (portage réduit de `python/app/log_utils.py`).
 
-Portage réduit de `python/app/log_utils.py` (module YS04). La grammaire des messages
-est commune aux deux modules — cf. `python/api_docs/CONVENTION-LOGS.md` et, pour les
-écarts propres au batch, `yb05/docs/CONVENTION-LOGS.md`.
-
-Ce qui n'est **pas** porté : `params_loggables`, `CHAMPS_SENSIBLES` et `diff_champs`.
-YB05 ne manipule aucun `id_rh` — la contrainte de non-journalisation qui les motive
-côté API ne s'applique pas ici, et les états avant/après sont déjà portés par
-`Rapport.etats`.
+Convention : `yb05/docs/CONVENTION-LOGS.md`.
 """
 
 from __future__ import annotations
@@ -17,25 +10,13 @@ from typing import Any
 
 # --- Identifiant de corrélation ---------------------------------------------
 #
-# YB05 est un batch : il n'a pas d'`id_session_ihm` comme l'API YS04. Son pendant
-# est le scénario en cours de traitement.
-#
-# En mode ALL, `NB_WORKER` scénarios sont traités par des tâches asyncio
-# concurrentes et leurs lignes de log s'entrelacent. Le ContextVar est posé une
-# fois par le worker (cf. `orchestrateur._worker`) puis relu par `JsonFormatter`
-# pour l'ajouter à *chaque* ligne — y compris celles émises par les couches
-# basses (`app.db.mysql`), qui n'ont aucun moyen de connaître le scénario.
-# Les ContextVar sont isolés par tâche asyncio : un worker ne voit jamais le
-# scénario d'un autre.
+# Scénario en cours, ajouté par `JsonFormatter` à chaque ligne (y compris `app.db.mysql`).
+# Un ContextVar est isolé par tâche asyncio : les workers du mode ALL ne se mélangent pas.
 _id_scenario: ContextVar[int | None] = ContextVar("id_scenario", default=None)
 
 
 def set_id_scenario(value: int | None) -> Token:
-    """Pose le scénario du contexte courant et retourne le token de reset.
-
-    Normalise l'entrée : une valeur non convertible en entier vaut `None` plutôt
-    que de faire échouer le traitement qu'elle ne fait qu'annoter.
-    """
+    """Pose le scénario du contexte (non entier -> None) et retourne le token de reset."""
     if value is not None:
         try:
             value = int(value)
@@ -56,10 +37,8 @@ def reset_id_scenario(token: Token) -> None:
 
 # --- Site du scénario ------------------------------------------------------------
 #
-# Le code site (`co_regate`) et le code ROC (`co_roc`) du scénario en cours, posés dès
-# qu'ils sont connus (liste du mode ALL, puis `scenario.charger_scenario`) et relus par
-# `JsonFormatter` comme `id_scenario` : une recherche Kibana par site retrouve toutes
-# les lignes de ses scénarios, y compris celles de `app.db.mysql`.
+# (co_regate, co_roc) du scénario en cours, posés dès qu'ils sont connus et relus par
+# `JsonFormatter` : recherche Kibana par site.
 _site: ContextVar[tuple[str | None, str | None]] = ContextVar("site", default=(None, None))
 
 
@@ -90,11 +69,7 @@ def reset_site(token: Token) -> None:
 
 
 def safe_preview(obj: Any, max_len: int = 500) -> str:
-    """Représentation tronquée d'un objet pour les logs.
-
-    - Évite de dump des Mo en cas de gros volume.
-    - Encapsule `repr()` pour ne jamais lever.
-    """
+    """`repr()` tronqué pour les logs, sans jamais lever."""
     try:
         s = repr(obj)
     except Exception:
@@ -112,19 +87,12 @@ def safe_preview(obj: Any, max_len: int = 500) -> str:
 #     Rejet  <action> (<cle>=<valeur>, …, verdict=…, motif=…)
 #     Erreur <action> (<cle>=<valeur>, …)      # toujours via logger.exception
 
-# Longueur max retenue pour une valeur rendue dans un bloc de contexte. Plus courte
-# que le `safe_preview` par défaut : un contexte agrège plusieurs valeurs sur une
-# même ligne.
+# Longueur max d'une valeur de contexte (plusieurs valeurs par ligne).
 CTX_VALEUR_MAX_LEN = 300
 
 
 def _rendre_valeur(valeur: Any) -> str:
-    """Rend une valeur pour un bloc de contexte, sans jamais lever.
-
-    Les scalaires sont rendus tels quels (un `id_scenario` ne doit pas se retrouver
-    entre guillemets) ; tout le reste passe par `safe_preview`, qui borne la
-    longueur et encapsule `repr()`.
-    """
+    """Scalaires tels quels (sans guillemets), le reste via `safe_preview` ; ne lève jamais."""
     if isinstance(valeur, float):
         return f"{valeur:.1f}"
     if isinstance(valeur, (bool, int)):
@@ -137,14 +105,7 @@ def _rendre_valeur(valeur: Any) -> str:
 
 
 class _Contexte:
-    """Bloc `(cle=valeur, …)` rendu paresseusement.
-
-    Le rendu n'a lieu que si l'enregistrement est réellement émis : `logging`
-    n'appelle `__str__` qu'au moment de construire le message. Passer par une
-    simple fonction évaluerait le contexte même quand le niveau est désactivé —
-    coûteux sur les `logger.debug` des étapes de calcul, qui ne sont visibles
-    qu'avec `-v`.
-    """
+    """Bloc `(cle=valeur, …)` rendu paresseusement : rien n'est calculé si le niveau est coupé."""
 
     __slots__ = ("_champs",)
 
@@ -166,17 +127,7 @@ class _Contexte:
 
 
 def ctx(**champs: Any) -> _Contexte:
-    """Bloc de contexte normalisé pour un message de log.
-
-    Ordre des arguments préservé (identifiants d'abord, `duration_ms` en dernier),
-    valeurs `None` omises, valeurs longues tronquées.
-
-        logger.info("Fin calcul trafics PDI %s", ctx(lignes=1240, duration_ms=8421.0))
-        -> "Fin calcul trafics PDI (lignes=1240, duration_ms=8421.0)"
-
-    À passer en **argument** de `%s`, jamais concaténé au message : sinon le rendu
-    paresseux est perdu.
-    """
+    """Bloc de contexte d'un log (ordre préservé, None omis) ; à passer en argument de `%s`."""
     return _Contexte(champs)
 
 

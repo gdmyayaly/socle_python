@@ -1,11 +1,6 @@
-"""Accès au scénario et à son contexte de calcul : verrou, flags, référentiel, journal.
+"""Accès au scénario commun à DSR-701/702/703 : lecture, verrou, référentiel, journal.
 
-Tout ce qui est commun à DSR-701, DSR-702 et DSR-703 vit ici, pour que les trois traitements
-lisent le scénario de la même façon et posent le même verrou.
-
-Note sur la casse des colonnes : le schéma déclare `Calcul_trafic_en_cours` avec une majuscule.
-Les noms de colonnes MySQL étant insensibles à la casse, tout est écrit en minuscules ici — la
-seule chose qui compte est que le nom soit reconnaissable d'un `grep` à l'autre.
+Colonnes écrites en minuscules (`Calcul_trafic_en_cours` au schéma) : MySQL y est insensible.
 """
 
 from __future__ import annotations
@@ -57,9 +52,8 @@ SELECT_VERSION_CLE_ACTIVE_SQL = """
      LIMIT 1
 """
 
-# DSR-701 règle 11 désigne `trppu_trafic_agrebal` — table des trafics CALCULÉS, que la règle 6
-# exige justement vide avant un premier calcul. Les Agrébals d'un site vivent dans
-# `trppu_agrebal_pdi` ; c'est elle qui est interrogée. Cf. docs/DIAGNOSTIC-DSR-701-703.md.
+# DSR-701 règle 11 : les Agrébals du site sont lus dans `trppu_agrebal_pdi` (et non
+# `trppu_trafic_agrebal`, table calculée). Cf. docs/DIAGNOSTIC-DSR-701-703.md.
 SELECT_AGREBALS_DU_SITE_SQL = """
     SELECT agrebal_id,
            agrebal_uuid,
@@ -104,11 +98,9 @@ INSERT_RECALCUL_LOG_SQL = """
 
 
 async def charger_scenario(db_lecture, id_scenario: int) -> dict[str, Any] | None:
-    """Le scénario, ou None s'il n'existe pas (DSR-701 règle 1).
+    """Le scénario, ou None (DSR-701 règle 1) ; pose site et ROC dans le contexte de log.
 
-    Pose aussi son site et son ROC dans le contexte de log : toutes les lignes suivantes
-    les portent. Le reset appartient à l'appelant qui a ouvert le contexte
-    (`orchestrateur._worker`, `main._executer_traitement`).
+    Le reset du contexte appartient à l'appelant qui l'a ouvert.
     """
     scenario = await db_lecture.fetch_one(SELECT_SCENARIO_SQL, (id_scenario,))
     if scenario:
@@ -122,24 +114,15 @@ async def compter_coefficients_pic(db_lecture, id_pic_version: int) -> int:
 
 
 async def version_cle_active(db_lecture, co_regate: str) -> dict[str, Any] | None:
-    """Version de clés active du site, avec son référentiel (DSR-701 règles 9 et 10, DSR-702
-    étape 3).
+    """Version de clés active du site et son référentiel (DSR-701 règles 9-10, DSR-702 ét. 3).
 
-    C'est la **seule** source du référentiel : DSR-701 et DSR-702 proposent de le lire soit
-    dans `trppu_referentiel`, soit dans `trppu_version_cle`, et le rédacteur des tickets a
-    retenu la seconde (02/10/2026) — `trppu_referentiel` n'est alimentée par aucun ticket et
-    est vouée à disparaître. Lus sur la même ligne, version et référentiel sont cohérents
-    par construction.
+    Seule source du référentiel : `trppu_referentiel` n'est plus utilisée.
     """
     return await db_lecture.fetch_one(SELECT_VERSION_CLE_ACTIVE_SQL, (co_regate,))
 
 
 def referentiel_de_la_version(version: dict[str, Any] | None) -> int | None:
-    """Référentiel actif du site : celui de sa version de clés active, None s'il manque.
-
-    Un `id_referentiel` nul ou à 0 est traité comme absent : ce ne peut pas être un vrai
-    référentiel, et calculer dessus n'aurait pas de traçabilité exploitable (DSR-700).
-    """
+    """Référentiel de la version de clés ; nul ou 0 = absent (None), cf. DSR-700."""
     if not version:
         return None
     try:
@@ -150,12 +133,9 @@ def referentiel_de_la_version(version: dict[str, Any] | None) -> int | None:
 
 
 async def agrebals_du_site(db_lecture, co_regate: str) -> list[dict[str, Any]]:
-    """Agrébals actifs du site, avec leur liste de PDI déjà désérialisée.
+    """Agrébals actifs du site, `agrebal_pdiList` (JSON `[{"pdi_id": …}]`) désérialisé en Python.
 
-    `agrebal_pdiList` est un JSON `[{"pdi_id": …}, …]` — la colonne générée
-    `agrebal_pdi_ids` du schéma confirme le nom de la propriété. La désérialisation est faite
-    ici, en Python, plutôt qu'avec `JSON_TABLE` : le code ne dépend ainsi d'aucune version
-    particulière de MySQL.
+    Pas de `JSON_TABLE` : aucune dépendance à une version de MySQL.
     """
     lignes = await db_lecture.fetch_all(SELECT_AGREBALS_DU_SITE_SQL, (co_regate,))
     for ligne in lignes:
@@ -191,11 +171,7 @@ def _extraire_pdi_ids(brut: Any) -> list[int]:
 
 
 async def determiner_raison(db_lecture, scenario: dict[str, Any]) -> str:
-    """Motif du calcul, au sens de `trppu_recalcul_log.raison`.
-
-    Règle du ticket : `INITIAL` si les deux flags de trafic sont à 0 et qu'aucune demande de
-    recalcul n'a été enregistrée ; sinon la raison de la dernière demande.
-    """
+    """Raison de la dernière demande de recalcul, `INITIAL` s'il n'y en a pas."""
     ligne = await db_lecture.fetch_one(
         SELECT_DERNIERE_RAISON_SQL, (scenario["id_scenario"],)
     )
@@ -211,23 +187,18 @@ async def determiner_raison(db_lecture, scenario: dict[str, Any]) -> str:
 
 
 async def prendre_verrou(db_ecriture, id_scenario: int) -> bool:
-    """Pose `calcul_trafic_en_cours = 1` et dit si le verrou a été obtenu.
+    """Pose `calcul_trafic_en_cours = 1` ; True si le verrou est obtenu.
 
-    L'`UPDATE` conditionnel est ce qui porte l'exclusion mutuelle : deux processus lancés en
-    même temps voient forcément l'un 1 ligne affectée, l'autre 0. Il est exécuté **seul**, donc
-    commité immédiatement — dans la transaction du calcul, le verrou resterait invisible des
-    autres processus jusqu'au commit final, c'est-à-dire trop tard.
+    L'`UPDATE … WHERE calcul_trafic_en_cours = 0` porte l'exclusion mutuelle ; exécuté seul,
+    donc commité aussitôt (dans la transaction du calcul, il serait invisible des autres).
     """
-    # Une seule tentative : rejouée après une coupure survenue APRÈS le commit, la pose
-    # trouverait le verrou déjà à 1 et conclurait à tort « calcul déjà en cours ». Mieux vaut
-    # un échec franc, qui dit que l'état du verrou est à vérifier.
+    # retries=1 : rejouée après une coupure post-commit, la pose conclurait à tort
+    # « calcul déjà en cours ».
     lignes = await db_ecriture.execute(PRENDRE_VERROU_SQL, (id_scenario,), retries=1)
     obtenu = bool(lignes)
     if obtenu:
         logger.info("Verrou de calcul obtenu %s", ctx(id_scenario=id_scenario))
     else:
-        # 0 ligne affectée = un autre processus détient le scénario. L'appelant
-        # se contente d'un `Rapport` : sans cette ligne, la collision est muette.
         logger.warning(
             "Verrou de calcul non obtenu %s",
             ctx(id_scenario=id_scenario, motif="calcul déjà en cours"),
@@ -236,11 +207,9 @@ async def prendre_verrou(db_ecriture, id_scenario: int) -> bool:
 
 
 async def liberer_verrou(db_ecriture, id_scenario: int) -> None:
-    """Remet `calcul_trafic_en_cours = 0` — à appeler dans tous les chemins d'échec.
+    """Remet `calcul_trafic_en_cours = 0` dans tous les chemins d'échec.
 
-    Volontairement **non** protégée : un verrou qui n'a pas pu être libéré laisse le
-    scénario bloqué pour tous les autres processus. Cela doit rester un échec visible,
-    pas un simple avertissement.
+    Non protégée exprès : un verrou non libéré bloque le scénario, l'échec doit rester visible.
     """
     lignes = await db_ecriture.execute(LIBERER_VERROU_SQL, (id_scenario,))
     logger.info(
@@ -250,19 +219,12 @@ async def liberer_verrou(db_ecriture, id_scenario: int) -> None:
 
 
 async def journaliser(db_ecriture, id_scenario: int, raison: str, commentaire: str) -> None:
-    """Écrit la trace du calcul (ou de son échec) dans `trppu_recalcul_log`.
+    """Trace le calcul (ou son échec) dans `trppu_recalcul_log`, hors transaction annulée.
 
-    Sur un échec, l'écriture doit se faire HORS de la transaction annulée : une trace
-    d'incident qui disparaît avec le rollback ne sert à rien.
-
-    **Best-effort** : cette fonction est appelée depuis les chemins d'échec, juste
-    après `liberer_verrou`. Si elle levait, son exception remplacerait l'erreur métier
-    d'origine — l'exploitant lirait un incident base à la place de la cause réelle.
-    L'échec d'écriture est donc capté et redescendu en WARNING.
+    Best-effort : un échec d'écriture passe en WARNING pour ne pas masquer l'erreur métier.
     """
     try:
-        # Une seule tentative : un INSERT rejoué après une coupure post-commit doublerait
-        # la trace.
+        # retries=1 : un INSERT rejoué après une coupure post-commit doublerait la trace.
         await db_ecriture.execute(
             INSERT_RECALCUL_LOG_SQL, (id_scenario, raison, commentaire[:255]), retries=1
         )

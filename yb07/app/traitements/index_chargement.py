@@ -1,20 +1,9 @@
-"""Purge et index de `trppu_cles_repartition` autour d'un chargement.
+"""Purge et index de `trppu_cles_repartition` avant un chargement.
 
-Les index secondaires restent **toujours en place** pendant le chargement : les lignes sont
-insérées par petits lots, chacun commité seul, et `uk_pdi_ref` rejette un doublon dès son
-insertion. C'est plus lent qu'un chargement sans index suivi d'une reconstruction, mais
-aucune instruction ne dure : une reconstruction finale était un ALTER de plusieurs minutes
-sur 24 M de lignes, muet côté réseau, et un équipement à délai d'inactivité le coupait.
-
-Ce module ne fait donc plus que deux choses, avant la première ligne :
-
-* vider la table (TRUNCATE) ;
-* recréer, sur la table vide — donc instantanément —, un index qu'un essai précédent aurait
-  laissé absent, et retirer l'index temporaire `idx_cr_pdi_doublons` d'une ancienne version.
-
-Tout le DDL passe par une connexion dédiée avec `lock_wait_timeout` borné : un ALTER ou un
-TRUNCATE qui attend un verrou bloque derrière lui toutes les requêtes des autres sessions
-(l'API), il vaut mieux qu'il échoue vite.
+Les index secondaires restent en place pendant le chargement : un ALTER final de plusieurs
+minutes, muet côté réseau, était coupé par le délai d'inactivité (300 s). Le DDL passe par
+une connexion dédiée à `lock_wait_timeout` borné : en attente de verrou de métadonnées, il
+bloquerait toutes les autres sessions (l'API).
 """
 
 from __future__ import annotations
@@ -31,16 +20,14 @@ logger = logging.getLogger(__name__)
 
 TABLE = "trppu_cles_repartition"
 
-#: Index secondaires attendus sur la table. Source : `yb05/db/database.sql` et
-#: `db/DSR-696-699_migration.sql`.
+#: Index secondaires attendus (`yb05/db/database.sql`, `db/DSR-696-699_migration.sql`).
 INDEX_SECONDAIRES = {
     "uk_pdi_ref": "UNIQUE KEY `uk_pdi_ref` (`id_pdi`, `id_referentiel`)",
     "idx_cr_ref_actif": (
         "KEY `idx_cr_ref_actif` (`id_referentiel`, `date_fin_validite`, `co_regate_site`)"
     ),
 }
-#: Index temporaire laissé par une ancienne version (reconstruction des index en fin de
-#: chargement, abandonnée) : retiré s'il est encore là.
+#: Index temporaire obsolète : retiré s'il est encore là.
 INDEX_DOUBLONS = "idx_cr_pdi_doublons"
 
 INDEX_PRESENTS_SQL = """
@@ -62,10 +49,9 @@ def _code_mysql(erreur: BaseException) -> int | None:
 async def executer_ddl(
     *instructions: str, etape: str, prefixe: str = "chargement", table: str = TABLE, db=None
 ) -> None:
-    """Joue du DDL sur une connexion dédiée, avec une attente de verrou bornée.
+    """Joue du DDL avec une attente de verrou bornée, sur une connexion dédiée.
 
-    Connexion dédiée (runner de scripts du socle) : le `SET SESSION` disparaît avec elle et
-    ne contamine pas le pool. `db` : instance d'écriture (défaut : `db_write`).
+    Le `SET SESSION` disparaît avec la connexion et ne contamine pas le pool.
     """
     db = db or db_write
     script = f"SET SESSION lock_wait_timeout = {CHARGEMENT_LOCK_WAIT_TIMEOUT};\n"
@@ -90,8 +76,7 @@ async def executer_ddl(
 
 
 async def index_presents() -> set[str]:
-    """Index de la table, lus sur l'instance d'écriture — un réplica pourrait être en retard
-    sur le DDL qui vient d'être joué."""
+    """Index de la table, lus sur l'écriture (un réplica peut être en retard sur le DDL)."""
     lignes = await db_write.fetch_all(INDEX_PRESENTS_SQL)
     return {ligne["nom"] for ligne in lignes}
 
@@ -101,11 +86,10 @@ async def vider_table() -> None:
 
 
 async def completer_index(*, etape: str = "index-completion") -> list[str]:
-    """Recrée les index canoniques absents et retire l'index temporaire. Rend les opérations.
+    """Recrée les index absents et retire l'index temporaire ; rend les opérations jouées.
 
-    Joué sur la table vide, juste après le TRUNCATE : l'ALTER est alors instantané. C'est ce
-    qui garantit que le chargement ne tourne jamais sans `uk_pdi_ref`, même après un essai
-    précédent interrompu qui l'aurait laissé absent.
+    Joué sur la table vide après le TRUNCATE (ALTER instantané) : le chargement ne tourne
+    jamais sans `uk_pdi_ref`.
     """
     presents = await index_presents()
     operations = [f"DROP INDEX `{INDEX_DOUBLONS}`"] if INDEX_DOUBLONS in presents else []

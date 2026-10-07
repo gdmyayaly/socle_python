@@ -1,11 +1,5 @@
-"""Orchestration de la chaîne d'initialisation des clés de répartition.
-
-Aucune base, aucun réseau : `FausseBase` répond aux lectures et découpe réellement les scripts.
-Ce qui est vérifié ici n'est pas que chaque étape « marche » — les scripts sont couverts par
-`test_scripts_dsr.py` — mais ce que l'orchestration seule peut garantir : l'ordre, le mode
-d'exécution de chaque script, le refus de démarrer sur un état incohérent, et surtout le refus
-de franchir l'étape irréversible quand ce qui précède est incomplet.
-"""
+"""Orchestration de `init` : ordre, mode d'exécution, reprise, garde-fous avant l'étape
+irréversible `cles`. Les scripts eux-mêmes sont couverts par `test_scripts_dsr.py`."""
 
 from __future__ import annotations
 
@@ -33,11 +27,7 @@ ROWCOUNTS = {
 
 
 def _lectures(**surcharges) -> FausseBase:
-    """Base de lecture décrivant un référentiel sain, à trois sites.
-
-    Les fragments de requête sont ceux qui distinguent chaque lecture sans ambiguïté ; les
-    surcharges permettent à un test de casser un seul point de la chaîne.
-    """
+    """Lectures d'un référentiel sain à trois sites ; une surcharge casse un seul point."""
     reponses = {
         # Prérequis. « Chargement finalisé » en premier : sa requête contient aussi le
         # fragment des index présents, la doublure rend la première réponse qui correspond.
@@ -77,15 +67,15 @@ def _lectures(**surcharges) -> FausseBase:
     return FausseBase(reponses)
 
 
+#: Étendue des `id` de `trppu_cles_repartition` : 120 lignes, soit un seul lot de 1000.
+BORNES = {"MIN(id) AS id_min": {"id_min": 1, "id_max": 120}}
+INDEX_CLES_PRESENT = {"INDEX_NAME = 'uq_crc_version_pdi'": {"nb": 1}}
+
+
 def _ecritures(reponses: dict | None = None, **options) -> FausseBase:
-    """Instance d'écriture. Par défaut la table des clés calculées n'est pas vide : l'index
-    `uq_crc_version_pdi` reste en place et le déroulé ne porte que les scripts de la chaîne.
-    Le cas « table vide » (première initialisation) a ses propres tests."""
+    """Instance d'écriture : index `uq_crc_version_pdi` en place, 120 lignes à calculer."""
     options.setdefault("rowcounts_scripts", ROWCOUNTS)
-    return FausseBase(
-        {"FROM trppu_cles_repartition_calcule LIMIT 1": {"ok": 1}, **(reponses or {})},
-        **options,
-    )
+    return FausseBase({**INDEX_CLES_PRESENT, **BORNES, **(reponses or {})}, **options)
 
 
 def _rapport_chargement(lignes: int = 120) -> Rapport:
@@ -137,8 +127,7 @@ def test_la_chaine_joue_les_six_etapes_dans_l_ordre(chargement_reussi):
     assert chargement_reussi == [(1, None)]
 
     joues = _etapes_des_scripts(ecritures)
-    # Le script des versions est joué une fois par site : on ne garde que la première
-    # occurrence de chacun pour comparer l'ordre.
+    # Le script des versions est joué une fois par site : première occurrence seulement.
     ordre = [nom for i, nom in enumerate(joues) if nom not in joues[:i]]
     assert ordre == [
         "db/DSR-696-699_migration.sql",
@@ -162,8 +151,10 @@ def test_les_scripts_de_donnees_sont_joues_en_transaction(chargement_reussi):
     ecritures = _ecritures()
     _lancer(db_ecriture=ecritures)
 
-    for fichier in ("DSR-696_site_trafic", "DSR-698_version_cle", "DSR-699_cles_calculees"):
+    for fichier in ("DSR-696_site_trafic", "DSR-698_version_cle"):
         assert ecritures.script_joue(fichier)["transactional"] is True, fichier
+    # Les clés : un commit par lot (autocommit), pour borner la taille des transactions.
+    assert ecritures.script_joue("DSR-699_cles_calculees")["transactional"] is False
 
 
 def test_le_chargement_en_echec_arrete_la_chaine(monkeypatch):
@@ -351,11 +342,7 @@ def test_un_site_en_echec_n_arrete_pas_la_boucle():
 
 
 def test_l_etape_cles_n_est_pas_jouee_si_un_site_a_echoue():
-    """Le test le plus important du fichier : il protège l'irréversible.
-
-    Calculer les clés d'une couverture partielle verrouillerait le référentiel par le CA4 de
-    DSR-699 — les sites restants ne pourraient plus jamais être calculés sur ces versions.
-    """
+    """Protège l'irréversible : des clés sur une couverture partielle seraient figées par le CA4."""
     echec = SqlScriptError(
         "boum",
         source="db/DSR-698_version_cle.sql",
@@ -373,11 +360,7 @@ def test_l_etape_cles_n_est_pas_jouee_si_un_site_a_echoue():
 
 
 def test_le_rapport_ne_porte_pas_une_ligne_par_site(monkeypatch):
-    """Quelques milliers de sites ne doivent pas produire autant de lignes de rapport.
-
-    Soixante suffisent à le prouver : le rapport doit rendre un agrégat, pas une liste. Les
-    détails par site vont dans les logs, où ils sont filtrables.
-    """
+    """Le rapport agrège les sites (le détail va dans les logs) : soixante suffisent à le voir."""
     sites = [f"{n:06d}" for n in range(1, 61)]
     lectures = _lectures(
         **{
@@ -412,8 +395,7 @@ def test_un_avancement_est_journalise_pendant_la_boucle(monkeypatch, caplog):
 
 
 def test_un_total_nul_ne_bloque_plus_et_remonte_au_rapport():
-    """Règle métier : clé à 0 quand le total du site est nul. Le calcul se joue, et chaque
-    site concerné est porté au rapport final avec ses composantes et son nombre de PDI."""
+    """Total de site nul : clé à 0, calcul joué, site porté au rapport avec son nombre de PDI."""
     lectures = _lectures(
         **{
             "trafic_colis_total = 0": [
@@ -438,7 +420,7 @@ def test_un_total_nul_ne_bloque_plus_et_remonte_au_rapport():
     rapport = _lancer(db_lecture=lectures, db_ecriture=ecritures, etape="cles")
 
     assert rapport.reussi, rapport.motifs
-    assert "db/DSR-699_cles_calculees.sql" in ecritures.scripts_joues()
+    assert "db/DSR-699_cles_calculees.sql" in _etapes_des_scripts(ecritures)
     assert rapport.etats["SITES_CLE_A_ZERO"] == 1
     assert rapport.etats["PDI_CLE_A_ZERO"] == 57
     assert any(
@@ -467,12 +449,22 @@ def test_controle_des_sommes_attend_zero_pour_un_total_nul():
     assert "JOIN trppu_trafic_site s" in sql
 
 
-def test_un_perimetre_deja_calcule_bloque_avant_le_calcul():
-    """Le script se terminerait en succès après avoir écrit zéro ligne : un faux `[OK]`."""
+CLES_PRESENTES = "FROM trppu_cles_repartition_calcule WHERE id_referentiel"
+
+
+def _deja_calcule(cles_presentes: int) -> FausseBase:
+    """Lectures d'un référentiel dont des versions portent déjà `cles_presentes` clés."""
     lectures = _lectures(**{"%s AND EXISTS": {"nb": 2}})
+    # En tête : la doublure rend la première réponse qui correspond.
+    lectures.reponses = {CLES_PRESENTES: {"nb": cles_presentes}, **lectures.reponses}
+    return lectures
+
+
+def test_un_perimetre_entierement_calcule_bloque_avant_le_calcul():
+    """Le relancer parcourrait tous les lots sans rien écrire : un faux `[OK]`."""
     ecritures = _ecritures(lecture_seule=True)
 
-    rapport = _lancer(db_lecture=lectures, db_ecriture=ecritures, etape="cles")
+    rapport = _lancer(db_lecture=_deja_calcule(120), db_ecriture=ecritures, etape="cles")
 
     assert not rapport.reussi
     assert "CA4" in " ".join(rapport.motifs)
@@ -481,11 +473,112 @@ def test_un_perimetre_deja_calcule_bloque_avant_le_calcul():
 
 def test_le_garde_fou_du_ca4_joue_aussi_sur_une_chaine_complete(chargement_reussi):
     """Le chargement purge `trppu_cles_repartition`, jamais les clés déjà calculées."""
-    lectures = _lectures(**{"%s AND EXISTS": {"nb": 1}})
-    rapport = _lancer(db_lecture=lectures)
+    rapport = _lancer(db_lecture=_deja_calcule(120))
 
     assert not rapport.reussi
     assert rapport.etats["REPRENDRE_A"] == "cles"
+
+
+def test_un_calcul_interrompu_est_repris_et_complete():
+    """Reprise CA4 après des lots déjà commités : seules les clés absentes sont écrites."""
+    ecritures = _ecritures(
+        rowcounts_scripts={**ROWCOUNTS, "INSERT INTO trppu_cles_repartition_calcule": 70}
+    )
+
+    rapport = _lancer(db_lecture=_deja_calcule(50), db_ecriture=ecritures, etape="cles")
+
+    assert rapport.reussi, rapport.motifs
+    assert rapport.etats["CLES_CALCULEES"] == 70
+    libelles = " ".join(c.libelle for c in rapport.controles)
+    assert "Reprise du calcul : 50 clé(s) déjà présente(s) pour 120 PDI actif(s)" in libelles
+    assert "CA1 — 120 clé(s) pour 120 PDI actif(s)" in libelles
+
+
+# ---------------------------------------------------------------------------
+# Étape « cles » : lots de CHARGEMENT_TAILLE_LOT lignes, un commit par lot
+# ---------------------------------------------------------------------------
+
+
+def test_les_cles_sont_calculees_par_tranches_d_id(monkeypatch):
+    """2 500 lignes, lots de 1000 : trois tranches ]0;1000] ]1000;2000] ]2000;2500]."""
+    monkeypatch.setattr(initialisation, "CHARGEMENT_TAILLE_LOT", 1000)
+    ecritures = _ecritures({"MIN(id) AS id_min": {"id_min": 1, "id_max": 2500}})
+
+    _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert ecritures.scripts_joues() == [
+        "db/DSR-699_cles_calculees.sql@1-1000",
+        "db/DSR-699_cles_calculees.sql@1001-2000",
+        "db/DSR-699_cles_calculees.sql@2001-2500",
+    ]
+    texte = ecritures.texte_du_script("@1001-2000")
+    assert "SET @id_debut := 1000" in texte and "SET @id_fin := 2000" in texte
+
+
+def test_chaque_lot_est_commite_seul():
+    """Autocommit : chaque INSERT de lot est sa propre transaction (erreur 3231 évitée)."""
+    ecritures = _ecritures()
+
+    _lancer(db_ecriture=ecritures, etape="cles")
+
+    lots = [s for s in ecritures.scripts if "DSR-699" in s["label"]]
+    assert lots and all(s["transactional"] is False for s in lots)
+
+
+def test_les_lots_partagent_une_connexion_par_paquet(monkeypatch):
+    monkeypatch.setattr(initialisation, "CHARGEMENT_TAILLE_LOT", 10)
+    monkeypatch.setattr(initialisation, "LOTS_CLES_PAR_CONNEXION", 4)
+    ecritures = _ecritures({"MIN(id) AS id_min": {"id_min": 1, "id_max": 100}})
+
+    _lancer(db_ecriture=ecritures, etape="cles")
+
+    # 10 lots, par paquets de 4 : trois appels (4 + 4 + 2).
+    assert ecritures.lots_commites == 3
+    assert len([s for s in ecritures.scripts if "DSR-699" in s["label"]]) == 10
+
+
+def test_les_cles_ecrites_sont_la_somme_des_lots(monkeypatch):
+    monkeypatch.setattr(initialisation, "CHARGEMENT_TAILLE_LOT", 50)
+    ecritures = _ecritures(
+        {"MIN(id) AS id_min": {"id_min": 1, "id_max": 120}},
+        rowcounts_scripts={**ROWCOUNTS, "INSERT INTO trppu_cles_repartition_calcule": 40},
+    )
+
+    rapport = _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert rapport.reussi, rapport.motifs
+    assert rapport.etats["CLES_CALCULEES"] == 120  # 3 lots de 40
+
+
+def test_un_lot_en_echec_laisse_les_precedents_et_dit_comment_reprendre(monkeypatch):
+    monkeypatch.setattr(initialisation, "CHARGEMENT_TAILLE_LOT", 50)
+    monkeypatch.setattr(initialisation, "LOTS_CLES_PAR_CONNEXION", 1)
+    echec = SqlScriptError(
+        "boum",
+        source="db/DSR-699_cles_calculees.sql@101-120",
+        index=7,
+        statement="INSERT INTO trppu_cles_repartition_calcule …",
+        original=RuntimeError("3231 writeset"),
+    )
+    ecritures = _ecritures(
+        {"MIN(id) AS id_min": {"id_min": 1, "id_max": 120}},
+        echecs_scripts={"@101-120": echec},
+    )
+
+    rapport = _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert not rapport.reussi
+    assert ecritures.lots_commites == 2  # ]0;50] et ]50;100] restent écrits
+    assert any("Relancer « --etape cles »" in a for a in rapport.avertissements)
+
+
+def test_table_source_vide_refusee():
+    ecritures = _ecritures({"MIN(id) AS id_min": {"id_min": None, "id_max": None}})
+
+    rapport = _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert not rapport.reussi
+    assert "trppu_cles_repartition est vide" in " ".join(rapport.motifs)
 
 
 def test_zero_cle_ecrite_fait_echouer_l_etape():
@@ -656,11 +749,7 @@ def test_dry_run_n_ecrit_rien(chargement_reussi):
 
 
 def test_dry_run_ne_lit_pas_la_base(chargement_reussi):
-    """La marche à blanc doit valider le découpage sans dépendre de l'état de la base.
-
-    `FausseBase` lève `KeyError` sur toute requête sans réponse déclarée : une base vide est
-    donc la façon la plus simple de prouver qu'aucune lecture n'a lieu.
-    """
+    """Base de lecture vide : toute lecture lèverait `KeyError`."""
     rapport = _lancer(
         db_lecture=FausseBase({}), db_ecriture=_ecritures(lecture_seule=True), dry_run=True
     )
@@ -675,12 +764,11 @@ def test_dry_run_decoupe_bien_les_cinq_scripts(chargement_reussi):
     instructions = {
         script["label"]: script["resultat"].total_count for script in ecritures.scripts
     }
-    # + 1 pour migration et correctif : le `SET SESSION lock_wait_timeout` injecté en tête des
-    # scripts de schéma (les fichiers eux-mêmes gardent 17 et 9 instructions).
+    # + 1 pour migration et correctif : `SET SESSION lock_wait_timeout` injecté en tête.
     assert instructions["db/DSR-696-699_migration.sql"] == 18
     assert instructions["db/fix_error.sql"] == 10
     assert instructions["db/DSR-696_site_trafic.sql"] == 9
-    assert instructions["db/DSR-699_cles_calculees.sql"] == 11
+    assert instructions["db/DSR-699_cles_calculees.sql"] == 12
 
 
 def test_une_ecriture_reelle_sur_une_base_en_lecture_seule_leverait():
@@ -700,8 +788,7 @@ def test_la_sous_commande_init_est_declaree():
 
     args = build_parser().parse_args(["init", "7"])
 
-    # Le positionnel est stocké sous `id_traitement` : c'est ce nom que `main()` reprend dans
-    # ses logs `Début`/`Fin commande` et que `_executer_traitement` pose comme corrélation.
+    # Positionnel stocké sous `id_traitement` : nom repris par les logs et la corrélation.
     assert args.id_traitement == 7
     assert args.commande == "init"
     assert (args.depuis, args.etape, args.dry_run) == (None, None, False)
@@ -752,8 +839,7 @@ def test_le_code_retour_suit_le_verdict_du_rapport(monkeypatch, capsys, reussi, 
 
 
 def test_skip_errors_transmis_au_chargement_et_avertissements_remontes(monkeypatch):
-    """Les lignes écartées doivent figurer dans le rapport final de `init`, pas seulement
-    dans celui de l'étape — et la chaîne continue."""
+    """Les lignes écartées remontent au rapport final de `init`, et la chaîne continue."""
     recu = {}
 
     async def _faux(
@@ -792,95 +878,47 @@ def test_sans_skip_errors_le_chargement_reste_strict(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Étape « cles » : index unique retiré le temps du calcul, sur table vide seulement
+# Étape « cles » : l'index unique reste en place (il sert la reprise), recréé s'il manque
 # ---------------------------------------------------------------------------
 
-TABLE_CLES_VIDE = {
-    "FROM trppu_cles_repartition_calcule LIMIT 1": None,
-    "INDEX_NAME = 'uq_crc_version_pdi'": {"nb": 1},
-}
+INDEX_CLES_ABSENT = {"INDEX_NAME = 'uq_crc_version_pdi'": {"nb": 0}}
 
 
-def test_premiere_initialisation_index_retire_puis_recree():
-    ecritures = _ecritures(TABLE_CLES_VIDE)
+def test_l_index_unique_n_est_jamais_retire():
+    ecritures = _ecritures()
 
     rapport = _lancer(db_ecriture=ecritures, etape="cles")
 
     assert rapport.reussi, rapport.motifs
-    assert ecritures.scripts_joues() == [
-        "cles/index-retrait",
-        "db/DSR-699_cles_calculees.sql",
-        "cles/index-reconstruction",
-    ]
-    assert "DROP INDEX `uq_crc_version_pdi`" in ecritures.texte_du_script("index-retrait")
+    assert not any(label.startswith("cles/") for label in ecritures.scripts_joues())
+
+
+def test_index_absent_recree_avant_le_premier_lot():
+    """Laissé absent par un essai interrompu d'une version antérieure, qui le retirait."""
+    ecritures = _ecritures(INDEX_CLES_ABSENT)
+
+    rapport = _lancer(db_ecriture=ecritures, etape="cles")
+
+    assert rapport.reussi, rapport.motifs
+    joues = ecritures.scripts_joues()
+    assert joues[0] == "cles/index-reconstruction"
+    assert joues[1].startswith("db/DSR-699_cles_calculees.sql@")
     recree = ecritures.texte_du_script("index-reconstruction")
     assert "ADD UNIQUE KEY `uq_crc_version_pdi` (`id_version_cle`, `id_pdi`)" in recree
     assert recree.startswith("SET SESSION lock_wait_timeout")
 
 
-def test_table_des_cles_non_vide_index_intact():
-    """Ailleurs, l'index sert les lectures de l'API : on n'y touche pas."""
-    ecritures = _ecritures()
-
-    _lancer(db_ecriture=ecritures, etape="cles")
-
-    assert not any(label.startswith("cles/") for label in ecritures.scripts_joues())
-
-
-def test_index_recree_meme_si_le_calcul_echoue():
-    echec = SqlScriptError(
-        "boum",
-        source="db/DSR-699_cles_calculees.sql",
-        index=7,
-        statement="INSERT INTO trppu_cles_repartition_calcule …",
-        original=RuntimeError("1365 Division by 0"),
-    )
-    ecritures = _ecritures(TABLE_CLES_VIDE, echecs_scripts={"DSR-699": echec})
-
-    rapport = _lancer(db_ecriture=ecritures, etape="cles")
-
-    assert not rapport.reussi
-    assert ecritures.scripts_joues()[-1] == "cles/index-reconstruction"
-
-
-def test_index_deja_absent_est_recree_sans_retrait():
+def test_index_impossible_a_recreer_arrete_l_etape():
     ecritures = _ecritures(
-        {**TABLE_CLES_VIDE, "INDEX_NAME = 'uq_crc_version_pdi'": {"nb": 0}}
-    )
-
-    _lancer(db_ecriture=ecritures, etape="cles")
-
-    assert ecritures.scripts_joues() == [
-        "db/DSR-699_cles_calculees.sql",
-        "cles/index-reconstruction",
-    ]
-
-
-def test_sans_droit_alter_le_calcul_se_fait_index_en_place():
-    import pymysql
-
-    ecritures = _ecritures(
-        TABLE_CLES_VIDE,
-        echecs_scripts={"index-retrait": pymysql.err.OperationalError(1142, "denied")},
-    )
-
-    rapport = _lancer(db_ecriture=ecritures, etape="cles")
-
-    assert rapport.reussi, rapport.motifs
-    assert "cles/index-reconstruction" not in ecritures.scripts_joues()
-    assert any("droit ALTER manquant" in a for a in rapport.avertissements)
-
-
-def test_reconstruction_impossible_portee_au_rapport():
-    ecritures = _ecritures(
-        TABLE_CLES_VIDE,
-        echecs_scripts={"index-reconstruction": RuntimeError("1062 Duplicate entry")},
+        INDEX_CLES_ABSENT,
+        echecs_scripts={"index-reconstruction": RuntimeError("1142 denied")},
     )
 
     rapport = _lancer(db_ecriture=ecritures, etape="cles")
 
     assert not rapport.reussi
     assert any("uq_crc_version_pdi non recréé" in m for m in rapport.motifs)
+    assert not any("DSR-699" in label for label in ecritures.scripts_joues())
 
 
 def test_les_scripts_de_la_chaine_ne_jouent_pas_leurs_select_d_affichage(
@@ -966,7 +1004,7 @@ def test_rapport_d_echec_des_versions_exploitable():
 
 
 def test_versions_par_lots_une_transaction_par_lot(monkeypatch):
-    """Une connexion et une transaction par lot, et non plus par site."""
+    """Une connexion et une transaction par lot, pas par site."""
     monkeypatch.setattr(initialisation, "INIT_VERSIONS_TAILLE_LOT", 2)
     ecritures = _ecritures()
 
@@ -989,8 +1027,7 @@ def test_un_lot_n_est_pas_rejoue_si_tout_passe():
 
 
 def test_chaine_refusee_si_le_chargement_n_est_pas_finalise():
-    """Lignes en base mais index unique absent : poursuivre calculerait sur des doublons
-    possibles. Relancer le chargement remet l'index en place avant la première ligne."""
+    """Lignes en base sans index unique : des doublons sont possibles, il faut recharger."""
     lectures = _lectures(**{"AS chargement_uk": {"chargement_uk": 0, "chargement_tmp": 1}})
     ecritures = _ecritures(lecture_seule=True)
 
@@ -999,3 +1036,15 @@ def test_chaine_refusee_si_le_chargement_n_est_pas_finalise():
     assert not rapport.reussi
     assert "relancer l'étape « chargement »" in " ".join(rapport.motifs)
     assert ecritures.scripts_joues() == []
+
+
+def test_les_controles_lisent_sur_l_instance_d_ecriture_par_defaut():
+    """Sur un réplica, le dernier lot commité peut manquer : faux KO (2000 versions sur 2022)."""
+    import inspect
+
+    from app.db.mysql import db_write
+    from app.traitements.initialisation import initialiser_cles_repartition
+
+    parametres = inspect.signature(initialiser_cles_repartition).parameters
+    assert parametres["db_lecture"].default is db_write
+    assert parametres["db_ecriture"].default is db_write

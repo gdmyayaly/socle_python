@@ -1,25 +1,8 @@
-"""Paramétrage d'un script SQL par ses variables de session, sans le réécrire sur disque.
+"""Injection des paramètres `SET @… :=` d'un script de `db/` (module pur, sans I/O).
 
-Les scripts de `db/` se règlent par un bloc `SET @ma_variable := …` en tête de fichier — c'est
-la convention posée par `db/README.md`. Un appelant Python qui veut jouer le même script sur un
-autre référentiel ou un autre site ne peut ni éditer le fichier, ni poser la variable dans un
-appel séparé : `execute_sql_script` ouvre une connexion dédiée par appel, et les variables de
-session meurent avec elle.
-
-D'où ce module : il rend un **texte** de script dont le bloc de paramètres a été remplacé, que
-l'appelant passe ensuite à `Database.execute_sql_script`. Un seul appel, une seule connexion,
-les variables tiennent d'une instruction à l'autre.
-
-    texte = injecter_parametres(script, {"id_referentiel": 1, "co_regate": "123456"})
-    await db_write.execute_sql_script(texte, label="db/DSR-698_version_cle.sql")
-
-Ne sont retirées que les affectations dont le nom est explicitement demandé. `SET SESSION
-sql_mode = …` n'est jamais touché — c'est lui qui porte le durcissement (échec sur division par
-zéro, mode strict) de plusieurs scripts —, pas plus que les variables de travail internes
-(`@sql` de la migration, `@deja` des scripts rejouables).
-
-Module pur : aucune I/O, aucune connexion, aucune dépendance vers `mysql.py`. Même parti pris
-que `sql_script.py`, dont il est le voisin.
+Les variables de session meurent avec la connexion dédiée de `execute_sql_script` : on
+remplace donc le bloc de paramètres dans le texte. Seules les variables demandées sont
+retirées ; `SET SESSION sql_mode` et les variables internes (`@sql`, `@deja`) restent.
 """
 
 from __future__ import annotations
@@ -34,16 +17,13 @@ import sqlparse
 
 from app.db.sql_script import split_sql_script
 
-# Une affectation de variable utilisateur, en tête d'instruction. Le `@` est ce qui distingue
-# `SET @id_referentiel := 1` de `SET SESSION sql_mode = …` et de `SET FOREIGN_KEY_CHECKS = 0` :
-# sans lui, on neutraliserait des réglages de session dont dépend le comportement du script.
+# Affectation de variable utilisateur : le `@` exclut les réglages de session (sql_mode…).
 _AFFECTATION = re.compile(r"^SET\s+@([A-Za-z0-9_$]+)\s*:?=", re.IGNORECASE)
 
-# Interdits dans une chaîne littérale : ils ne peuvent venir que d'une valeur mal construite.
+# Caractères de contrôle interdits dans une chaîne littérale.
 _CARACTERES_INTERDITS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
-# Un script à délimiteur personnalisé ne se rejoint pas par `;`. Aucun script de `db/` n'en
-# porte ; le garde-fou coûte une ligne et évite d'en corrompre un silencieusement.
+# Un script à délimiteur personnalisé ne se rejoint pas par `;` : refusé.
 _CONTIENT_DELIMITER = re.compile(r"^\s*DELIMITER\s+\S+\s*$", re.IGNORECASE | re.MULTILINE)
 
 
@@ -52,18 +32,12 @@ class ParametreInconnu(ValueError):
 
 
 def litteral_sql(valeur: Any) -> str:
-    """Rend une valeur Python sous forme de littéral SQL.
-
-    Refuse ce qu'elle ne sait pas rendre plutôt que de retomber sur `str(valeur)` : un objet
-    inattendu doit casser le test, pas produire du SQL syntaxiquement valide et sémantiquement
-    faux.
-    """
+    """Rend une valeur Python en littéral SQL ; lève `TypeError` pour un type inconnu."""
     if valeur is None:
-        # Sans guillemets, délibérément : `@co_regate` vaudrait sinon la chaîne 'NULL' et
-        # filtrerait sur un site qui n'existe pas, sans la moindre erreur.
+        # Sans guillemets : la chaîne 'NULL' filtrerait silencieusement sur un site inexistant.
         return "NULL"
 
-    # Avant `int` : `isinstance(True, int)` est vrai, et `SET @actif := True` n'a pas de sens.
+    # Avant `int` : `isinstance(True, int)` est vrai.
     if isinstance(valeur, bool):
         return "1" if valeur else "0"
 
@@ -90,11 +64,7 @@ def litteral_sql(valeur: Any) -> str:
 
 
 def _chaine(valeur: str) -> str:
-    """Littéral chaîne, échappé pour MySQL.
-
-    L'ordre des deux remplacements compte : doubler les apostrophes d'abord laisserait les
-    antislashs introduits par le second remplacement transformer `''` en `'\\''`.
-    """
+    """Littéral chaîne échappé pour MySQL (antislashs d'abord, puis apostrophes)."""
     if _CARACTERES_INTERDITS.search(valeur):
         raise ValueError("caractère de contrôle interdit dans une valeur SQL")
     echappee = valeur.replace("\\", "\\\\").replace("'", "''")
@@ -104,9 +74,7 @@ def _chaine(valeur: str) -> str:
 def nom_variable(instruction: str) -> str | None:
     """Nom de la variable affectée par cette instruction, ou `None`.
 
-    Le retrait des commentaires n'est pas cosmétique : `sqlparse.split` rattache la bannière
-    `-- ------` qui *précède* une instruction à cette instruction. Sans lui, le `^SET` ne
-    matcherait jamais sur un script commenté — c'est-à-dire sur aucun des scripts de `db/`.
+    Commentaires retirés : `sqlparse.split` rattache la bannière précédente à l'instruction.
     """
     nu = sqlparse.format(instruction, strip_comments=True).strip()
     trouve = _AFFECTATION.match(nu)
@@ -121,9 +89,7 @@ def injecter_parametres(
 ) -> str:
     """Remplace le bloc de paramètres du script par les valeurs demandées.
 
-    `exiger_presence` (défaut) lève `ParametreInconnu` si une clé ne correspond à aucune
-    affectation du script. C'est ce qui attrape la faute de frappe : `@co_regates` au lieu de
-    `@co_regate` produirait sinon un script parfaitement valide, et un résultat faux.
+    `exiger_presence` lève `ParametreInconnu` pour une clé absente du script (faute de frappe).
     """
     instructions = instructions_parametrees(
         script, parametres, exiger_presence=exiger_presence
@@ -138,12 +104,8 @@ def instructions_parametrees(
     *,
     exiger_presence: bool = True,
 ) -> list[str]:
-    """Comme `injecter_parametres`, mais rend les instructions **déjà découpées**.
-
-    Le découpage du modèle est mis en cache (`_decomposer`) : répété pour des milliers de sites,
-    seul le bloc de paramètres change. Passer ces instructions au socle
-    (`Database.execute_sql_units`) évite de redécouper un texte recomposé à chaque site.
-    """
+    """Comme `injecter_parametres`, mais rend les instructions déjà découpées
+    (pour `Database.execute_sql_units`, sans redécoupage par site)."""
     conservees, trouves = _decomposer(script, tuple(parametres))
 
     if exiger_presence:
@@ -154,22 +116,16 @@ def instructions_parametrees(
                 + ", ".join(f"@{nom}" for nom in manquants)
             )
 
-    # L'ordre du mapping est conservé (dict ordonné depuis Python 3.7) : le script produit est
-    # déterministe, donc comparable dans un test.
+    # Ordre du mapping conservé : script déterministe.
     prefixe = [f"SET @{nom} := {litteral_sql(valeur)}" for nom, valeur in parametres.items()]
     return prefixe + list(conservees)
 
 
 @lru_cache(maxsize=16)
 def _decomposer(script: str, noms: tuple[str, ...]) -> tuple[tuple[str, ...], frozenset[str]]:
-    """Instructions à conserver, et noms de paramètres effectivement trouvés.
+    """Instructions à conserver et noms de paramètres trouvés.
 
-    Mémoïsé, et c'est le seul endroit qui le justifie : l'étape « versions » rejoue le même
-    script une fois par site — plusieurs milliers de fois sur un référentiel réel — avec des
-    valeurs différentes mais un texte et des noms identiques. Sans cache, chaque site paierait
-    un découpage complet plus un `sqlparse.format` par instruction, pour un résultat invariant.
-
-    La fonction est pure : même script et mêmes noms donnent toujours les mêmes instructions.
+    Mémoïsé : l'étape « versions » rejoue le même script pour des milliers de sites.
     """
     if _CONTIENT_DELIMITER.search(script):
         raise ValueError(

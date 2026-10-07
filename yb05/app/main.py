@@ -1,27 +1,6 @@
-"""Point d'entrée console du batch yb05.
+"""Point d'entrée console du batch yb05 (`python -m app.main <commande>`, voir README).
 
-Vérifications de la base de données :
-
-    python -m app.main db-info    # informations de connexion et du serveur MySQL
-    python -m app.main db-check   # disponibilité des instances lecture et écriture
-
-Chaîne de calcul des trafics d'un scénario (DSR-701, DSR-702, DSR-703) :
-
-    python -m app.main eligibilite 12345
-    python -m app.main calcul-trafic-pdi 12345
-    python -m app.main calcul-trafic-agrebal 12345
-
-Mode nominal d'exploitation, qui enchaîne les trois sur NB_WORKER workers (DSR-704) :
-
-    python -m app.main all           # tous les scénarios éligibles
-    python -m app.main all 12345     # un seul
-
-Les orthographes des tickets sont acceptées telles quelles, en majuscules
-(`ELIGIBILITE`, `CALCUL_TRAFIC_PDI`, `CALCUL_TRAFIC_AGREBAL`, `ALL`), ainsi que la forme
-`--traitement=ELIGIBILITE --scenario=12345`.
-
-Le code de retour vaut 0 si la vérification ou le traitement est concluant, 1 sinon
-(utilisable en ordonnanceur ou en probe).
+Code de retour : 0 si concluant, 1 sinon (ordonnanceur, probe).
 """
 
 import argparse
@@ -126,15 +105,9 @@ async def cmd_db_check(args: argparse.Namespace) -> int:
 
 
 async def _executer_traitement(traitement, args: argparse.Namespace) -> int:
-    """Joue un traitement, affiche son rapport, en déduit le code de retour.
-
-    Une base injoignable ou une erreur inattendue est rendue dans le même format que le reste :
-    l'exploitant lit un `[KO]` et un `RESULTAT`, pas une trace Python.
-    """
-    # Le scénario est posé ici plutôt que dans chaque `cmd_*` : toutes les lignes
-    # émises dessous, y compris celles de `app.db.mysql`, le porteront.
+    """Joue un traitement et affiche son rapport ; une erreur devient un `[KO]`, pas une trace."""
     jeton = set_id_scenario(args.id_scenario)
-    # Site et ROC : posés par `charger_scenario` dès la lecture du scénario, effacés ici.
+    # Site et ROC : posés par `charger_scenario`, effacés ici.
     jeton_site = set_site(None, None)
     try:
         rapport = await traitement(args.id_scenario)
@@ -172,12 +145,7 @@ async def cmd_calcul_trafic_agrebal(args: argparse.Namespace) -> int:
 
 
 async def cmd_all(args: argparse.Namespace) -> int:
-    """DSR-704 — mode nominal : tous les scénarios éligibles, sur NB_WORKER workers.
-
-    Rend `1` dès qu'un scénario a échoué : le batch va au bout de la file, mais l'ordonnanceur
-    doit voir passer l'incident. Un scénario non éligible n'est pas un échec — le ticket
-    distingue les deux dans son bilan.
-    """
+    """DSR-704 — tous les scénarios éligibles ; `1` si un scénario a échoué (non éligible ≠ échec)."""
     try:
         bilan = await executer_tout(args.id_scenario)
     except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
@@ -245,12 +213,7 @@ TRAITEMENTS = (
 
 
 def normaliser_argv(argv: list[str]) -> list[str]:
-    """Traduit la forme `--traitement=X [--scenario=N]` des tickets en sous-commande.
-
-    Les tickets documentent les deux formes ; plutôt qu'un second analyseur, la ligne de
-    commande est réécrite avant `parse_args`. Les options inconnues sont laissées telles
-    quelles, argparse restant seul juge de leur validité.
-    """
+    """Réécrit la forme des tickets `--traitement=X [--scenario=N]` en sous-commande."""
     reste: list[str] = []
     traitement: str | None = None
     scenario: str | None = None
@@ -326,8 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
         sous_parser.set_defaults(handler=handler)
 
-    # Mode ALL : seule commande dont l'identifiant est facultatif — sans lui, le batch cherche
-    # lui-même les scénarios éligibles.
+    # Mode ALL : identifiant facultatif (sans lui, tous les scénarios éligibles).
     mode_all = sous_commandes.add_parser(
         "all",
         aliases=["ALL"],
@@ -378,7 +340,6 @@ async def _run(args: argparse.Namespace) -> int:
     try:
         return await args.handler(args)
     finally:
-        # Les pools sont créés à la volée (lazy) : on les ferme proprement en sortie.
         await db_read.disconnect()
         await db_write.disconnect()
 
@@ -386,9 +347,7 @@ async def _run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = normaliser_argv(list(sys.argv[1:] if argv is None else argv))
     args = build_parser().parse_args(argv)
-    # INFO par défaut : le batch tourne sous ordonnanceur, sans `-v`, et c'est la
-    # seule trace de ce qu'il a fait. La sortie console de l'exploitant n'en pâtit
-    # pas — le rapport part sur stdout, les logs JSON sur stderr.
+    # INFO par défaut : seule trace sous ordonnanceur (rapport sur stdout, logs sur stderr).
     setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
 
     debut = time.perf_counter()

@@ -1,38 +1,21 @@
 -- =====================================================================================
 -- DSR-699 — Calcul des clés de répartition des PDI
 -- =====================================================================================
--- Dernier maillon de la chaîne d'initialisation : divise le trafic de chaque PDI par le
--- total de son site pour produire les clés de `trppu_cles_repartition_calcule`.
---
---   clé colis = trafic_colis du PDI / trafic_colis_total du site
---
--- Le numérateur vient de `trppu_cles_repartition` (DSR-696 source), le dénominateur de
--- `trppu_trafic_site` (DSR-696 cible), et la version de rattachement de `trppu_version_cle`
--- (DSR-698). Les trois doivent donc être en place — cf. `db/README.md` pour l'ordre.
---
--- Critères d'acceptation couverts
---   CA1  une ligne de clés par PDI actif du référentiel
---   CA2  toutes les clés sont rattachées à une version
---   CA3  la somme des clés d'un site vaut 1 (tolérance 0,9999 — 1,0001)
---   CA4  aucune clé d'une version existante n'est modifiée
---
--- Prérequis : `DSR-696-699_migration.sql` (unicité (version, PDI), index d'agrégation),
--- puis `DSR-696_site_trafic.sql` et `DSR-698_version_cle.sql` pour le même référentiel.
---
--- USAGE — renseigner les paramètres ci-dessous, puis :
---   mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-699_cles_calculees.sql
---
--- Le script est REJOUABLE, mais pas au même sens que les deux autres : il ne recalcule
--- JAMAIS une version déjà calculée (CA4). Relancé sur un périmètre déjà chargé, il ne fait
--- rien — voir `@deja` plus bas.
+-- Clé = trafic du PDI (`trppu_cles_repartition`) / total du site (`trppu_trafic_site`),
+-- rattachée à la version active (`trppu_version_cle`), dans `trppu_cles_repartition_calcule`.
+--   CA1  une ligne par PDI actif             CA2  toute clé rattachée à une version
+--   CA3  somme d'un site = 1 (0,9999-1,0001) CA4  une version calculée n'est jamais modifiée
+-- Prérequis : `DSR-696-699_migration.sql`, puis `DSR-696_site_trafic.sql` et
+-- `DSR-698_version_cle.sql` sur le même référentiel (ordre : `db/README.md`).
+-- Usage : mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-699_cles_calculees.sql
+-- REJOUABLE : ne recalcule JAMAIS une version déjà calculée (CA4, `@deja`).
 -- =====================================================================================
 
 
 -- -------------------------------------------------------------------------------------
 -- Paramètres
 -- -------------------------------------------------------------------------------------
--- Mêmes paramètres que `DSR-696_site_trafic.sql`, volontairement : les deux scripts se
--- jouent l'un après l'autre sur le même périmètre.
+-- Mêmes paramètres que `DSR-696_site_trafic.sql` (même périmètre).
 
 SET @id_referentiel := 1;      -- référentiel à calculer — obligatoire
 SET @co_regate      := NULL;   -- '123456' pour un seul site, NULL pour tout le référentiel
@@ -41,15 +24,8 @@ SET @co_regate      := NULL;   -- '123456' pour un seul site, NULL pour tout le 
 -- -------------------------------------------------------------------------------------
 -- Durcissement du mode SQL — l'échec doit être garanti, pas dépendre du serveur
 -- -------------------------------------------------------------------------------------
--- Un site dont le total de trafic est à zéro produirait une division par zéro. En MySQL,
--- celle-ci vaut NULL, refusé par les quatre colonnes cibles `NOT NULL` — mais uniquement si
--- le serveur est en mode strict. Sur un serveur laxiste, la même ligne passerait avec un
--- avertissement et une clé fausse. Le choix retenu est l'ÉCHEC EXPLICITE : mieux vaut une
--- `ERROR 1365` qu'un jeu de clés silencieusement faux, sur lequel tout le calcul de trafic
--- des scénarios s'appuiera ensuite.
---
--- La modification ne vaut que pour la session du script ; elle ne touche pas la
--- configuration du serveur ni les connexions applicatives.
+-- Total de site à zéro : sur un serveur non strict, la division par zéro passerait avec une
+-- clé fausse. On veut l'échec explicite (`ERROR 1365`). Portée : la session seule.
 
 SET SESSION sql_mode = CONCAT(@@sql_mode, ',STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO');
 
@@ -57,10 +33,8 @@ SET SESSION sql_mode = CONCAT(@@sql_mode, ',STRICT_ALL_TABLES,ERROR_FOR_DIVISION
 -- -------------------------------------------------------------------------------------
 -- Garde-fou 1 — état du périmètre avant calcul
 -- -------------------------------------------------------------------------------------
--- `nb_sites_sans_agregat` et `nb_sites_sans_version` doivent valoir 0 : ce sont les deux
--- façons de perdre silencieusement des PDI. Un site sans agrégat DSR-696 n'a pas de
--- dénominateur, un site sans version active DSR-698 n'a pas de conteneur — dans les deux cas
--- la jointure du calcul l'écarte sans rien dire, et le CA1 échoue au contrôle final.
+-- `nb_sites_sans_agregat` et `nb_sites_sans_version` doivent valoir 0 : sinon la jointure
+-- du calcul écarte silencieusement ces PDI (CA1).
 SELECT @id_referentiel                                          AS id_referentiel_demande,
        COUNT(*)                                                 AS nb_pdi_actifs,
        COUNT(DISTINCT c.co_regate_site)                         AS nb_sites,
@@ -83,13 +57,8 @@ SELECT @id_referentiel                                          AS id_referentie
 -- -------------------------------------------------------------------------------------
 -- Garde-fou 2 — dénominateurs nuls
 -- -------------------------------------------------------------------------------------
--- Doit renvoyer 0 ligne. Toute ligne ici annonce l'`ERROR 1365` de l'étape suivante, et
--- désigne le site et la famille de trafic fautifs. Le cas le plus courant est
--- `potentielip_total` : un site dont aucun PDI ne porte de potentiel IP a un total à zéro.
---
--- Que faire d'une ligne qui remonte : soit le site n'a effectivement aucun trafic de cette
--- famille et il faut décider ce que vaut « sa part » (question métier, pas technique), soit
--- l'agrégat DSR-696 est périmé et il suffit de le recalculer.
+-- Doit renvoyer 0 ligne : toute ligne annonce l'`ERROR 1365` du calcul (souvent
+-- `potentielip_total` à zéro). Recalculer l'agrégat DSR-696 s'il est périmé, sinon arbitrage métier.
 SELECT co_regate_site,
        trafic_colis_total,
        trafic_oo_total,
@@ -108,14 +77,9 @@ SELECT co_regate_site,
 -- -------------------------------------------------------------------------------------
 -- Garde-fou 3 — le périmètre a-t-il déjà été calculé ? (CA4)
 -- -------------------------------------------------------------------------------------
--- Mémorisé AVANT toute écriture, comme dans `DSR-698_version_cle.sql`, et pour la même
--- raison technique : MySQL refuse de lire la table cible d'un INSERT dans son propre SELECT
--- (erreur 1093), le test est donc déporté sur une variable calculée en amont.
---
--- Le CA4 est ABSOLU : une version déjà calculée n'est jamais retouchée. Si une seule version
--- du périmètre porte des clés, le script ne fait rien du tout — il ne charge pas non plus
--- les autres, pour ne pas laisser un référentiel à moitié calculé sans que rien ne le dise.
--- Pour calculer les sites restants, relancer site par site avec `@co_regate`.
+-- Mémorisé AVANT toute écriture (erreur 1093 : pas de lecture de la table cible dans
+-- l'INSERT). Si une seule version du périmètre a des clés, rien n'est chargé : relancer
+-- site par site avec `@co_regate`.
 SET @deja := (SELECT COUNT(*)
                 FROM trppu_cles_repartition_calcule k
                 JOIN trppu_version_cle v ON v.id_version_cle = k.id_version_cle
@@ -126,22 +90,11 @@ SET @deja := (SELECT COUNT(*)
 -- -------------------------------------------------------------------------------------
 -- Calcul des clés
 -- -------------------------------------------------------------------------------------
--- Un seul INSERT : la jointure sur `trppu_version_cle` porte le CA2 (aucune clé ne peut
--- exister sans version), celle sur `trppu_trafic_site` fournit les dénominateurs. Les trois
--- accès sont servis par un index — `idx_cr_ref_actif`, `uq_site_trafic`, `idx_regate_actif`.
---
--- Non listées : `id_cle_repartition` (AUTO_INCREMENT) et `date_creation` (DEFAULT
--- CURRENT_TIMESTAMP, qui horodate le calcul).
---
--- Le `CAST` de la clé potentiel IP n'est pas décoratif. `potentielip` est un `smallint` et
--- `potentielip_total` un `bigint` : pour MySQL, l'échelle du résultat d'une division est
--- celle du premier opérande augmentée de `div_precision_increment` (4 par défaut). Sans
--- CAST, la clé serait donc calculée à 10⁻⁴ près, puis stockée dans un `decimal(24,18)` qui
--- ferait croire à dix-huit décimales significatives. Les trois autres clés partent d'un
--- `decimal(25,19)` et ne sont pas concernées.
---
--- `COALESCE` ne porte que sur le NUMÉRATEUR, seule colonne source nullable. Aucun COALESCE
--- ni NULLIF ne protège les dénominateurs : c'est délibéré, cf. le durcissement du sql_mode.
+-- La jointure sur `trppu_version_cle` porte le CA2. Index : `idx_cr_ref_actif`,
+-- `uq_site_trafic`, `idx_regate_actif`.
+-- `CAST` de la clé potentiel IP : `potentielip` est un smallint, la division ne donnerait que
+-- 4 décimales (`div_precision_increment`).
+-- `COALESCE` sur le seul numérateur ; dénominateurs volontairement non protégés (sql_mode).
 
 INSERT INTO trppu_cles_repartition_calcule
     (id_version_cle,
@@ -176,14 +129,9 @@ SELECT v.id_version_cle,
 -- Contrôles — critères d'acceptation
 -- -------------------------------------------------------------------------------------
 
--- CA1 : chaque PDI actif du référentiel a sa ligne de clés — doit renvoyer 0 ligne.
--- Ce qui remonte ici est un PDI perdu par une jointure : site sans agrégat DSR-696, ou site
--- sans version active DSR-698. Les deux garde-fous du début l'annonçaient.
---
--- Le `NOT EXISTS` porte sur (id_referentiel, id_pdi), qu'aucun index ne sert — `uq_crc_
--- version_pdi` commence par `id_version_cle`. C'est délibéré : passer par la version rendrait
--- le contrôle index-friendly, mais aveugle aux sites SANS version, c'est-à-dire au cas même
--- que le CA1 doit détecter. Sur un gros référentiel, restreindre `@co_regate`.
+-- CA1 : chaque PDI actif a sa ligne de clés — doit renvoyer 0 ligne.
+-- `NOT EXISTS` non indexé, à dessein : passer par la version rendrait le contrôle aveugle
+-- aux sites sans version. Sur un gros référentiel, restreindre `@co_regate`.
 SELECT c.co_regate_site,
        c.id_pdi
   FROM trppu_cles_repartition c
@@ -206,14 +154,8 @@ SELECT k.id_version_cle,
    AND v.id_version_cle IS NULL
  GROUP BY k.id_version_cle;
 
--- CA3 : la somme des clés d'un site vaut 1, à 10⁻⁴ près (tolérance du ticket).
--- `verdict` doit valoir OK sur toutes les lignes. Une somme à 0 désigne un dénominateur nul
--- accepté par un serveur laxiste ; une somme franchement supérieure à 1 signale un doublon
--- de PDI ou un agrégat DSR-696 calculé sur un périmètre plus étroit que les clés.
---
--- Le ticket demande une alerte dans les logs : le SQL ne sait pas journaliser. C'est
--- l'appelant — socle ou exploitant — qui remonte les lignes en ANOMALIE, avec le site et la
--- famille de clés concernés.
+-- CA3 : la somme des clés d'un site vaut 1 à 10⁻⁴ près ; `verdict` doit valoir OK.
+-- L'alerte dans les logs demandée par le ticket relève de l'appelant (lignes en ANOMALIE).
 SELECT k.co_regate_site,
        COUNT(*)                AS nb_pdi,
        SUM(k.cle_colis)        AS somme_colis,
@@ -231,9 +173,7 @@ SELECT k.co_regate_site,
  GROUP BY k.co_regate_site
  ORDER BY verdict DESC, k.co_regate_site;
 
--- CA4 : un PDI n'a qu'une clé par version — doit renvoyer 0 ligne.
--- Garanti en base par `uq_crc_version_pdi` depuis la migration ; le contrôle reste utile là
--- où elle n'aurait pas été jouée.
+-- CA4 : un PDI n'a qu'une clé par version — doit renvoyer 0 ligne (cf. `uq_crc_version_pdi`).
 SELECT id_version_cle,
        id_pdi,
        COUNT(*) AS nb_lignes

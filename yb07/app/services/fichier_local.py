@@ -1,9 +1,6 @@
 """Accès à un fichier du disque local, symétrique de `app/services/s3.py`.
 
-Sert quand le fichier métier n'est pas (encore) déposé sur S3 : poste de développement,
-recette, reprise d'un fichier transmis à la main. Les mêmes garanties s'appliquent — le
-fichier est localisé avant toute écriture en base, puis lu en streaming, à mémoire
-constante, avec décompression à la volée s'il se termine par `.gz`.
+Mêmes garanties : localisé avant toute écriture en base, lu en streaming (`.gz` à la volée).
 """
 
 from __future__ import annotations
@@ -25,10 +22,10 @@ TAILLE_BUFFER = 1024 * 1024
 
 
 def verifier_presence(chemin: str) -> int:
-    """Taille du fichier en octets. Lève `TraitementImpossible` s'il est inaccessible.
+    """Taille du fichier en octets ; `TraitementImpossible` s'il est inaccessible.
 
-    Appelée **avant** toute écriture en base, pour la même raison que sur S3 : découvrir
-    l'absence du fichier après la purge coûterait un rechargement complet.
+    Appelée avant toute écriture en base : l'absence découverte après la purge coûterait
+    un rechargement complet.
     """
     fichier = Path(chemin)
     if not fichier.exists():
@@ -37,8 +34,7 @@ def verifier_presence(chemin: str) -> int:
         raise TraitementImpossible(f"'{fichier.resolve()}' n'est pas un fichier.")
     try:
         taille = fichier.stat().st_size
-        # Ouvrir sans lire : un fichier présent mais illisible (droits) doit échouer ici,
-        # et non après la purge.
+        # Ouvrir sans lire : un fichier illisible (droits) doit échouer avant la purge.
         with fichier.open("rb"):
             pass
     except OSError as erreur:
@@ -62,7 +58,7 @@ def ouvrir(chemin: str, *, encodage: str) -> Iterator[TextIO]:
         raise TraitementImpossible(f"Fichier local '{chemin}' illisible : {erreur}") from erreur
 
     binaire = gzip.GzipFile(fileobj=brut) if chemin.endswith(".gz") else brut
-    # newline="" : c'est le module csv qui gère les fins de ligne (cf. `s3.ouvrir_objet`).
+    # newline="" : le module csv gère les fins de ligne (cf. `s3.ouvrir_objet`).
     flux = io.TextIOWrapper(binaire, encoding=encodage, newline="")
     try:
         yield flux

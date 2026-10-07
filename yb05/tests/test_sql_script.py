@@ -1,9 +1,4 @@
-"""Tests du découpage et de l'exécution des scripts SQL.
-
-Aucune base MySQL n'est nécessaire : ``aiomysql.connect`` est remplacé par une
-connexion factice. Le code async est exécuté via ``asyncio.run`` pour ne pas
-dépendre de pytest-asyncio.
-"""
+"""Découpage et exécution des scripts SQL (``aiomysql.connect`` factice, ``asyncio.run``)."""
 
 import asyncio
 import logging
@@ -73,7 +68,6 @@ class FakeConnection:
 
     @property
     def sql(self) -> list[str]:
-        """Raccourci de lecture : uniquement le SQL, sans les params."""
         return [s for s, _ in self.calls]
 
 
@@ -149,7 +143,6 @@ def test_split_ignore_bloc_de_commentaires_seul():
 
 
 def test_split_ne_coupe_pas_sur_point_virgule_dans_chaine():
-    """Un ';' à l'intérieur d'une chaîne littérale ne coupe pas l'instruction."""
     stmts = split_sql_script("INSERT INTO t (c) VALUES ('a;b');")
     assert len(stmts) == 1
     assert "a;b" in stmts[0]
@@ -164,13 +157,11 @@ def test_split_enum_avec_quotes_et_virgules():
 
 
 def test_split_derniere_instruction_sans_point_virgule():
-    """La dernière instruction est retournée même sans ';' final."""
     assert split_sql_script("SELECT 1;\nSELECT 2") == ["SELECT 1", "SELECT 2"]
 
 
 @pytest.mark.parametrize("contenu", ["", "\n\n   \n", "   "])
 def test_split_fichier_vide_ou_blanc(contenu):
-    """Un script vide ou uniquement composé de blancs ne produit rien."""
     assert split_sql_script(contenu) == []
 
 
@@ -349,7 +340,6 @@ def test_continue_on_error_poursuit_et_valide(monkeypatch):
 
 
 def test_dry_run_nouvre_aucune_connexion(monkeypatch):
-    """Le dry_run analyse le script sans ouvrir la moindre connexion."""
     _patch_connect_interdit(monkeypatch)
 
     res = asyncio.run(_db().execute_sql_script("SELECT 1; DROP TABLE t;", dry_run=True))
@@ -398,7 +388,6 @@ def test_multi_fichiers_une_seule_transaction(monkeypatch, tmp_path):
 
 
 def test_fichier_absent_avant_toute_connexion(monkeypatch, tmp_path):
-    """Un fichier manquant échoue sans qu'aucune connexion n'ait été ouverte."""
     _patch_connect_interdit(monkeypatch)
     existant = _ecrire(tmp_path, "ok.sql", "SELECT 1;\n")
 
@@ -420,7 +409,6 @@ def test_non_transactionnel_autocommit(monkeypatch):
 
 
 def test_transactionnel_autocommit_false(monkeypatch):
-    """transactional=True (défaut) ouvre la connexion avec autocommit désactivé."""
     conn = FakeConnection()
     captured = _patch_connect(monkeypatch, conn)
 
@@ -460,7 +448,6 @@ def test_database_selon_le_parametre(monkeypatch):
 
 
 def test_avertissement_ddl_en_mode_transactionnel(monkeypatch, caplog):
-    """Le DDL en mode transactionnel déclenche un avertissement explicite."""
     conn = FakeConnection()
     _patch_connect(monkeypatch, conn)
 
@@ -472,7 +459,6 @@ def test_avertissement_ddl_en_mode_transactionnel(monkeypatch, caplog):
 
 
 def test_pas_davertissement_ddl_sans_ddl(monkeypatch, caplog):
-    """Un script purement DML ne déclenche aucun avertissement DDL."""
     conn = FakeConnection()
     _patch_connect(monkeypatch, conn)
 
@@ -518,7 +504,6 @@ def test_pas_de_retry_sur_instruction(monkeypatch):
 
 
 def test_le_runner_nutilise_pas_le_pool(monkeypatch):
-    """Le script passe par une connexion dédiée, jamais par le pool."""
     conn = FakeConnection()
     _patch_connect(monkeypatch, conn)
 

@@ -1,12 +1,7 @@
 """DSR-704 — mode ALL : sélection, parallélisme, isolation des échecs, bilan.
 
-L'orchestrateur n'a pas de logique métier propre : les trois traitements sont donc remplacés par
-des doublures, et les tests portent sur ce qui lui appartient réellement — qui est appelé, dans
-quel ordre, combien de fois en même temps, et ce que dit le bilan.
-
-Le parallélisme est vérifié par un **compteur de concurrence observée**, jamais par des durées :
-une assertion sur le temps passe ou échoue selon la charge de la machine, ce qui produirait un
-test qui ment une fois sur dix.
+Traitements remplacés par des doublures ; parallélisme mesuré par un compteur de concurrence,
+jamais par des durées (instables selon la charge).
 """
 
 import asyncio
@@ -26,7 +21,6 @@ from tests.conftest import FausseBase
 
 
 def _rapport(statut, motif=None, erreur=None):
-    """Rapport minimal, réussi ou non selon `statut`."""
     rapport = Rapport(titre="doublure", id_scenario=0, statut=statut)
     if motif:
         rapport.ko(motif)
@@ -134,7 +128,7 @@ def test_all_avec_identifiant_ne_traite_que_celui_la(monkeypatch):
 
 
 def test_aucun_scenario_eligible_n_est_pas_une_erreur(monkeypatch):
-    """Le ticket n'en parle pas : un batch qui ne trouve rien a simplement fini son travail."""
+    """Un batch qui ne trouve rien a simplement fini son travail."""
     bilan = _executer(monkeypatch, Traitements(), base=_base(()))
 
     assert bilan.scenarios_trouves == []
@@ -143,7 +137,7 @@ def test_aucun_scenario_eligible_n_est_pas_une_erreur(monkeypatch):
 
 
 def test_les_scenarios_a_moitie_calcules_sont_signales(monkeypatch):
-    """Hors critères du ticket : jamais repris, mais nommés pour ne pas rester invisibles."""
+    """Jamais repris, mais nommés dans le bilan."""
     bilan = _executer(monkeypatch, Traitements(), base=_base((12345,), a_moitie=(12347, 12351)))
 
     assert bilan.scenarios_a_moitie_calcules == [12347, 12351]
@@ -269,11 +263,7 @@ def test_une_exception_imprevue_est_isolee(monkeypatch):
 
 
 def test_le_verrou_est_libere_si_l_etape_agrebal_echoue(monkeypatch):
-    """Filet de sécurité : DSR-703 s'arrête sans libérer un verrou qu'il ne détient pas.
-
-    Dans la chaîne, c'est l'étape PDI qui vient de le poser : le scénario resterait bloqué à
-    CALCUL_TRAFIC_EN_COURS = 1, ce que DSR-704 interdit explicitement.
-    """
+    """Filet DSR-704 : DSR-703 en échec ne libère pas le verrou posé par l'étape PDI."""
     traitements = Traitements(echecs_agrebal=(12345,))
     ecriture = FausseBase({})
 
@@ -293,11 +283,7 @@ def test_aucun_verrou_libere_quand_tout_se_passe_bien(monkeypatch):
 
 
 def test_l_orchestrateur_ne_journalise_jamais(monkeypatch):
-    """CA-09 : aucune règle métier propre, donc aucune ligne de recalcul_log de son fait.
-
-    DSR-702 et DSR-703 écrivent déjà la leur ; en ajouter une ici ferait de l'orchestrateur un
-    troisième auteur du journal.
-    """
+    """CA-09 : seuls DSR-702 et DSR-703 écrivent dans trppu_recalcul_log."""
     ecriture = FausseBase({})
 
     _executer(
@@ -396,11 +382,7 @@ def test_bilan_vide_ne_divise_pas_par_zero():
 
 
 # ---------------------------------------------------------------------------
-# Journalisation des verdicts
-#
-# Les traitements ne lèvent pas : ils rendent un `Rapport`. Sans ces lignes, un
-# scénario en échec ou non éligible ne laissait AUCUNE trace dans les logs — le
-# verdict ne vivait que dans le `Bilan`, en mémoire.
+# Journalisation des verdicts (les traitements rendent un Rapport, ils ne lèvent pas)
 # ---------------------------------------------------------------------------
 
 

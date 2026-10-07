@@ -1,32 +1,21 @@
 -- =====================================================================================
 -- DSR-696 — Calcul et alimentation des trafics agrégés par site
 -- =====================================================================================
--- Alimente `trppu_trafic_site` à partir de `trppu_cles_repartition` : pour un référentiel
--- (et optionnellement un seul site), la somme des trafics des PDI actifs. Ces agrégats sont
--- le dénominateur des clés de répartition — clé = trafic du PDI / total du site.
---
--- Règles de gestion couvertes
---   RG1  seules les lignes actives (`date_fin_validite IS NULL`) sont prises en compte
---   RG2  agrégation par site + référentiel
---   RG3  sommes de trafic_colis, trafic_oo, trafic_3s, potentielip
---   RG4  historisation : chaque référentiel produit son propre jeu d'agrégats
---
+-- Alimente `trppu_trafic_site` depuis `trppu_cles_repartition` : somme des trafics des PDI
+-- actifs par site, dénominateur des clés DSR-699.
+--   RG1  lignes actives seules (`date_fin_validite IS NULL`)   RG2  par site + référentiel
+--   RG3  sommes colis, oo, 3s, potentielip                     RG4  un jeu par référentiel
 -- Prérequis : `DSR-696-699_migration.sql` (clé unique + index de l'agrégation).
---
--- USAGE — renseigner les paramètres ci-dessous, puis :
---   mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-696_site_trafic.sql
---
--- Le script est REJOUABLE : le DELETE ciblé le rend idempotent, deux exécutions
--- consécutives laissent la table dans le même état.
+-- Usage : mysql -h <hote> -u <user> -p dsr_mercure_aa < db/DSR-696_site_trafic.sql
+-- REJOUABLE : le DELETE ciblé rend le script idempotent.
 -- =====================================================================================
 
 
 -- -------------------------------------------------------------------------------------
 -- Paramètres
 -- -------------------------------------------------------------------------------------
--- Les deux scripts sont joués sur une connexion unique (client `mysql` comme
--- `Database.execute_sql_files`, qui ouvre une connexion dédiée hors pool) : ces variables
--- de session restent donc visibles par toutes les instructions du fichier.
+-- Variables de session : le fichier est joué sur une connexion unique (client `mysql` ou
+-- `Database.execute_sql_files`, connexion dédiée hors pool).
 
 SET @id_referentiel := 1;      -- référentiel à (re)calculer — obligatoire
 SET @co_regate      := NULL;   -- '123456' pour un seul site, NULL pour tout le référentiel
@@ -48,13 +37,8 @@ SELECT @id_referentiel                                        AS id_referentiel_
 -- -------------------------------------------------------------------------------------
 -- Étape 1 — purge des agrégats déjà chargés pour ce périmètre
 -- -------------------------------------------------------------------------------------
--- DELETE puis INSERT, et non `INSERT … ON DUPLICATE KEY UPDATE` : c'est cette séquence qui
--- satisfait le CA4 (« les sites sans PDI actif ne sont pas chargés »). Un site dont tous les
--- PDI ont été clôturés depuis le dernier calcul doit DISPARAÎTRE de la table ; un upsert y
--- laisserait sa ligne périmée, avec un total qui ne correspond plus à rien.
---
--- Le filtre sur le référentiel garantit l'historisation (RG4) : les autres référentiels ne
--- sont jamais touchés.
+-- DELETE puis INSERT plutôt qu'un upsert (CA4) : un site sans plus aucun PDI actif doit
+-- disparaître. Filtré sur le référentiel : les autres jeux restent intacts (RG4).
 
 DELETE FROM trppu_trafic_site
  WHERE id_referentiel = @id_referentiel
@@ -64,32 +48,11 @@ DELETE FROM trppu_trafic_site
 -- -------------------------------------------------------------------------------------
 -- Étape 2 — calcul des agrégats
 -- -------------------------------------------------------------------------------------
--- Colonnes — le ticket ne décrit correctement AUCUNE des deux formes qu'il a portées :
---   * sa version initiale annonçait `id_site`, colonne qui n'a jamais existé ;
---   * sa version amendée la remplace par `id_site_trafic`, ce qui est un contresens :
---     `id_site_trafic` est la PK AUTO_INCREMENT de la table, pas un identifiant de site.
--- Dans les deux cas, la colonne réellement porteuse du site — `co_regate_site` — est absente
--- de la structure annoncée. Le SELECT du ticket, lui, la nomme correctement et la place en
--- première position : c'est ce mapping positionnel qui tranche, la première colonne de son
--- INSERT désigne bien le site. Ce sont donc les noms réels qui sont utilisés ici.
---
--- Non listées volontairement : `id_site_trafic` (AUTO_INCREMENT) et `date_creation`
--- (DEFAULT CURRENT_TIMESTAMP, qui horodate le calcul).
---
--- `COALESCE(potentielip, 0)` : c'est la seule des quatre colonnes sources qui soit nullable,
--- et la cible `potentielip_total` est NOT NULL. Sans cela, un site dont tous les PDI ont un
--- potentiel IP nul ferait échouer l'insertion.
---
--- `MIN(date_debut_validite)` reprend la règle du ticket : l'agrégat est valide depuis la plus
--- ancienne des dates de ses PDI.
---
--- `date_fin_validite` est écrite à NULL, comme le prescrit le ticket, et n'est alimentée
--- nulle part ailleurs : l'historisation passe exclusivement par le DELETE ciblé sur le
--- référentiel (RG4). Conséquence à connaître — toutes les lignes de la table, tous
--- référentiels confondus, portent NULL. Un consommateur ne peut donc PAS identifier le jeu
--- d'agrégats courant par `WHERE date_fin_validite IS NULL` : il doit filtrer sur
--- `id_referentiel`. La clôture des jeux antérieurs n'a pas été ajoutée d'office, elle sort
--- du ticket et relève de DSR-697, qui définira la notion de jeu courant.
+-- Le site est `co_regate_site` (le ticket écrit à tort `id_site_trafic`, qui est la PK).
+-- `id_site_trafic` et `date_creation` sont alimentées par la base.
+-- `COALESCE(potentielip, 0)` : seule source nullable, cible NOT NULL.
+-- `date_fin_validite` vaut toujours NULL : le jeu courant se lit par `id_referentiel`, pas
+-- par `date_fin_validite IS NULL`.
 
 INSERT INTO trppu_trafic_site
     (id_referentiel,
@@ -119,13 +82,8 @@ SELECT id_referentiel,
 -- Contrôles — critères d'acceptation
 -- -------------------------------------------------------------------------------------
 
--- CA1 + CA3 : autant de sites qu'en source, et sommes identiques au calcul direct.
--- `ecart_*` doit valoir 0 partout ; toute ligne non nulle signale un agrégat faux.
---
--- Lecture retenue du CA1 : « l'ensemble des sites présents dans TRPPU_CLES_REPARTITION »
--- s'entend des sites ayant AU MOINS UN PDI ACTIF. Pris au pied de la lettre, le CA1
--- contredirait le CA4, qui exige justement que les sites sans PDI actif ne soient pas
--- chargés. La sous-requête ci-dessous applique donc le même filtre RG1 que le calcul.
+-- CA1 + CA3 : mêmes sites (ayant un PDI actif, cf. CA4) et mêmes sommes qu'en source ;
+-- `ecart_*` doit valoir 0 partout.
 SELECT s.co_regate_site,
        s.trafic_colis_total,
        s.trafic_oo_total,

@@ -15,12 +15,7 @@ Traitements métier :
     python -m app.main init 1 --etape agregats     # une seule étape
     python -m app.main init 1 --depuis versions    # reprise, puis les étapes suivantes
 
-Les traitements métier s'ajoutent en sous-commandes, sur le modèle de `db-info` :
-une coroutine `cmd_<nom>(args) -> int` enregistrée dans `build_parser()` avec
-`parents=[commun]`. Celles qui rendent un `Rapport` passent par `_executer_traitement`.
-
-Le code de retour vaut 0 si la vérification ou le traitement est concluant, 1 sinon
-(utilisable en ordonnanceur ou en probe).
+Code de retour : 0 si concluant, 1 sinon.
 """
 
 import argparse
@@ -120,12 +115,7 @@ async def cmd_db_check(args: argparse.Namespace) -> int:
 
 
 async def cmd_s3_check(args: argparse.Namespace) -> int:
-    """Configuration S3, test d'accès, et contenu du bucket.
-
-    Sert à régler `S3_PREFIXE` et `CSV_CLES_REPARTITION` sans tâtonner : on voit ce que le
-    bucket contient réellement, au lieu de deviner un chemin et d'attendre l'échec d'un
-    chargement.
-    """
+    """Configuration S3, test d'accès et contenu du bucket (pour régler `S3_PREFIXE`)."""
     config = s3.decrire_configuration()
     acces = await asyncio.to_thread(s3.verifier_acces)
 
@@ -189,7 +179,6 @@ def _print_contenu(contenu: dict, prefixe: str) -> None:
         print(f"  [dossier]  {nom}")
     for objet in contenu["objets"]:
         date_modif = objet["modifie_le"]
-        # En JSON la date est sérialisée par défaut ; en texte on la raccourcit.
         libelle_date = date_modif.strftime("%Y-%m-%d %H:%M") if date_modif else ""
         print(
             f"  {s3.taille_lisible(objet['taille']):>10}  "
@@ -208,13 +197,9 @@ def _print_contenu(contenu: dict, prefixe: str) -> None:
 
 
 async def _executer_traitement(traitement, args: argparse.Namespace) -> int:
-    """Exécute un traitement, affiche son rapport et en déduit le code de retour.
+    """Exécute un traitement sous `id_traitement`, affiche son rapport, rend le code de retour.
 
-    Le contexte de corrélation est posé ici : toutes les lignes de log émises pendant le
-    traitement, y compris celles de `app.db.mysql`, porteront `id_traitement`.
-
-    Toute exception qui remonterait malgré tout est convertie en rapport d'échec : la CLI
-    ne doit jamais rendre de stacktrace à l'exploitant.
+    Toute exception est convertie en rapport d'échec : jamais de stacktrace à l'exploitant.
     """
     jeton = set_id_traitement(args.id_traitement)
     try:
@@ -358,8 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[commun],
         help="Charge trppu_cles_repartition depuis le CSV déposé sur S3.",
     )
-    # Stocké sous `id_traitement` : c'est le nom que `main()` reprend dans ses logs
-    # `Début`/`Fin commande` et que `_executer_traitement` pose comme corrélation.
+    # Stocké sous `id_traitement` : repris comme corrélation des logs.
     chargement.add_argument(
         "id_traitement",
         type=int,
@@ -379,7 +363,6 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[commun],
         help="Charge trppu_cles_repartition depuis un CSV du disque local (S3 non sollicité).",
     )
-    # Même nom que pour le chargement S3 : `main()` et `_executer_traitement` le reprennent.
     chargement_local.add_argument(
         "id_traitement",
         type=int,
@@ -399,8 +382,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Initialise les clés de répartition : chargement S3, migration, agrégats, "
         "versions, clés.",
     )
-    # Même nom que pour le chargement, et pour la même raison : `main()` le reprend dans ses
-    # logs `Début`/`Fin commande` et `_executer_traitement` le pose comme corrélation.
     init.add_argument(
         "id_traitement",
         type=int,
@@ -412,8 +393,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Nom du fichier dans le bucket, à défaut de CSV_CLES_REPARTITION.",
     )
-    # `choices` fait rejeter un nom d'étape inconnu par argparse, avant toute connexion, et
-    # documente la chaîne dans `--help` sans qu'on ait à la recopier.
     reprise = init.add_mutually_exclusive_group()
     reprise.add_argument(
         "--depuis",
@@ -461,7 +440,6 @@ async def _run(args: argparse.Namespace) -> int:
     try:
         return await args.handler(args)
     finally:
-        # Les pools sont créés à la volée (lazy) : on les ferme proprement en sortie.
         await db_read.disconnect()
         await db_write.disconnect()
 
@@ -469,9 +447,7 @@ async def _run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
-    # INFO par défaut : le batch tourne sous ordonnanceur, sans `-v`, et c'est la
-    # seule trace de ce qu'il a fait. La sortie console de l'exploitant n'en pâtit
-    # pas — le rapport part sur stdout, les logs JSON sur stderr.
+    # INFO par défaut : seule trace sous ordonnanceur (rapport sur stdout, logs sur stderr).
     setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
 
     debut = time.perf_counter()

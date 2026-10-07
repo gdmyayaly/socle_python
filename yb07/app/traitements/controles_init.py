@@ -1,22 +1,8 @@
-"""Garde-fous et critères d'acceptation de la chaîne d'initialisation, rejoués en Python.
+"""Prérequis (avant toute écriture) et contrôles d'acceptation (après chaque étape) de l'init.
 
-Pourquoi ne pas se contenter des `SELECT` de contrôle que portent déjà les scripts : le runner
-du socle exécute chaque instruction sur un curseur nu et n'appelle jamais `fetchall()`
-(`app/db/mysql.py`, `_run_statement`). Il conserve le `rowcount`, ce qui suffit aux contrôles
-« doit renvoyer 0 ligne » — mais les **valeurs** (les sommes de clés) et les **identités** (quel
-site) sont perdues. Or DSR-699 demande explicitement une alerte dans les logs sur une somme hors
-tolérance : le SQL ne sait pas journaliser, l'appelant si.
-
-Deux familles :
-
-* les **prérequis**, joués avant toute écriture. Ils répondent à « peut-on démarrer ici ? »,
-  question qui se pose dès qu'on reprend la chaîne au milieu. Tous sont bon marché — un garde-fou
-  qui coûte vingt minutes ne serait pas joué, donc ne protégerait rien ;
-* les **contrôles d'acceptation**, joués après chaque étape.
-
-Toutes les requêtes de ce module sont en lecture, et passent par la base de lecture. Plusieurs
-contrôles des scripts ont été écartés pour leur coût : chaque fois, le rapport le dit, plutôt que
-d'afficher un `[OK]` qui laisserait croire à une vérification qui n'a pas eu lieu.
+Rejoués en Python : le runner de scripts ne garde que le `rowcount`, pas les valeurs, or
+DSR-699 exige une alerte dans les logs sur une somme hors tolérance. Un contrôle écarté pour
+son coût est signalé comme tel au rapport, jamais affiché `[OK]` en silence.
 """
 
 from __future__ import annotations
@@ -31,15 +17,14 @@ from app.traitements.rapport import Rapport
 
 logger = logging.getLogger(__name__)
 
-# Les quatre objets que pose `DSR-696-699_migration.sql`. `idx_regate_actif` est fourni par la
-# base depuis la ré-extraction du 17/08/2026 : la migration ne le crée plus, mais l'étape
-# `versions` en dépend, donc on vérifie sa présence comme les autres.
+# Index requis par la chaîne. `idx_regate_actif` vient de la base, pas de la migration, mais
+# l'étape `versions` en dépend.
 INDEX_ATTENDUS = ("uq_site_trafic", "idx_cr_ref_actif", "uq_crc_version_pdi", "idx_regate_actif")
 
 TOTAUX_SITE = ("trafic_colis_total", "trafic_oo_total", "trafic_3s_total")
 
-# `fix_error.sql` porte les trois totaux à decimal(35,19). En deçà, DSR-696 échoue en
-# `ERROR 1264 (Out of range value)` après avoir purgé — donc après avoir déjà fait des dégâts.
+# Totaux en decimal(35,19) (`fix_error.sql`) ; en deçà, DSR-696 échoue en ERROR 1264 après
+# avoir déjà purgé.
 PRECISION_MINIMALE = 35
 ECHELLE_ATTENDUE = 19
 
@@ -52,15 +37,13 @@ TOLERANCE_HAUTE = "1.0001"
 # Requêtes
 # ---------------------------------------------------------------------------
 
-# `LIMIT 1` sur l'index, et non `COUNT(*)` : la question est « y a-t-il des lignes ? », à
-# laquelle un comptage répondrait en balayant 24 M entrées de `idx_cr_ref_actif`.
+# `LIMIT 1` plutôt que `COUNT(*)`, qui balaierait 24 M entrées d'index.
 LIGNES_PRESENTES_SQL = """
 SELECT 1 AS ok FROM trppu_cles_repartition WHERE id_referentiel = %s LIMIT 1
 """
 
-# Index du chargement en place : l'index unique présent, l'index temporaire d'une ancienne
-# version absent. Sans `uk_pdi_ref`, poursuivre la chaîne calculerait sur des doublons
-# possibles ; relancer le chargement le recrée avant la première ligne.
+# Chargement finalisé : `uk_pdi_ref` présent (sinon doublons possibles), index temporaire
+# absent.
 CHARGEMENT_FINALISE_SQL = """
 SELECT COALESCE(SUM(INDEX_NAME = 'uk_pdi_ref'), 0)          AS chargement_uk,
        COALESCE(SUM(INDEX_NAME = 'idx_cr_pdi_doublons'), 0) AS chargement_tmp
@@ -105,17 +88,15 @@ SELECT COUNT(*)                 AS nb_versions,
  WHERE id_referentiel = %s AND actif = 'O'
 """
 
-# L'ambiguïté que redoute DSR-701 règle 9 : sa lecture d'éligibilité filtre sur
-# `co_regate = ? AND actif = 'O'` sans borner le référentiel. Deux versions actives sur des
-# référentiels différents lui rendraient deux lignes.
+# DSR-701 règle 9 lit `co_regate = ? AND actif = 'O'` sans borner le référentiel : deux
+# versions actives d'un site la rendraient ambiguë.
 VERSIONS_ACTIVES_MULTIPLES_SQL = """
 SELECT COUNT(*) AS nb FROM (
   SELECT co_regate FROM trppu_version_cle
    WHERE actif = 'O' GROUP BY co_regate HAVING COUNT(*) > 1) x
 """
 
-# Garde-fou n°2 de DSR-699, restreint à `trppu_trafic_site` : quelques milliers de lignes, et il
-# annonce l'`ERROR 1365` avant que le calcul ne consomme des heures pour rien.
+# Garde-fou n°2 de DSR-699 (totaux de site nuls), sur quelques milliers de lignes.
 DENOMINATEURS_NULS_SQL = """
 SELECT co_regate_site,
        trafic_colis_total, trafic_oo_total, trafic_3s_total, potentielip_total
@@ -128,10 +109,8 @@ SELECT co_regate_site,
  ORDER BY co_regate_site
 """
 
-# CA4 de DSR-699, en amont. Parcours inversé par rapport au script : on part de
-# `trppu_version_cle` (quelques milliers de lignes) et on sonde les clés par
-# `uq_crc_version_pdi`, dont `id_version_cle` est le membre de tête. Quelques milliers de sondes
-# d'index, au lieu d'une jointure sur 24 M lignes.
+# CA4 de DSR-699, en amont : on part des versions et on sonde `uq_crc_version_pdi` (tête
+# `id_version_cle`) au lieu de joindre 24 M lignes.
 PERIMETRE_DEJA_CALCULE_SQL = """
 SELECT COUNT(*) AS nb
   FROM trppu_version_cle v
@@ -160,9 +139,8 @@ SELECT COUNT(*) AS nb FROM (
    GROUP BY co_regate_site HAVING COUNT(*) > 1) x
 """
 
-# Substitut du constat n°2 de `fix_error.sql`, lu sur la cible et non sur les 24 M lignes
-# sources : même information — combien de chiffres entiers un total atteint réellement — pour
-# quelques milliers de lignes au lieu d'une ré-agrégation complète.
+# Constat n°2 de `fix_error.sql` (chiffres entiers atteints), lu sur la cible et non sur les
+# 24 M lignes sources.
 CHIFFRES_ENTIERS_SQL = """
 SELECT MAX(LENGTH(TRUNCATE(GREATEST(trafic_colis_total,
                                     trafic_oo_total,
@@ -177,9 +155,15 @@ SELECT COUNT(*) AS nb
  WHERE id_referentiel = %s AND date_fin_validite IS NULL
 """
 
-# Somme attendue par composante : 1 — ou 0 quand le total du site est nul, la règle métier
-# enregistrant alors des clés à 0 (DSR-699, 30/09/2026). Sans ce cas, ces sites seraient
-# déclarés en anomalie à tort.
+# Clés déjà écrites pour le référentiel — lu seulement en reprise d'un calcul interrompu.
+CLES_PRESENTES_SQL = """
+SELECT COUNT(*) AS nb
+  FROM trppu_cles_repartition_calcule
+ WHERE id_referentiel = %s
+"""
+
+# Somme attendue par composante : 1, ou 0 si le total du site est nul (clés à 0, règle
+# métier DSR-699).
 ECART_TOLERE = "0.0001"
 SOMMES_HORS_TOLERANCE_SQL = f"""
 SELECT k.co_regate_site,
@@ -199,8 +183,7 @@ HAVING ABS(SUM(k.cle_colis)       - IF(MAX(s.trafic_colis_total) = 0, 0, 1)) > {
  ORDER BY k.co_regate_site
 """
 
-# Nombre de PDI actifs des sites à total nul — ceux dont une clé sera enregistrée à 0.
-# Servi par `idx_cr_ref_actif` (id_referentiel, date_fin_validite, co_regate_site).
+# PDI actifs des sites à total nul (servi par `idx_cr_ref_actif`).
 PDI_ACTIFS_DES_SITES_SQL = """
 SELECT co_regate_site, COUNT(*) AS nb
   FROM trppu_cles_repartition
@@ -215,12 +198,10 @@ SELECT co_regate_site, COUNT(*) AS nb
 
 
 def rowcount(resultat: ScriptResult, debut_apercu: str) -> int:
-    """Nombre de lignes de la première instruction dont l'aperçu commence par `debut_apercu`.
+    """`rowcount` de la première instruction dont l'aperçu commence par `debut_apercu`.
 
-    Le repérage se fait sur l'aperçu, pas sur l'indice : ajouter un commentaire en tête de
-    script décalerait un contrôle indexé par position, sans que rien ne le signale.
-
-    Rend `-1` si l'instruction n'a pas été trouvée — cas d'un `dry_run`, où rien n'a tourné.
+    Repérage par aperçu plutôt que par indice (robuste à un ajout d'instruction) ; `-1` si
+    introuvable (`dry_run`).
     """
     cible = " ".join(debut_apercu.split()).upper()
     for instruction in resultat.statements:
@@ -240,14 +221,7 @@ async def verifier_prerequis(
     id_referentiel: int,
     controles: Sequence[str],
 ) -> bool:
-    """Vérifie que la chaîne peut démarrer à l'étape demandée. Aucune écriture.
-
-    `controles` est la liste des vérifications à jouer, décidée par l'orchestrateur en fonction
-    de la première étape : elles ne s'appliquent qu'au point de départ, puisque les prérequis
-    des étapes suivantes sont produits par les précédentes au cours du même passage.
-
-    Retourne `False` au premier échec, après avoir posé le motif au rapport.
-    """
+    """Vérifie que la chaîne peut démarrer à sa première étape ; `False` au premier échec."""
     for controle in controles:
         verificateur = _VERIFICATEURS[controle]
         if not await verificateur(rapport, db, id_referentiel):
@@ -278,11 +252,7 @@ async def _verifier_lignes(rapport: Rapport, db, id_referentiel: int) -> bool:
 
 
 async def _verifier_schema(rapport: Rapport, db, id_referentiel: int) -> bool:
-    """Objets de la migration, puis largeur des totaux — dans cet ordre.
-
-    L'ordre compte pour le diagnostic : sans les index, le message doit désigner la migration ;
-    avec les index mais des colonnes étroites, il doit désigner le correctif.
-    """
+    """Objets de la migration, puis largeur des totaux (l'ordre désigne la bonne étape)."""
     presents = {ligne["nom"] for ligne in await db.fetch_all(INDEX_PRESENTS_SQL)}
     manquants = [nom for nom in INDEX_ATTENDUS if nom not in presents]
 
@@ -332,11 +302,10 @@ async def _verifier_agregats(rapport: Rapport, db, id_referentiel: int) -> bool:
 
 
 async def _verifier_versions(rapport: Rapport, db, id_referentiel: int) -> bool:
-    """Les versions doivent couvrir **tous** les sites agrégés, pas seulement exister.
+    """Les versions actives doivent couvrir tous les sites agrégés.
 
-    DSR-699 joint les trois tables : un site agrégé mais sans version active est écarté de son
-    calcul, sans erreur et sans trace. Démarrer à « cles » sur une couverture partielle
-    produirait donc un référentiel incomplet — et, par le CA4, définitivement figé.
+    Un site sans version est écarté du calcul DSR-699 sans trace, et le CA4 figerait le
+    référentiel incomplet.
     """
     attendus = await nb_sites_agreges(db, id_referentiel)
     couverture = await db.fetch_one(SITES_VERSIONNES_SQL, (id_referentiel,))
@@ -354,12 +323,7 @@ async def _verifier_versions(rapport: Rapport, db, id_referentiel: int) -> bool:
 
 
 async def _verifier_denominateurs(rapport: Rapport, db, id_referentiel: int) -> bool:
-    """Sites dont un total est nul : leurs clés seront enregistrées à 0 (règle métier).
-
-    Ne bloque plus : le calcul n'y divise pas, il écrit 0. Chaque site est porté au rapport
-    final — composantes concernées et nombre de PDI — pour que le métier sache quelles clés
-    valent 0 par convention et non par calcul.
-    """
+    """Sites à total nul : non bloquant, clés à 0 (règle métier), signalées au rapport."""
     nuls = await db.fetch_all(DENOMINATEURS_NULS_SQL, (id_referentiel,))
     if not nuls:
         rapport.ok("Aucun total de site nul")
@@ -414,26 +378,50 @@ async def _verifier_denominateurs(rapport: Rapport, db, id_referentiel: int) -> 
     return True
 
 
-async def _verifier_non_calcule(rapport: Rapport, db, id_referentiel: int) -> bool:
-    """CA4 de DSR-699 : une version déjà calculée n'est jamais retouchée.
+async def verifier_reprise_cles(
+    rapport: Rapport, db, id_referentiel: int, lignes_attendues: int | None
+) -> int | None:
+    """CA4 de DSR-699 : rend le nombre de clés déjà présentes, ou None si refusé.
 
-    Sans ce garde-fou, relancer la chaîne sur un périmètre déjà calculé ferait écrire zéro clé
-    au script, qui se terminerait néanmoins en succès — un faux `[OK]` sur l'étape la plus
-    lourde de la chaîne.
+    Clés partielles : reprise (seules les absentes sont insérées). Clés complètes : refus,
+    le périmètre est déjà calculé et ne peut l'être à nouveau.
     """
-    deja = await db.fetch_one(PERIMETRE_DEJA_CALCULE_SQL, (id_referentiel,))
-    nb = int((deja or {}).get("nb") or 0)
-    if not nb:
+    versions = await db.fetch_one(PERIMETRE_DEJA_CALCULE_SQL, (id_referentiel,))
+    if not int((versions or {}).get("nb") or 0):
         rapport.ok("Aucune clé déjà calculée sur ce périmètre")
-        return True
+        return 0
 
-    return _refuser(
-        rapport,
-        id_referentiel,
-        f"{nb} version(s) du référentiel {id_referentiel} portent déjà des clés : le CA4 de "
-        f"DSR-699 interdit de les recalculer. Créer une nouvelle version (nouveau référentiel), "
-        f"qui désactivera les précédentes.",
+    deja = int(((await db.fetch_one(CLES_PRESENTES_SQL, (id_referentiel,))) or {}).get("nb") or 0)
+    if lignes_attendues is None:
+        actifs = await db.fetch_one(PDI_ACTIFS_SQL, (id_referentiel,))
+        lignes_attendues = int((actifs or {}).get("nb") or 0)
+
+    if deja >= lignes_attendues:
+        _refuser(
+            rapport,
+            id_referentiel,
+            f"CA4 — le référentiel {id_referentiel} est déjà entièrement calculé ({deja} clé(s) "
+            f"pour {lignes_attendues} PDI actif(s)) : le CA4 de DSR-699 interdit de le "
+            f"recalculer. Créer une nouvelle version (nouveau référentiel), qui désactivera "
+            f"les précédentes.",
+        )
+        return None
+
+    logger.warning(
+        "Reprise calcul des clés %s",
+        ctx(
+            id_referentiel=id_referentiel,
+            cles_presentes=deja,
+            pdi_actifs=lignes_attendues,
+            manquantes=lignes_attendues - deja,
+        ),
     )
+    rapport.ok(
+        f"Reprise du calcul : {deja} clé(s) déjà présente(s) pour {lignes_attendues} PDI "
+        f"actif(s) — seules les {lignes_attendues - deja} manquante(s) seront écrites "
+        f"(CA4 : aucune clé existante n'est modifiée)"
+    )
+    return deja
 
 
 _VERIFICATEURS = {
@@ -442,7 +430,6 @@ _VERIFICATEURS = {
     "agregats": _verifier_agregats,
     "versions": _verifier_versions,
     "denominateurs": _verifier_denominateurs,
-    "non_calcule": _verifier_non_calcule,
 }
 
 
@@ -466,11 +453,7 @@ async def nb_sites_agreges(db, id_referentiel: int) -> int:
 
 
 async def photo_referentiels(db) -> dict[Any, int]:
-    """Nombre d'agrégats par référentiel — à prendre avant l'étape « agregats ».
-
-    Comparée à la même photo prise après, elle prouve le CA5 (historisation) : seul le
-    référentiel visé doit avoir bougé.
-    """
+    """Nombre d'agrégats par référentiel, comparé avant/après « agregats » pour le CA5."""
     return {
         ligne["id_referentiel"]: int(ligne["nb"] or 0)
         for ligne in await db.fetch_all(PHOTO_REFERENTIELS_SQL)
@@ -483,7 +466,7 @@ async def photo_referentiels(db) -> dict[Any, int]:
 
 
 async def controler_migration(rapport: Rapport, db) -> None:
-    """Relit les objets posés — le `rowcount` du script ne dirait que « 13 lignes »."""
+    """Relit les objets posés par la migration."""
     presents = {ligne["nom"] for ligne in await db.fetch_all(INDEX_PRESENTS_SQL)}
     manquants = [nom for nom in INDEX_ATTENDUS if nom not in presents]
     colonne = await db.fetch_one(COLONNE_DATE_CREATION_SQL)
@@ -522,11 +505,7 @@ async def controler_agregats(
 ) -> None:
     """CA1 à CA5 de DSR-696, dans les formes que le volume rend jouables.
 
-    Le contrôle d'écart site par site du script n'est **pas** rejoué : il ré-agrège les 24 M
-    lignes sources, donc il coûte une seconde fois le prix de l'étape. Ce qui est vérifié ici,
-    c'est que l'`INSERT` a bien écrit ce que la table contient — une écriture partielle se voit,
-    une somme fausse non. L'écart complet reste disponible dans le `.sql`, joué à la main en
-    recette.
+    L'écart site par site du script (ré-agrégation des 24 M lignes) n'est pas rejoué.
     """
     en_base = await nb_sites_agreges(db, id_referentiel)
     rapport.ajouter(
@@ -544,8 +523,7 @@ async def controler_agregats(
         f"CA2 — {nb_doublons} site(s) en double dans le référentiel.",
     )
 
-    # On ne maquille pas : le CA4 demande une anti-jointure sur 24 M lignes, on ne la joue pas,
-    # et le rapport dit pourquoi elle est tenue pour acquise.
+    # CA4 : anti-jointure sur 24 M lignes non jouée, le rapport le dit.
     rapport.ok(
         "CA4 — garanti par la séquence DELETE/INSERT sur le même prédicat "
         "(anti-jointure sur 24 M lignes non rejouée)"
@@ -610,9 +588,7 @@ async def controler_cles(
 ) -> None:
     """CA1 à CA4 de DSR-699.
 
-    `lignes_attendues` vient de l'étape « chargement » quand la chaîne tourne de bout en bout :
-    le CA1 est alors gratuit. En reprise, il faut le recompter — un balayage d'index sur 24 M
-    lignes, réservé à `controles_longs`.
+    Sans `lignes_attendues` (reprise), le CA1 recompte 24 M lignes : réservé à `controles_longs`.
     """
     if lignes_attendues is None and controles_longs:
         actifs = await db.fetch_one(PDI_ACTIFS_SQL, (id_referentiel,))
@@ -639,8 +615,7 @@ async def controler_cles(
         f"CA2 — {nb_inactives} version(s) désactivée(s) portent des clés.",
     )
 
-    # CA4 : garanti en base par `uq_crc_version_pdi`, dont l'étape « migration » a vérifié la
-    # présence. Le `GROUP BY` du script sur 24 M lignes ne dirait rien de plus.
+    # CA4 : garanti en base par `uq_crc_version_pdi` (vérifié à l'étape « migration »).
     rapport.ok("CA4 — unicité (version, PDI) garantie par uq_crc_version_pdi")
 
     if not controles_longs:
@@ -654,12 +629,9 @@ async def controler_cles(
 
 
 async def _controler_sommes(rapport: Rapport, db, id_referentiel: int) -> None:
-    """CA3 — la somme des clés d'un site vaut 1, à 10⁻⁴ près.
+    """CA3 — la somme des clés d'un site vaut 1 à 10⁻⁴ près ; alerte dans les logs sinon.
 
-    Le seul contrôle capable de détecter des clés silencieusement fausses, et celui dont le
-    ticket demande qu'il alerte dans les logs. Il n'en existe aucune forme bon marché sur le
-    schéma actuel : `uq_crc_version_pdi` ne couvre pas les colonnes `cle_*`, donc le
-    regroupement paie une remontée en clé primaire par ligne. C'est assumé.
+    Coûteux (aucun index ne couvre `cle_*`), mais seul détecteur de clés fausses.
     """
     anomalies = await db.fetch_all(SOMMES_HORS_TOLERANCE_SQL, (id_referentiel,))
 
@@ -710,4 +682,5 @@ __all__ = [
     "photo_referentiels",
     "rowcount",
     "verifier_prerequis",
+    "verifier_reprise_cles",
 ]

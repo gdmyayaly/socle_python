@@ -1,10 +1,5 @@
-"""Tests du chargement des clés de répartition (`app/traitements/cles_repartition.py`).
-
-Ni base MySQL ni réseau : `FausseBase` remplace `Database` et le flux S3 est remplacé par
-un `io.StringIO`. Ce qui est vérifié ici, ce sont les règles de gestion reprises du
-chargement historique — purge avant insertion (RG6), vides convertis en NULL (RG3),
-concordance du référentiel (RG1) — et le refus net de tout ce qui est douteux.
-"""
+"""Tests du chargement des clés (`app/traitements/cles_repartition.py`) : RG1, RG3, RG6,
+index, --skip-errors. S3 est remplacé par un `io.StringIO`, MySQL par `FausseBase`."""
 
 from __future__ import annotations
 
@@ -205,11 +200,7 @@ def test_purge_avant_insertion(s3_bouchonne, brancher_base):
 
 
 def test_trppu_referentiel_jamais_interrogee(s3_bouchonne, brancher_base):
-    """La table est vouée à disparaître : le chargement ne doit pas en dépendre.
-
-    `FausseBase` lève sur toute requête sans réponse déclarée ; la vérification explicite
-    ci-dessous garde la trace de l'intention.
-    """
+    """La table est vouée à disparaître : le chargement ne doit pas en dépendre."""
     s3_bouchonne(csv_de(LIGNE_PLEINE))
     base = brancher_base(base_nominale())
 
@@ -316,7 +307,6 @@ def test_le_traitement_ne_leve_jamais(monkeypatch, s3_bouchonne, brancher_base):
     def explose(*args, **kwargs):
         raise RuntimeError("boom")
 
-    # Panne au moment d'insérer : l'erreur est rendue, sans qu'aucune exception ne remonte.
     monkeypatch.setattr(base, "transaction", explose)
 
     rapport = charger(id_referentiel=1, fichier="f.csv")
@@ -648,8 +638,8 @@ def test_dates_invalides_refusees(valeur):
 
 
 def test_aucune_lecture_sur_l_instance_de_lecture(monkeypatch, s3_bouchonne, brancher_base):
-    """Garde-fous et contrôles finaux sur l'instance d'écriture : une réplique en retard sur
-    22 M d'insertions et deux ALTER attendrait, ou compterait une table incomplète."""
+    """Contrôles sur l'instance d'écriture : une réplique en retard compterait une table
+    incomplète."""
     s3_bouchonne(csv_de(LIGNE_PLEINE))
     brancher_base(base_nominale())
     # Toute requête sur la lecture lève KeyError (aucune réponse déclarée).
@@ -686,8 +676,7 @@ def test_controle_final_sans_comptage_distinct_ni_lecture_de_table():
 
 
 def test_sites_a_total_nul_charges_comme_les_autres(s3_bouchonne, brancher_base):
-    """Règle métier : un site à total nul reste en base, ses clés vaudront 0 à l'étape
-    `cles`. Le chargement ne le recherche ni ne le supprime, même avec --skip-errors."""
+    """Un site à total nul reste en base (clés à 0 à l'étape `cles`), même avec --skip-errors."""
     s3_bouchonne(csv_de(LIGNE_PLEINE))
     base = brancher_base(base_nominale())
 
@@ -771,8 +760,7 @@ def test_index_absent_recree_sur_table_vide(s3_bouchonne, brancher_base):
 def test_index_conserves_doublon_avec_son_numero_de_ligne(
     s3_bouchonne, brancher_base
 ):
-    """Index unique en place : le doublon est rejeté à l'insertion, ligne à ligne, avec son
-    numéro de ligne — plus précis que la détection en fin de chargement."""
+    """Index unique en place : le doublon est rejeté à l'insertion, avec son numéro de ligne."""
     s3_bouchonne(csv_de(LIGNE_PLEINE, LIGNE_PLEINE))
     base = brancher_base(BaseAvecDoublon(base_index_en_place().reponses))
 

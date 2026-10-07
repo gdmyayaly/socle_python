@@ -1,8 +1,4 @@
-"""Tests du script de nettoyage (`scripts/nettoyer_csv_cles.py`).
-
-Fichiers réels dans le dossier temporaire de pytest : ce qui est vérifié, ce sont les
-quatre fichiers produits.
-"""
+"""Tests de `scripts/nettoyer_csv_cles.py` : les quatre fichiers produits, dans `tmp_path`."""
 
 from __future__ import annotations
 
