@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from io import BytesIO
 from typing import Any
 
+from fastapi import HTTPException
 from openpyxl import load_workbook
 from pydantic import ValidationError
 
+from app.log_utils import ctx
+
 from .schemas import BulkUploadError, ProduitCreate
+
+logger = logging.getLogger(__name__)
 
 EXPECTED_HEADERS = [
     "co_produit",
@@ -31,49 +37,33 @@ UPSERT_SQL = (
 )
 
 
-# Création à la volée d'un produit référencé par un TMH. `ON DUPLICATE KEY UPDATE` no-op
-# plutôt qu'un SELECT puis INSERT : idempotent, insensible aux accès concurrents, et ne
-# touche jamais le libellé d'un produit déjà saisi par le métier.
-ENSURE_PRODUIT_SQL = (
-    "INSERT INTO trppu_produit (co_produit, lb_produit) VALUES (%s, %s) "
-    "ON DUPLICATE KEY UPDATE co_produit = co_produit"
-)
+SELECT_CODES_PRODUITS_SQL = "SELECT co_produit FROM trppu_produit WHERE co_produit IN ({})"
 
 
-def normalize_co_produit_ref(value: Any) -> str:
-    """Normalise un code produit venant d'un référentiel externe (Databricks, TMH).
+async def assert_produits_exist(tx, codes) -> None:
+    """Rejette en 422 un lot TMH qui référence des produits absents de `trppu_produit`.
 
-    Contrairement à `_normalize_co_produit` (import Excel), **pas de `zfill(2)`** : un code
-    d'un seul caractère est accepté par le pattern TMH et doit être stocké tel quel, sinon la
-    ligne `trppu_tmh` pointerait un `co_produit` différent de celui créé ici.
+    Les produits sont alimentés hors des écritures TMH : le TMH ne les crée pas. Ce contrôle,
+    fait avant tout INSERT sur `trppu_tmh`, remplace la violation de la FK `fk_tmh_produit`
+    (500 opaque) par une erreur qui nomme les codes manquants.
     """
-    return "" if value is None else str(value).strip().upper()
-
-
-async def ensure_produits_exist(tx, codes, libelles: dict[str, str] | None = None) -> list[str]:
-    """Crée dans `trppu_produit` les codes absents, avant tout INSERT sur `trppu_tmh`.
-
-    L'agrégation des trafics est dynamique et pilotée par Databricks : un objet peut apparaître
-    dans `g_trppu_trafics_*_3` sans exister côté applicatif. Sans cette création, la FK
-    `fk_tmh_produit` casse la transaction et l'API remonte une 500 opaque.
-
-    `libelles` = mapping `{co_produit: lb_produit}` issu de `g_trppu_obj_mapping`, à résoudre
-    **avant** l'ouverture de la transaction. `lb_produit` étant NOT NULL, on retombe sur le
-    code lui-même quand le mapping ne connaît pas l'objet (cas `PR` / `PPI`) ; le libellé se
-    corrige ensuite via `PUT /trppu-api/produits/{co_produit}`.
-
-    Retourne les codes réellement créés.
-    """
-    libelles = libelles or {}
-    crees: list[str] = []
-    for code in dict.fromkeys(normalize_co_produit_ref(c) for c in codes):
-        if not code:
-            continue
-        libelle = libelles.get(code) or code
-        rowcount = await tx.execute(ENSURE_PRODUIT_SQL, (code, libelle))
-        if rowcount == 1:  # 1 = insertion, 0 = déjà présent (UPDATE no-op)
-            crees.append(code)
-    return crees
+    demandes = list(dict.fromkeys(str(c).strip().upper() for c in codes if c is not None))
+    demandes = [c for c in demandes if c]
+    if not demandes:
+        return
+    placeholders = ", ".join(["%s"] * len(demandes))
+    rows = await tx.fetch_all(SELECT_CODES_PRODUITS_SQL.format(placeholders), tuple(demandes))
+    connus = {str(r["co_produit"]).upper() for r in rows}
+    manquants = [c for c in demandes if c not in connus]
+    if manquants:
+        logger.warning(
+            "Rejet écriture TMH %s",
+            ctx(http=422, motif="produits inconnus", codes=manquants),
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"Produit(s) inconnu(s) dans trppu_produit : {', '.join(manquants)}.",
+        )
 
 
 def _normalize_date(value: Any) -> date | None:

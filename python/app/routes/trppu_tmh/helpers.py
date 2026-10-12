@@ -12,8 +12,6 @@ import logging
 from app.log_utils import ctx
 from typing import Any
 
-from starlette.concurrency import run_in_threadpool
-
 logger = logging.getLogger(__name__)
 
 _TMH_COLS = (
@@ -62,27 +60,6 @@ def compute_volume_brut(
         volume_previsionnel, volume_previsionnel_recalcule
     )
     return int(volume_realise or 0) + int(prev or 0)
-
-
-async def resolve_libelles_produits() -> dict[str, str]:
-    """Libellés objets du mapping Databricks `{co_produit: lb_produit}`.
-
-    Sert à libeller les produits créés à la volée (`ensure_produits_exist`). À appeler **avant**
-    d'ouvrir la transaction MySQL : l'appel Databricks est synchrone et une lenteur du warehouse
-    ne doit pas tenir une transaction ouverte. Import paresseux pour ne pas coupler le module TMH
-    au module trafics au chargement. Une indisponibilité n'est pas bloquante : les produits sont
-    alors créés avec leur code pour libellé.
-    """
-    from app.routes.trppu_trafics.helpers import fetch_libelles_objets
-
-    try:
-        return await run_in_threadpool(fetch_libelles_objets)
-    except Exception as e:
-        logger.warning(
-            "Libellés produits indisponibles %s",
-            ctx(erreur=str(e), consequence="repli sur le code produit"),
-        )
-        return {}
 
 
 async def fetch_tmh(db_read, id_scenario: int) -> list[dict[str, Any]]:
