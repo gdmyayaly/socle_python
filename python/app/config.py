@@ -55,7 +55,7 @@ APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 LOGS_DIR = os.getenv("LOGS_DIR", "")
 
 # Sécurité : clé de cryptage réversible de l'id_rh (Fernet).
-# Si vide (valeur par défaut) : cryptage DÉSACTIVÉ, l'id_rh est stocké en clair.
+# Si vide (valeur par défaut) : cryptage DÉSACTIVÉ, l'id_rh n'est PAS enregistré (NULL).
 ID_RH_CRYPTO_KEY = os.getenv("ID_RH_CRYPTO_KEY", "")
 
 # Validation

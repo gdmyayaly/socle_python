@@ -123,7 +123,7 @@ INSERT_COEF_SQL = (
 
 
 async def ensure_scenario_pic_version(
-    tx, id_scenario: int, co_regate: str, id_rh_token: str
+    tx, id_scenario: int, co_regate: str, id_rh_token: str | None
 ) -> tuple[int, bool]:
     """Version PIC du scénario, créée à la volée si elle n'existe pas encore.
 
@@ -157,7 +157,7 @@ async def ensure_scenario_pic_version(
     return id_pic_version, True
 
 
-async def upsert_coef(tx, id_pic_version: int, item, id_rh_token: str) -> tuple[str, Any, int]:
+async def upsert_coef(tx, id_pic_version: int, item, id_rh_token: str | None) -> tuple[str, Any, int]:
     """Upsert d'un coefficient sur sa clé naturelle (version, produit, jour, densité).
 
     `item` : objet exposant `co_produit`, `jour_semaine`, `densite`, `coef`

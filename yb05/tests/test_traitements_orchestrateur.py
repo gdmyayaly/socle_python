@@ -38,6 +38,7 @@ class Traitements:
         self.echecs_agrebal = set(echecs_agrebal)
         self.delai = delai
         self.appels: list[tuple[str, int]] = []
+        self.bases_lecture: dict[str, object] = {}
         self.en_cours = 0
         self.concurrence_max = 0
 
@@ -49,6 +50,7 @@ class Traitements:
 
     async def pdi(self, id_scenario, *, db_lecture=None, db_ecriture=None):
         self.appels.append(("pdi", id_scenario))
+        self.bases_lecture["pdi"] = db_lecture
         await self._travailler()
         if id_scenario in self.echecs_pdi:
             return _rapport(ECHEC, erreur="Aucune clé de répartition trouvée")
@@ -56,6 +58,7 @@ class Traitements:
 
     async def agrebal(self, id_scenario, *, db_lecture=None, db_ecriture=None):
         self.appels.append(("agrebal", id_scenario))
+        self.bases_lecture["agrebal"] = db_lecture
         await self._travailler()
         if id_scenario in self.echecs_agrebal:
             return _rapport(ECHEC, erreur="Trafics PDI non calculés")
@@ -125,6 +128,21 @@ def test_all_avec_identifiant_ne_traite_que_celui_la(monkeypatch):
     assert traitements.ids("pdi") == [99999]
     # Le parallélisme n'a aucun objet sur un seul scénario.
     assert bilan.nb_workers == 1
+
+
+def test_agrebal_lit_le_pdi_sur_l_instance_d_ecriture(monkeypatch):
+    """Le PDI vient d'être commité sur l'écriture ; l'instance de lecture, en retard, ne le
+    voit pas encore. Lu sur elle, l'Agrébal rejetait le scénario (incident prod 09/10/2026)."""
+    traitements = Traitements()
+    lecture = _base((12345,))
+    ecriture = FausseBase({})
+
+    bilan = _executer(monkeypatch, traitements, base=lecture, ecriture=ecriture)
+
+    assert bilan.reussi
+    assert traitements.bases_lecture["agrebal"] is ecriture
+    # Le PDI, lui, ne dépend d'aucune écriture de la chaîne : il reste sur la lecture.
+    assert traitements.bases_lecture["pdi"] is lecture
 
 
 def test_aucun_scenario_eligible_n_est_pas_une_erreur(monkeypatch):

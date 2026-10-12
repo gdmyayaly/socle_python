@@ -82,9 +82,9 @@ de `%s`, jamais concaténé dans le message — sinon la paresse est perdue.
 sensibles (`CHAMPS_SENSIBLES` : `id_rh`, `id_rh_creation`, `id_rh_maj`, `cle`).
 Tout payload journalisé passe par là.
 
-> ⚠️ `encrypt_id_rh` est un **passthrough** quand `ID_RH_CRYPTO_KEY` est vide
-> (`app/security/crypto.py`). Une variable nommée `id_rh_token` n'est donc pas
-> garantie chiffrée : elle ne se logue pas davantage que l'id_rh en clair.
+> ⚠️ Une variable `id_rh_token` (sortie de `encrypt_id_rh`, `None` quand
+> `ID_RH_CRYPTO_KEY` est vide — l'id_rh n'est alors pas enregistré) ne se logue
+> pas davantage que l'id_rh en clair.
 
 **`diff_champs(avant, apres)`** — `{champ: [avant, après]}` réduit aux champs
 modifiés. Seules les clés présentes dans `apres` sont comparées, pour qu'un UPDATE

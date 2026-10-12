@@ -262,6 +262,11 @@ Le conteneur exécute une commande puis s'arrête : aucun port n'est exposé.
 Deux instances globales sont exposées par `app/db/mysql.py` : `db_read` et `db_write`,
 configurées avec des hôtes et des identifiants distincts.
 
+> ⚠️ En prod, `db_read` est un secondaire du Group Replication : il voit les écritures avec
+> du retard (plus d'une seconde après une transaction de ~175 000 lignes). Toute lecture qui
+> doit voir ce que le traitement vient d'écrire passe par `db_write` — c'est pourquoi le mode
+> `all` lance l'étape Agrébal avec `db_lecture=db_ecriture`.
+
 ### Connexion avec pool et retry
 
 Le pool est créé **paresseusement**, au premier appel, avec `SGBD_MAX_RETRIES` tentatives

@@ -203,8 +203,11 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
         return
 
     # Étape 3 — calcul des trafics Agrébal, qui libère le scénario en fin de course.
+    # Lu sur l'instance d'écriture : l'étape 2 vient d'y commiter le PDI, que l'instance de
+    # lecture (secondaire du Group Replication, en retard) ne voit pas encore. Lu sur elle,
+    # l'Agrébal concluait « trafics PDI non calculés » (incident prod du 09/10/2026).
     rapport_agrebal = await calcul_trafic_agrebal(
-        id_scenario, db_lecture=db_lecture, db_ecriture=db_ecriture
+        id_scenario, db_lecture=db_ecriture, db_ecriture=db_ecriture
     )
     if rapport_agrebal.reussi:
         logger.info("Fin traitement scénario %s", ctx(verdict=SUCCES))

@@ -44,7 +44,7 @@
 - **Middlewares** : CORS (paramétrable env), logging HTTP JSON (méthode, path, statut, durée).
 - **Authentification** : aucune sur les routes. `id_session_ihm` (query optionnel) sert uniquement de tag
   de traçabilité Kibana.
-- **Cryptage** : `id_rh` chiffré Fernet avant écriture (`ID_RH_CRYPTO_KEY` ; si vide → pass-through en clair).
+- **Cryptage** : `id_rh` chiffré Fernet avant écriture (`ID_RH_CRYPTO_KEY` ; si vide → id_rh non enregistré, colonne à NULL).
 
 ### Routers montés (`app/main.py`)
 

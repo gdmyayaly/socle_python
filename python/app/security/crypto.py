@@ -8,8 +8,10 @@ Clé : variable d'environnement / config `ID_RH_CRYPTO_KEY`.
   utilisée telle quelle.
 - Sinon, une clé Fernet est **dérivée** du secret fourni (SHA-256 -> 32 octets ->
   base64 url-safe). Cela permet d'utiliser n'importe quel secret d'exploitation.
-- **Si la clé est vide** (`ID_RH_CRYPTO_KEY` non définie), le cryptage est **désactivé** :
-  `encrypt_id_rh` / `decrypt_id_rh` renvoient la valeur telle quelle (pass-through).
+- **Si la clé est vide** (`ID_RH_CRYPTO_KEY` non définie), l'id_rh **n'est pas
+  enregistré** : `encrypt_id_rh` renvoie `None` (colonne `id_rh*` à NULL) plutôt que
+  de stocker l'id_rh en clair. `decrypt_id_rh` reste un pass-through (lecture
+  d'éventuelles valeurs historiques stockées en clair).
 
 NB : un token Fernet fait ~100+ caractères ; les colonnes `id_rh*` doivent donc
 être en `VARCHAR(255)` (cf. colonnes `id_rh*` dans db.sql).
@@ -50,23 +52,23 @@ def _get_fernet() -> Fernet | None:
     if not ID_RH_CRYPTO_KEY:
         logger.warning(
             "ID_RH_CRYPTO_KEY non configurée : cryptage de l'id_rh DÉSACTIVÉ "
-            "(valeurs stockées en clair)."
+            "(id_rh non enregistré en base)."
         )
         return None
     return Fernet(_derive_fernet_key(ID_RH_CRYPTO_KEY))
 
 
-def encrypt_id_rh(clear: str) -> str:
+def encrypt_id_rh(clear: str) -> str | None:
     """Chiffre un id_rh en clair et retourne un token (str) à stocker en base.
 
-    Si la clé n'est pas configurée, retourne la valeur en clair (cryptage désactivé).
-    Lève ValueError si l'entrée est vide.
+    Si la clé n'est pas configurée, retourne `None` : l'id_rh n'est pas enregistré
+    (jamais stocké en clair). Lève ValueError si l'entrée est vide.
     """
     if clear is None or str(clear).strip() == "":
         raise ValueError("id_rh vide : rien à crypter.")
     fernet = _get_fernet()
     if fernet is None:
-        return str(clear).strip()
+        return None
     token = fernet.encrypt(str(clear).strip().encode("utf-8"))
     return token.decode("ascii")
 

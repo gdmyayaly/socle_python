@@ -104,9 +104,8 @@ def safe_preview(obj: Any, max_len: int = 500) -> str:
 
 # Champs à ne jamais faire figurer dans un log.
 #
-# ⚠️ `encrypt_id_rh` est un *passthrough* quand `ID_RH_CRYPTO_KEY` est vide
-# (cf. app/security/crypto.py) : une variable nommée `id_rh_token` n'est donc pas
-# garantie chiffrée. Elle ne doit pas être loguée davantage que l'id_rh en clair.
+# Une variable `id_rh_token` (sortie de `encrypt_id_rh`, `None` quand
+# `ID_RH_CRYPTO_KEY` est vide) ne doit pas être loguée davantage que l'id_rh en clair.
 CHAMPS_SENSIBLES: frozenset[str] = frozenset(
     {"id_rh", "id_rh_creation", "id_rh_maj", "cle"}
 )
