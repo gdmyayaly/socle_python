@@ -102,6 +102,7 @@ Le serveur démarre sur `http://localhost:8000`.
 | `date_fin`   | —       | Date de fin (AAAAMMJJ ou AAAA-MM-JJ), période ≤ 2 ans  |
 | `date_pivot` | —       | Sépare le trafic constaté (avant) du prévisionnel (à partir de) |
 | `is_day`     | `false` | Force la table jour au lieu du découpage mois/semaines/jours |
+| `id_scenario`| —       | Optionnel : enregistre `dt_pivot` et les bornes réalisé/prév sur ce scénario (même règle qu'au PUT / PATCH /periodes) |
 
 L'intervalle est découpé en segments mois / semaines / jours, puis regroupé en une requête
 agrégée par table (3 au maximum). La liste des objets restitués est dynamique : elle sort du SQL

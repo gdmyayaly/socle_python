@@ -27,13 +27,13 @@ from .helpers import (
     assert_trafics_calcules,
     default_periode,
     delete_scenario_cascade,
+    enregistrer_pivot_periode,
     duplicate_scenario_children,
     duplicate_scenario_pic_version,
     ensure_site_exists,
     fetch_scenario_or_404,
     increment_version,
     last_insert_id,
-    recompute_realise_prev,
     resolve_default_pic_version,
 )
 from .schemas import (
@@ -185,16 +185,8 @@ async def create_scenario(payload: ScenarioCreate):
         fin = fin or f
         logger.debug("Période par défaut appliquée %s", ctx(debut=debut, fin=fin))
 
-    realise_debut, realise_fin, prev_debut, prev_fin = recompute_realise_prev(debut, fin)
-    logger.debug(
-        "Bornes réalisé/prévision calculées %s",
-        ctx(
-            realise_debut=realise_debut,
-            realise_fin=realise_fin,
-            prev_debut=prev_debut,
-            prev_fin=prev_fin,
-        ),
-    )
+    # dt_pivot et les bornes réalisé/prév restent NULL : ils ne sont écrits que sur un
+    # pivot transmis (récupération des trafics, PUT, PATCH /periodes).
 
     # Nombres de jours sur la période (fériés déduits) — DSR-613 / DSR-634.
     nbj = await compute_nb_jours(debut, fin)
@@ -236,13 +228,11 @@ async def create_scenario(payload: ScenarioCreate):
             rows_inseres = await tx.execute(
                 "INSERT INTO trppu_scenario "
                 "(co_regate, lb_scenario, co_roc, statut, dt_creation, "
-                " dt_mise_en_oeuvre, dt_pivot, "
+                " dt_mise_en_oeuvre, "
                 " periode_debut, periode_fin, "
-                " periode_realise_debut, periode_realise_fin, "
-                " periode_prev_debut, periode_prev_fin, "
                 " nb_jours_semaine, nb_jours_ouvres, nb_jours_ouvrables, nb_jours_scenario, "
                 " id_pic_version, version_scenario, est_fige, id_rh_creation, id_rh_maj) "
-                "VALUES (%s, %s, %s, 'EN COURS', NOW(), %s, NOW(), %s, %s, %s, %s, %s, %s, "
+                "VALUES (%s, %s, %s, 'EN COURS', NOW(), %s, %s, %s, "
                 "%s, %s, %s, %s, %s, 1, 0, %s, %s)",
                 (
                     payload.co_regate,
@@ -251,10 +241,6 @@ async def create_scenario(payload: ScenarioCreate):
                     dt_mise_en_oeuvre,
                     debut,
                     fin,
-                    realise_debut,
-                    realise_fin,
-                    prev_debut,
-                    prev_fin,
                     payload.nb_jours_semaine,
                     nbj.nb_jours_ouvres,
                     nbj.nb_jours_ouvrables,
@@ -321,9 +307,10 @@ async def create_scenario(payload: ScenarioCreate):
 async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
     """DSR-656 : MAJ d'un scénario EN COURS après actualisation des trafics.
 
-    Recalcule serveur les bornes réalisé/prév et les nb_jours (fériés + neutralisations),
-    repositionne dt_pivot (exposé en API comme dt_real_prev) / dt_maj, crypte id_rh_maj,
-    et met à jour le TMH (DSR-659).
+    Recalcule serveur les nb_jours (fériés + neutralisations), positionne dt_maj, crypte
+    id_rh_maj et met à jour le TMH (DSR-659). Si `date_pivot` est transmis, écrit dt_pivot
+    (exposé en API comme dt_real_prev) et les bornes réalisé/prév sur la nouvelle période ;
+    sinon ils sont conservés.
     """
     start = time.perf_counter()
     logged = params_loggables(payload)
@@ -351,9 +338,6 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
             ),
         )
 
-    realise_debut, realise_fin, prev_debut, prev_fin = recompute_realise_prev(
-        payload.periode_debut, payload.periode_fin
-    )
     nbj = await compute_nb_jours(payload.periode_debut, payload.periode_fin)
     base = nbj.nb_jours_ouvres if payload.nb_jours_semaine == 5 else nbj.nb_jours_ouvrables
     neut = await db_read.fetch_one(
@@ -365,22 +349,18 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
 
     set_parts = [
         "periode_debut = %s", "periode_fin = %s",
-        "periode_realise_debut = %s", "periode_realise_fin = %s",
-        "periode_prev_debut = %s", "periode_prev_fin = %s",
-        "dt_pivot = NOW()",
         "nb_jours_semaine = %s", "nb_jours_ouvres = %s",
         "nb_jours_ouvrables = %s", "nb_jours_scenario = %s",
         "dt_maj = NOW()", "id_rh_maj = %s",
     ]
     params: list = [
         payload.periode_debut, payload.periode_fin,
-        realise_debut, realise_fin, prev_debut, prev_fin,
         payload.nb_jours_semaine, nbj.nb_jours_ouvres, nbj.nb_jours_ouvrables,
         nb_jours_scenario, id_rh_token,
     ]
     if payload.dt_mise_en_oeuvre is not None:
-        set_parts.insert(6, "dt_mise_en_oeuvre = %s")
-        params.insert(6, payload.dt_mise_en_oeuvre)
+        set_parts.append("dt_mise_en_oeuvre = %s")
+        params.append(payload.dt_mise_en_oeuvre)
     params.append(id_scenario)
 
     try:
@@ -389,6 +369,11 @@ async def update_scenario(id_scenario: int, payload: ScenarioMajRequest):
                 f"UPDATE trppu_scenario SET {', '.join(set_parts)} WHERE id_scenario = %s",
                 tuple(params),
             )
+            if payload.date_pivot is not None:
+                await enregistrer_pivot_periode(
+                    tx, id_scenario, payload.periode_debut, payload.periode_fin,
+                    payload.date_pivot,
+                )
             await increment_version(tx, id_scenario)
             if payload.tmh:
                 from app.routes.trppu_produit.helpers import assert_produits_exist
@@ -573,7 +558,11 @@ async def delete_scenario(id_scenario: int):
 
 @router.patch("/{id_scenario}/periodes", response_model=ScenarioOut)
 async def update_periodes(id_scenario: int, payload: PeriodeUpdate):
-    """MAJ des bornes principales. Les bornes realise/prev sont recalculées serveur."""
+    """MAJ des bornes principales et de la date pivot (obligatoire).
+
+    dt_pivot = date_pivot ; bornes réalisé/prév recalculées sur la période résultante
+    (même règle que la récupération des trafics).
+    """
     start = time.perf_counter()
     fields = payload.model_dump(exclude_unset=True)
     logged = params_loggables(fields)
@@ -602,34 +591,16 @@ async def update_periodes(id_scenario: int, payload: PeriodeUpdate):
             status_code=400, detail="periode_fin doit être >= periode_debut."
         )
 
-    realise_debut, realise_fin, prev_debut, prev_fin = recompute_realise_prev(new_debut, new_fin)
-    logger.debug(
-        "Bornes réalisé/prévision recalculées %s",
-        ctx(
-            realise_debut=realise_debut,
-            realise_fin=realise_fin,
-            prev_debut=prev_debut,
-            prev_fin=prev_fin,
-        ),
-    )
-
     try:
         async with db_write.transaction() as tx:
             rows_maj = await tx.execute(
                 "UPDATE trppu_scenario SET "
-                "periode_debut = %s, periode_fin = %s, "
-                "periode_realise_debut = %s, periode_realise_fin = %s, "
-                "periode_prev_debut = %s, periode_prev_fin = %s "
+                "periode_debut = %s, periode_fin = %s "
                 "WHERE id_scenario = %s",
-                (
-                    new_debut,
-                    new_fin,
-                    realise_debut,
-                    realise_fin,
-                    prev_debut,
-                    prev_fin,
-                    id_scenario,
-                ),
+                (new_debut, new_fin, id_scenario),
+            )
+            await enregistrer_pivot_periode(
+                tx, id_scenario, new_debut, new_fin, payload.date_pivot
             )
             await increment_version(tx, id_scenario)
     except HTTPException:

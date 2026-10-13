@@ -23,8 +23,9 @@ et flag de figeage (`est_fige`).
 | `dt_validation`         | DATETIME NULL                                              | Posée auto au passage vers VALIDE           |
 | `dt_mise_en_prod`       | DATETIME NULL                                              | Posée auto par `POST /mise-en-prod`         |
 | `periode_debut/fin`     | DATE NOT NULL                                              | Bornes principales (saisies par l'utilisateur) |
-| `periode_realise_*`     | DATE NULL — **dérivées serveur**                           | Recalculées depuis (debut, fin, today)      |
-| `periode_prev_*`        | DATE NULL — **dérivées serveur**                           | Idem                                        |
+| `dt_pivot`              | DATETIME NULL — exposé `dt_real_prev`                      | Écrit seulement sur pivot transmis (cf. §3.3) |
+| `periode_realise_*`     | DATE NULL — **dérivées serveur**                           | [debut, pivot - 1], écrites avec `dt_pivot` |
+| `periode_prev_*`        | DATE NULL — **dérivées serveur**                           | [pivot, fin], écrites avec `dt_pivot`       |
 | `nb_jours_semaine`      | TINYINT NOT NULL CHECK IN (5,6)                            |                                             |
 | `id_pic_version`        | INT NOT NULL                                               | FK → `trppu_pic_version`                    |
 | `version_scenario`      | INT NOT NULL DEFAULT 1                                     | Incrémenté à chaque mutation                |
@@ -58,7 +59,7 @@ ARCHIVE    -> {}                               (terminal)
 | `GET`   | `/trppu-api/scenarios/{id_scenario}` | Récupération par PK |
 | `POST`  | `/trppu-api/scenarios` | Création (statut initial = `EN COURS`, version = 1) |
 | `DELETE`| `/trppu-api/scenarios/{id_scenario}` | Soft-delete : transition vers `ARCHIVE` |
-| `PATCH` | `/trppu-api/scenarios/{id_scenario}/periodes` | MAJ `periode_debut/fin` ; realise/prev recalculés serveur |
+| `PATCH` | `/trppu-api/scenarios/{id_scenario}/periodes` | MAJ `periode_debut/fin` + `date_pivot` **obligatoire** (pivot et realise/prev recalculés) |
 | `PATCH` | `/trppu-api/scenarios/{id_scenario}/nb-jours-semaine` | MAJ 5 ou 6 |
 | `PATCH` | `/trppu-api/scenarios/{id_scenario}/statut` | Transition de statut (sauf EN PRODUCTION) |
 | `POST`  | `/trppu-api/scenarios/{id_scenario}/mise-en-prod` | **Seule manière d'atteindre EN PRODUCTION** |
@@ -84,7 +85,7 @@ ARCHIVE    -> {}                               (terminal)
 
 - `id_pic_version` : si null, le serveur prend la première `trppu_pic_version` avec `est_par_defaut=1` (sinon id=1, sinon 422).
 - `periode_debut`/`fin` : si null, défaut today-1an / today+1an.
-- `periode_realise_*` et `periode_prev_*` ne sont **pas acceptés** dans le body : ils sont calculés serveur en fonction de `today`.
+- `dt_real_prev` (`dt_pivot`), `periode_realise_*` et `periode_prev_*` ne sont **pas acceptés** dans le body et restent **NULL** à la création (cf. §3.3).
 - Statut initial = `EN COURS`, `version_scenario = 1`, `est_fige = false`.
 
 ### 3.2 `GET /trppu-api/scenarios/enums`
@@ -96,22 +97,32 @@ ARCHIVE    -> {}                               (terminal)
 ### 3.3 `PATCH /trppu-api/scenarios/{id_scenario}/periodes`
 
 ```json
-{ "periode_debut": "2026-02-01", "periode_fin": "2026-11-30" }
+{ "periode_debut": "2026-02-01", "periode_fin": "2026-11-30", "date_pivot": "2026-06-01" }
 ```
 
-À chaque modification de `periode_debut` ou `periode_fin`, les bornes
-réalisé/prévision sont **recalculées** :
+`date_pivot` est **obligatoire** ; `periode_debut` / `periode_fin` sont optionnels (absents =
+valeurs existantes). `dt_pivot` et les bornes réalisé/prévision ne sont jamais déduits de la
+date du jour : ils ne sont écrits que sur un pivot transmis, avec la même règle partout :
+
+- ici (`PATCH /periodes`, pivot obligatoire, sur la période résultante) ;
+- au `PUT /scenarios/{id}` si `date_pivot` est présent dans le body (absent = conservés) ;
+- à la récupération des trafics Databricks,
+  `GET /trppu-api/trafics/get_trafics_pivot?...&id_scenario={id}`, une fois toutes les
+  requêtes réussies (période = `date_debut`/`date_fin` de la requête).
+
+La création ne les renseigne pas (NULL).
 
 ```
-realise_debut = periode_debut             si periode_debut <= today, sinon NULL
-realise_fin   = min(today, periode_fin)   si periode_debut <= today, sinon NULL
-prev_debut    = max(today, periode_debut) si periode_fin >= today,   sinon NULL
-prev_fin      = periode_fin               si periode_fin >= today,   sinon NULL
+dt_pivot      = date_pivot
+realise_debut = debut                realise_fin = min(fin, date_pivot - 1)   (NULL si vide)
+prev_debut    = max(debut, date_pivot)   prev_fin = fin                       (NULL si vide)
 ```
 
-- Si `today` est dans la période : `realise_fin == prev_debut == today`.
-- Si la période est entièrement passée : seules `realise_*` sont posées.
-- Si la période est entièrement future : seules `prev_*` sont posées.
+- Ce sont les plages mêmes qui ont servi à interroger Databricks (réalisé < pivot <= prév).
+- Période entièrement passée (pivot > fin) : seules `realise_*` sont posées.
+- Période entièrement future (pivot <= début) : seules `prev_*` sont posées.
+- Rejets côté trafics : scénario introuvable (404), statut hors `EN COURS`/`SIMULATION`
+  (409), `co_regate` différent de celui du scénario (400) — tous avant tout appel Databricks.
 
 ### 3.4 `PATCH /trppu-api/scenarios/{id_scenario}/statut`
 
@@ -193,7 +204,7 @@ app/routes/trppu_scenario/
 ├── __init__.py
 ├── routes.py
 ├── schemas.py
-├── helpers.py     # SELECT, default_periode, recompute_realise_prev, fetch_or_404, increment_version
+├── helpers.py     # SELECT, default_periode, enregistrer_pivot, fetch_or_404, increment_version
 └── statuts.py     # STATUTS, ALLOWED_TRANSITIONS, INTERNAL_TRANSITIONS, side-effects
 ```
 

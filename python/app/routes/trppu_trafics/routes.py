@@ -19,6 +19,10 @@ from app.routes.trppu_trafics.helpers import (
     validate_params_pivot,
     zones_pivot,
 )
+from app.routes.trppu_trafics.scenario_pivot import (
+    controler_scenario_pivot,
+    enregistrer_pivot_scenario,
+)
 from app.services.jours_service import compute_nb_jours
 
 logger = logging.getLogger(__name__)
@@ -33,6 +37,7 @@ async def get_trafics_pivot(
     date_fin: str | None = None,
     date_pivot: str | None = None,
     is_day: bool = False,
+    id_scenario: int | None = None,
 ):
     """DSR-679 : trafics agrégés par objet, ventilés réel/prévisionnel selon la date pivot.
 
@@ -40,6 +45,11 @@ async def get_trafics_pivot(
     qui choisit. Dates < pivot -> trafic réel (prévisionnel = 0) ; dates >= pivot -> l'inverse.
     La liste des objets restitués est dynamique (elle sort du SQL), pas figée.
     Paramètres au format AAAAMMJJ ; période <= 2 ans. `is_day` force la table jour.
+
+    `id_scenario` (optionnel) : une fois les trafics récupérés, enregistre sur ce scénario
+    `dt_pivot` = date_pivot et les bornes réalisé ([date_debut, pivot - 1]) / prév
+    ([pivot, date_fin]) — même règle qu'au PUT / PATCH /periodes du scénario. Le scénario
+    doit exister (404), être EN COURS / SIMULATION (409) et porter le même co_regate (400).
     """
     logger.info(
         "Début lecture trafics pivot %s",
@@ -49,10 +59,16 @@ async def get_trafics_pivot(
             date_fin=date_fin,
             date_pivot=date_pivot,
             is_day=is_day,
+            id_scenario=id_scenario,
         ),
     )
     dt_debut, dt_fin, dt_pivot = validate_params_pivot(
         co_regate, date_debut, date_fin, date_pivot
+    )
+    scenario = (
+        await controler_scenario_pivot(id_scenario, co_regate)
+        if id_scenario is not None
+        else None
     )
     reel_range, prev_range = split_by_pivot(dt_debut, dt_fin, dt_pivot)
 
@@ -91,6 +107,13 @@ async def get_trafics_pivot(
         ctx(co_regate=co_regate, lignes=raw_rows),
     )
 
+    # Écrit seulement après le succès de toutes les requêtes Databricks.
+    pivot_scenario = (
+        await enregistrer_pivot_scenario(scenario, dt_pivot, reel_range, prev_range)
+        if scenario is not None
+        else None
+    )
+
     trafics = formater_trafics(acc)
     sans_libelle = objets_sans_libelle(acc)
     if sans_libelle:
@@ -127,6 +150,8 @@ async def get_trafics_pivot(
         "date_fin": fmt_date(dt_fin),
         "date_pivot": fmt_date(dt_pivot),
         "is_day": is_day,
+        "id_scenario": id_scenario,
+        "pivot_scenario": pivot_scenario,
         "count": len(trafics),
         "trafics": trafics,
         "objets_sans_libelle": sans_libelle,

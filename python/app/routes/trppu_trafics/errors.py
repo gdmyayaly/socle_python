@@ -59,3 +59,10 @@ def erreur_500(
     if debug is not None:
         detail["debug"] = debug
     return HTTPException(status_code=500, detail=detail)
+
+
+def erreur_409(message: str) -> HTTPException:
+    """409 métier (scénario non modifiable) — même forme que `erreur_400`."""
+    return HTTPException(
+        status_code=409, detail={"error": True, "message": message, "code": 409}
+    )

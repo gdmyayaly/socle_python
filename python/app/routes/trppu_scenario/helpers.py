@@ -38,37 +38,50 @@ def default_periode() -> tuple[date, date]:
     return today - timedelta(days=365), today + timedelta(days=365)
 
 
-def recompute_realise_prev(
-    periode_debut: date,
-    periode_fin: date,
-    today: date | None = None,
-) -> tuple[date | None, date | None, date | None, date | None]:
-    """Recalcule les bornes réalisé / prévision en fonction de la période et de today.
+# Écriture de `dt_pivot` et des bornes réalisé/prév, toujours avec un pivot fourni par
+# l'appelant (jamais déduit de la date du jour) : récupération des trafics Databricks
+# (GET /trafics/get_trafics_pivot?id_scenario=…), PUT /scenarios/{id} si `date_pivot`
+# est transmis, PATCH /periodes (où il est obligatoire). La création n'y touche pas :
+# ces colonnes restent NULL tant qu'aucun pivot n'a été transmis.
+UPDATE_PIVOT_SQL = (
+    "UPDATE trppu_scenario SET dt_pivot = %s, "
+    "periode_realise_debut = %s, periode_realise_fin = %s, "
+    "periode_prev_debut = %s, periode_prev_fin = %s "
+    "WHERE id_scenario = %s"
+)
 
-    Renvoie (realise_debut, realise_fin, prev_debut, prev_fin).
 
-    Règles :
-    - La portion réalisée (passée + présent) = [periode_debut, min(today, periode_fin)]
-      si periode_debut <= today, sinon (None, None).
-    - La portion prévision (futur + présent) = [max(today, periode_debut), periode_fin]
-      si periode_fin >= today, sinon (None, None).
-    - Cas où today est dans la période : realise_fin == prev_debut == today
-      (les deux périodes se touchent sur la journée du jour).
+async def enregistrer_pivot(
+    tx,
+    id_scenario: int,
+    dt_pivot: date,
+    reel: tuple[date, date] | None,
+    prev: tuple[date, date] | None,
+) -> int:
+    """Enregistre la date pivot et les bornes réalisé/prév issues du découpage des trafics.
+
+    `reel` / `prev` sont les plages de `trppu_trafics.helpers.split_by_pivot` (réalisé =
+    dates < pivot, prév = dates >= pivot), None quand la plage est vide : les bornes
+    stockées sont exactement celles qui ont servi à interroger Databricks.
     """
-    today = today or date.today()
-    if periode_debut <= today:
-        realise_debut = periode_debut
-        realise_fin = min(today, periode_fin)
-    else:
-        realise_debut = None
-        realise_fin = None
-    if periode_fin >= today:
-        prev_debut = max(today, periode_debut)
-        prev_fin = periode_fin
-    else:
-        prev_debut = None
-        prev_fin = None
-    return realise_debut, realise_fin, prev_debut, prev_fin
+    realise_debut, realise_fin = reel or (None, None)
+    prev_debut, prev_fin = prev or (None, None)
+    return await tx.execute(
+        UPDATE_PIVOT_SQL,
+        (dt_pivot, realise_debut, realise_fin, prev_debut, prev_fin, id_scenario),
+    )
+
+
+async def enregistrer_pivot_periode(
+    tx, id_scenario: int, debut: date, fin: date, dt_pivot: date
+) -> int:
+    """Pivot transmis à l'édition (PUT / PATCH /periodes) : même règle de découpage que
+    la récupération des trafics (réalisé = [debut, pivot - 1], prév = [pivot, fin])."""
+    # Import local : le package trppu_trafics importe ce module (cycle à l'import).
+    from app.routes.trppu_trafics.helpers import split_by_pivot
+
+    reel, prev = split_by_pivot(debut, fin, dt_pivot)
+    return await enregistrer_pivot(tx, id_scenario, dt_pivot, reel, prev)
 
 
 async def resolve_default_pic_version() -> int:

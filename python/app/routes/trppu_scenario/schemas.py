@@ -65,8 +65,10 @@ class ScenarioCreate(ScenarioBase):
     nb_jours_semaine : 5 par défaut, contraint à {5, 6}.
     id_pic_version : si non fourni, résolu côté serveur (premier est_par_defaut=1, fallback 1).
     Périodes principales : si None, today-1an / today+1an.
-    Les colonnes periode_realise_*/periode_prev_* sont **dérivées serveur** depuis
-    (periode_debut, periode_fin, today) et ne sont pas acceptées dans le body.
+    dt_real_prev (dt_pivot) et les colonnes periode_realise_*/periode_prev_* ne sont pas
+    acceptées dans le body et restent NULL à la création : elles sont écrites à la
+    récupération des trafics (GET /trafics/get_trafics_pivot?id_scenario=…), au PUT
+    (si `date_pivot` est transmis) et au PATCH /periodes.
     statut, version_scenario, est_fige : forcés côté serveur à EN COURS / 1 / False.
 
     lb_regate, type_site : obligatoires. Si le site (co_regate) n'existe pas
@@ -148,9 +150,10 @@ class ScenarioPeriodesOut(BaseModel):
 class ScenarioMajRequest(BaseModel):
     """Body PUT /scenarios/{id} (DSR-656) : MAJ d'un scénario EN COURS après recalcul.
 
-    Les bornes réalisé/prév et les nb_jours sont **recalculés serveur** ; dt_real_prev
-    et dt_maj = date courante ; id_rh (maj) crypté. `tmh` (optionnel) met à jour les
-    trafics recalculés (DSR-659).
+    Les nb_jours sont **recalculés serveur** ; dt_maj = date courante ; id_rh (maj) crypté.
+    `date_pivot` (optionnel) : si transmis, écrit dt_real_prev (dt_pivot) et les bornes
+    réalisé = [periode_debut, pivot - 1] / prév = [pivot, periode_fin] ; absent, ils sont
+    conservés. `tmh` (optionnel) met à jour les trafics recalculés (DSR-659).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -159,6 +162,7 @@ class ScenarioMajRequest(BaseModel):
     periode_fin: date
     nb_jours_semaine: NbJours
     dt_mise_en_oeuvre: Optional[date] = None  # si absent : valeur existante conservée
+    date_pivot: Optional[date] = None  # si absent : dt_pivot et bornes conservés
     id_rh: str = Field(..., min_length=1)
     tmh: list[ScenarioTmhItem] = Field(default_factory=list)
 
@@ -170,18 +174,17 @@ class ScenarioMajRequest(BaseModel):
 
 
 class PeriodeUpdate(BaseModel):
-    """PATCH /periodes : MAJ des bornes principales (realise/prev recalculés serveur)."""
+    """PATCH /periodes : MAJ des bornes principales et de la date pivot (obligatoire).
+
+    dt_pivot = date_pivot ; bornes réalisé = [debut, pivot - 1] / prév = [pivot, fin],
+    calculées sur la période résultante (bornes absentes = valeurs existantes).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     periode_debut: Optional[date] = None
     periode_fin: Optional[date] = None
-
-    @model_validator(mode="after")
-    def _at_least_one(self):
-        if not self.model_dump(exclude_unset=True):
-            raise ValueError("Au moins un champ doit être fourni.")
-        return self
+    date_pivot: date
 
 
 class NbJoursUpdate(BaseModel):
