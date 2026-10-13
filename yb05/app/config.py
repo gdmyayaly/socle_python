@@ -89,6 +89,31 @@ def _parse_nb_worker(brut: str) -> int:
 
 NB_WORKER = _parse_nb_worker(os.getenv("NB_WORKER", "1"))
 
+
+def _parse_trafic_max(brut: str | None) -> int | None:
+    """Plafond d'un trafic PDI (DSR-702) ; absent ou vide -> None (aucun contrôle côté batch).
+
+    Sans plafond, un trafic trop grand pour `trppu_trafic_pdi` remonte l'erreur MySQL telle
+    quelle. Une valeur non entière ou négative fait échouer le démarrage.
+    """
+    if brut is None or not brut.strip():
+        return None
+    try:
+        valeur = int(brut.strip())
+    except ValueError:
+        raise ValueError(f"TRAFIC_MAX : entier attendu, reçu '{brut}'") from None
+    if valeur < 0:
+        raise ValueError(f"TRAFIC_MAX : valeur négative '{brut}'")
+    return valeur
+
+
+TRAFIC_MAX = _parse_trafic_max(os.getenv("TRAFIC_MAX"))
+
+# Lignes par INSERT (`executemany`) à l'écriture des trafics PDI. Tous les lots restent dans
+# une seule transaction : la valeur ne joue que sur la taille de chaque requête et la cadence
+# des logs d'avancement. Vide ou inexploitable -> 5000.
+TAILLE_LOT = _entier_positif("TAILLE_LOT", 5000)
+
 # Requêtes utilitaires pour les checks
 HEALTH_CHECK_QUERY = "SELECT 1 AS ok"
 

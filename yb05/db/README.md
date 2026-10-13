@@ -47,6 +47,7 @@ python -m app.main calcul-trafic-agrebal 12345
 | 1 | `DSR-697_chargement_cles_repartition.sql` | le fichier CSV dédoublonné, déposé sur le serveur | `trppu_cles_repartition` alimentée pour le référentiel |
 | 2 | `DSR-696-699_migration.sql` | rien — **à jouer une seule fois par base** | 3 index, 1 colonne |
 | 2 bis | `fix_error.sql` | rien — **une seule fois par base**, avant DSR-696 | les trois totaux de site élargis |
+| 2 ter | `fix_trafic_pdi_capacite.sql` | rien — **une seule fois par base**, avant le YB05 où le plafond vient de `TRAFIC_MAX` | les trois colonnes de trafic PDI en `decimal(12,4)` |
 | 3 | `DSR-696_site_trafic.sql` | les étapes 1 et 2 | `trppu_trafic_site` alimentée pour le référentiel |
 | 4 | `DSR-698_version_cle.sql` | la migration | une version active par site traité |
 | 5 | `DSR-699_cles_calculees.sql` | les étapes 3 et 4, **sur le même référentiel** | les clés du référentiel |
@@ -69,11 +70,18 @@ chiffres avant la virgule**, alors qu'elles reçoivent la somme des trafics d'un
 porte à `decimal(35,19)` : seize chiffres entiers, et l'échelle de la source. Il se joue une
 fois, comme la migration, et se relance sans dommage.
 
+`fix_trafic_pdi_capacite.sql` corrige un défaut du même genre, découvert en prod le
+12/10/2026 : `trppu_trafic_pdi.dense` / `faible1` / `faible2` étaient en `smallint unsigned`
+(65 535), alors qu'un trafic PDI (TMH hebdo × coefficient × clé) dépasse ce plafond sur un
+gros site — 108 716 en OO le lundi pour le scénario 15 (site 133950). Le batch refusait le
+scénario à l'étape « trafics PDI ». Le correctif les porte à `decimal(12,4)`, comme
+`trppu_trafic_agrebal.volume` (99 999 999) ; le batch continue d'arrondir à l'entier.
+
 Ces scripts ne se rejouent pas au même rythme :
 
 | Rythme | Scripts |
 |--------|---------|
-| une fois par base | la migration, `fix_error.sql` |
+| une fois par base | la migration, `fix_error.sql`, `fix_trafic_pdi_capacite.sql` |
 | une fois par référentiel | DSR-697, puis DSR-696 |
 | une fois par site et par référentiel | DSR-698, puis DSR-699 |
 

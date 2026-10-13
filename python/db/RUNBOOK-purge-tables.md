@@ -168,7 +168,7 @@ critiques sont dans les tables conservées.
 | Point | État après purge |
 |---|---|
 | `resolve_default_pic_version` (`trppu_scenario/helpers.py:61`) | ✅ OK — `trppu_pic_version` conservée, la ligne `est_par_defaut = 1` survit. `POST /scenarios` fonctionne. |
-| `ensure_produits_exist` (`trppu_produit/helpers.py:53`) | ✅ OK — les 8 produits et leurs libellés métier survivent. |
+| `assert_produits_exist` (`trppu_produit/helpers.py`) | ✅ OK — `trppu_produit` est conservée. Le TMH ne crée plus de produit (retrait du 12/10/2026) : un `co_produit` absent renvoie 422, il faut donc que le référentiel soit chargé avant les tests. |
 | `ensure_site_exists` (`trppu_scenario/helpers.py:316`) | ⚠️ `trppu_site` est vidée : les sites seront recréés à la volée au premier `POST /scenarios`, avec les valeurs du payload. Les 77 libellés actuels sont perdus. |
 | Coefficients PIC | ⚠️ Les 6 versions PIC survivent **mais sans aucun coefficient** (`trppu_pic_coefficients` vidée). `GET /pic-versions` répond, `GET /pic-coefficients` renvoie une liste vide. À recharger par l'upload Excel si les tests en ont besoin. |
 
@@ -242,7 +242,7 @@ curl http://localhost:8000/trppu-api/sites           # liste vide, 200
 
 Puis la collection Postman (`postman/trppu_collection.json`, 79 requêtes, régénérée le
 19/08) pour un passage complet. **Commencer par `POST /trppu-api/scenarios`** : c'est
-l'appel qui exerce `resolve_default_pic_version`, `ensure_produits_exist` et
+l'appel qui exerce `resolve_default_pic_version`, `assert_produits_exist` et
 `ensure_site_exists` d'un coup — donc toute la frontière entre conservé et purgé.
 
 ---

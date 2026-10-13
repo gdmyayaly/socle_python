@@ -18,6 +18,8 @@ DB_DIR = Path(__file__).resolve().parent.parent / "db"
 MIGRATION = DB_DIR / "DSR-696-699_migration.sql"
 FIX = DB_DIR / "fix_error.sql"
 SUIVI = DB_DIR / "suivi.sql"
+FIX_TRAFIC_PDI = DB_DIR / "fix_trafic_pdi_capacite.sql"
+VERIF_TRAFIC_PDI = DB_DIR / "verif_trafic_pdi.sql"
 CHARGEMENT = DB_DIR / "DSR-697_chargement_cles_repartition.sql"
 SITE_TRAFIC = DB_DIR / "DSR-696_site_trafic.sql"
 VERSION_CLE = DB_DIR / "DSR-698_version_cle.sql"
@@ -27,8 +29,11 @@ CLES_CALCULEES = DB_DIR / "DSR-699_cles_calculees.sql"
 SCRIPTS_METIER = (CHARGEMENT, SITE_TRAFIC, VERSION_CLE, CLES_CALCULEES)
 
 # `fix_error.sql` (DDL, une fois par base : ERROR 1264 de DSR-696) et `suivi.sql` (lecture
-# seule, seconde session) ne sont pas des scripts métier.
-TOUS_LES_SCRIPTS = (MIGRATION, FIX, SUIVI, *SCRIPTS_METIER)
+# seule, seconde session) ne sont pas des scripts métier, pas plus que
+# `fix_trafic_pdi_capacite.sql` (DDL) et `verif_trafic_pdi.sql` (contrôle manuel, lecture seule).
+TOUS_LES_SCRIPTS = (
+    MIGRATION, FIX, SUIVI, FIX_TRAFIC_PDI, VERIF_TRAFIC_PDI, *SCRIPTS_METIER
+)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +210,7 @@ def test_le_script_existe_et_est_decoupable(script):
 @pytest.mark.parametrize(
     "script, attendu",
     [(MIGRATION, 17), (FIX, 9), (SUIVI, 8), (CHARGEMENT, 11), (SITE_TRAFIC, 9),
-     (VERSION_CLE, 10), (CLES_CALCULEES, 11)],
+     (VERSION_CLE, 10), (CLES_CALCULEES, 11), (FIX_TRAFIC_PDI, 1), (VERIF_TRAFIC_PDI, 16)],
     ids=lambda v: v.name if isinstance(v, Path) else str(v),
 )
 def test_nombre_d_instructions(script, attendu):
@@ -554,7 +559,7 @@ def test_fix_conserve_l_echelle_de_la_source():
 @pytest.mark.parametrize(
     "script, attendu",
     [(MIGRATION, 17), (FIX, 9), (SUIVI, 8), (CHARGEMENT, 11), (SITE_TRAFIC, 9),
-     (VERSION_CLE, 10), (CLES_CALCULEES, 11)],
+     (VERSION_CLE, 10), (CLES_CALCULEES, 11), (FIX_TRAFIC_PDI, 1), (VERIF_TRAFIC_PDI, 16)],
     ids=lambda v: v.name if isinstance(v, Path) else str(v),
 )
 def test_dry_run_liste_les_instructions_sans_connexion(monkeypatch, script, attendu):
@@ -577,3 +582,19 @@ def test_les_apercus_ne_divulguent_pas_les_parametres(monkeypatch):
 
     assert all(len(s.preview) <= 120 for s in resultat.statements)
     assert not any(s.preview.startswith("--") for s in resultat.statements)
+
+
+def test_verif_trafic_pdi_est_en_lecture_seule():
+    """Script de contrôle manuel : aucune écriture hors de ses tables temporaires."""
+    for instruction in _instructions(VERIF_TRAFIC_PDI):
+        mot = first_keyword(instruction)
+        assert mot in {"SET", "SELECT", "DROP", "CREATE"}, instruction[:80]
+        if mot in {"DROP", "CREATE"}:
+            assert "TEMPORARY TABLE" in instruction.upper(), instruction[:80]
+
+
+def test_fix_trafic_pdi_elargit_les_trois_colonnes_en_decimal():
+    (alter,) = _instructions(FIX_TRAFIC_PDI)
+    for colonne in ("dense", "faible1", "faible2"):
+        assert f"MODIFY COLUMN `{colonne}`" in alter
+    assert alter.count("decimal(12,4)") == 3

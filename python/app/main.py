@@ -211,6 +211,8 @@ def _params_requete(request: Request) -> dict[str, str]:
  
  
 app.include_router(health_routes.router)
+app.include_router(health_routes.health_router)
+app.include_router(health_routes.health_router, prefix="/trppu-api")
 app.include_router(databricks_routes.router)
 app.include_router(trppu_trafics_router)
 app.include_router(calcl_nbr_jours_routes.router)

@@ -57,6 +57,43 @@
             },
             "description": "Health Resources"
           }
+        },
+        {
+          "name": "GET /trppu-api/health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "health"
+              ]
+            },
+            "description": "Health"
+          }
+        },
+        {
+          "name": "GET /trppu-api/health/resources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trppu-api/health/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "trppu-api",
+                "health",
+                "resources"
+              ]
+            },
+            "description": "Health Resources"
+          }
         }
       ]
     },

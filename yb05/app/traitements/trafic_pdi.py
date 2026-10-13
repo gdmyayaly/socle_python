@@ -14,9 +14,9 @@ from __future__ import annotations
 import logging
 import time
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import Any, NamedTuple
 
-from app.config import CLES_PAR_PRODUIT
+from app.config import CLES_PAR_PRODUIT, TAILLE_LOT, TRAFIC_MAX
 from app.db.mysql import db_read, db_write
 from app.log_utils import ctx
 from app.traitements import scenario as scn
@@ -43,11 +43,12 @@ COLONNE_PAR_FAMILLE = {
     "potentielip": "cle_potentielip",
 }
 
-# Colonnes en `smallint unsigned` (65535) : on échoue explicitement plutôt que de laisser
-# MySQL refuser ou tronquer.
-TRAFIC_MAX = 65535
-
-TAILLE_LOT = 5000
+# Plafond des colonnes de trafic : `TRAFIC_MAX` (app/config.py). Renseigné, on échoue
+# explicitement au-delà plutôt que de laisser MySQL refuser ou tronquer ; vide, aucun contrôle
+# et l'erreur MySQL remonte. Colonnes ex-`smallint unsigned` (65 535), trop étroites pour un
+# gros site (scénario 15, site 133950 en prod : 108 716) — élargies en `decimal(12,4)` par
+# `db/fix_trafic_pdi_capacite.sql`. Le trafic reste arrondi à l'entier (OPTIPACC le restitue
+# en `int`).
 
 # TMH retenu : somme des lignes par produit, hors `bl_exclu` (ligne) et
 # `trppu_scenario_exclusions` (produit).
@@ -242,6 +243,19 @@ async def _calculer(
             duration_ms=_ms(debut_phase),
         ),
     )
+    # Entrées du calcul, de quoi le rejouer à la main (cf. db/verif_trafic_pdi.sql).
+    logger.info(
+        "Avancement calcul trafics PDI %s",
+        ctx(
+            phase="entrées",
+            id_pic_version=scenario["id_pic_version"],
+            id_version_cle=id_version_cle,
+            nb_jours_semaine=scenario.get("nb_jours_semaine"),
+            tmh_hebdo={produit: str(valeur) for produit, valeur in tmh.items()},
+            cle_par_produit={produit: _colonne_cle_ou_none(produit) for produit in tmh},
+            trafic_max=TRAFIC_MAX,
+        ),
+    )
     debut_phase = time.perf_counter()
 
     _signaler_ecarts_de_perimetre(rapport, cles, agrebal_par_pdi)
@@ -422,11 +436,17 @@ def _construire_lignes(
     agrebal_par_pdi: dict[int, tuple[int, str]],
     jours: list[str],
 ) -> list[tuple]:
-    """Toutes les lignes de `trppu_trafic_pdi` à insérer, dans l'ordre des paramètres du SQL."""
+    """Toutes les lignes de `trppu_trafic_pdi` à insérer, dans l'ordre des paramètres du SQL.
+
+    trafic(PDI, produit, jour, densité) = arrondi(TMH hebdo × coef(produit, jour, densité)
+    × clé du PDI pour la famille du produit). Une ligne INFO par produit/jour résume le calcul
+    (totaux, plus gros PDI) ; `-v` ajoute une ligne DEBUG par PDI avec chaque facteur.
+    """
     id_scenario = scenario["id_scenario"]
     co_regate = scenario["co_regate"]
     lignes: list[tuple] = []
     manquants: list[str] = []
+    densites = sorted(COLONNES_PAR_DENSITE)
 
     for produit, valeur_tmh in tmh.items():
         colonne_cle = _colonne_cle(produit)
@@ -435,15 +455,42 @@ def _construire_lignes(
             if not coefs:
                 manquants.append(f"{produit}/{jour}")
                 continue
+            facteurs = {d: coefs.get(d, Decimal(0)) for d in densites}
+            nb_pdi = 0
+            somme_cles = Decimal(0)
+            totaux = dict.fromkeys(densites, 0)
+            plus_gros: tuple[int, Decimal, list[int]] | None = None
             for id_pdi, cles_du_pdi in cles.items():
                 agrebal = agrebal_par_pdi.get(id_pdi)
                 if agrebal is None:
                     continue
                 cle = cles_du_pdi[colonne_cle]
                 trafics = [
-                    _arrondir(valeur_tmh * coefs.get(densite, Decimal(0)) * cle, produit, jour)
-                    for densite in sorted(COLONNES_PAR_DENSITE)
+                    _arrondir(
+                        _Calcul(id_pdi, produit, jour, densite, valeur_tmh, facteurs[densite], cle)
+                    )
+                    for densite in densites
                 ]
+                logger.debug(
+                    "Avancement calcul trafics PDI %s",
+                    ctx(
+                        phase="calcul PDI",
+                        id_pdi=id_pdi,
+                        produit=produit,
+                        jour=jour,
+                        tmh_hebdo=str(valeur_tmh),
+                        colonne_cle=colonne_cle,
+                        cle=str(cle),
+                        coefs=_par_colonne(facteurs, str),
+                        trafics=_par_colonne(dict(zip(densites, trafics))),
+                    ),
+                )
+                nb_pdi += 1
+                somme_cles += cle
+                for densite, trafic in zip(densites, trafics):
+                    totaux[densite] += trafic
+                if plus_gros is None or cle > plus_gros[1]:
+                    plus_gros = (id_pdi, cle, trafics)
                 lignes.append(
                     (
                         id_scenario,
@@ -456,6 +503,26 @@ def _construire_lignes(
                         *trafics,
                     )
                 )
+            # Contrôle manuel : total ≈ TMH × coef × somme des clés (écart = arrondis).
+            logger.info(
+                "Avancement calcul trafics PDI %s",
+                ctx(
+                    phase="détail",
+                    produit=produit,
+                    jour=jour,
+                    tmh_hebdo=str(valeur_tmh),
+                    colonne_cle=colonne_cle,
+                    coefs=_par_colonne(facteurs, str),
+                    nb_pdi=nb_pdi,
+                    somme_cles=str(somme_cles),
+                    totaux=_par_colonne(totaux),
+                    pdi_max=plus_gros[0] if plus_gros else None,
+                    cle_max=str(plus_gros[1]) if plus_gros else None,
+                    trafics_max=(
+                        _par_colonne(dict(zip(densites, plus_gros[2]))) if plus_gros else None
+                    ),
+                ),
+            )
 
     if manquants:
         raise TraitementImpossible(
@@ -463,6 +530,14 @@ def _construire_lignes(
             f"{len(manquants)} combinaison(s) produit/jour : {', '.join(manquants[:10])}"
         )
     return lignes
+
+
+def _par_colonne(valeurs: dict[int, Any], conversion=None) -> dict[str, Any]:
+    """`{0: v, 1: v, 2: v}` -> `{"dense": v, "faible1": v, "faible2": v}` pour les logs."""
+    return {
+        COLONNES_PAR_DENSITE[densite]: conversion(valeur) if conversion else valeur
+        for densite, valeur in valeurs.items()
+    }
 
 
 def _colonne_cle(produit: str) -> str:
@@ -483,17 +558,49 @@ def _colonne_cle(produit: str) -> str:
     return colonne
 
 
-def _arrondir(valeur: Decimal, produit: str, jour: str) -> int:
+class _Calcul(NamedTuple):
+    """Facteurs d'un trafic PDI, repris tels quels dans les messages d'échec."""
+
+    id_pdi: int
+    produit: str
+    jour: str
+    densite: int
+    tmh: Decimal
+    coef: Decimal
+    cle: Decimal
+
+    @property
+    def valeur(self) -> Decimal:
+        return self.tmh * self.coef * self.cle
+
+    def formule(self) -> str:
+        """`PDI 1001, dense : TMH 1000 × coef 0.5 × clé 0.6 = 300.0` — rejouable à la main."""
+        return (
+            f"PDI {self.id_pdi}, {COLONNES_PAR_DENSITE[self.densite]} : "
+            f"TMH {self.tmh} × coef {self.coef} × clé {self.cle} = {self.valeur}"
+        )
+
+
+def _colonne_cle_ou_none(produit: str) -> str | None:
+    """Colonne de clé du produit pour les logs ; None si inconnue (l'échec vient plus loin)."""
+    try:
+        return _colonne_cle(produit)
+    except TraitementImpossible:
+        return None
+
+
+def _arrondir(calcul: _Calcul) -> int:
     """Arrondi à l'entier, avec refus explicite au-delà de la capacité de la colonne."""
-    entier = int(valeur.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    entier = int(calcul.valeur.quantize(Decimal(1), rounding=ROUND_HALF_UP))
     if entier < 0:
         raise TraitementImpossible(
-            f"Trafic négatif calculé pour {produit}/{jour} : {valeur}"
+            f"Trafic négatif calculé pour {calcul.produit}/{calcul.jour} : "
+            f"{calcul.formule()}"
         )
-    if entier > TRAFIC_MAX:
+    if TRAFIC_MAX is not None and entier > TRAFIC_MAX:
         raise TraitementImpossible(
-            f"Trafic {entier} hors capacité de la colonne pour {produit}/{jour} "
-            f"(maximum {TRAFIC_MAX} — smallint unsigned)"
+            f"Trafic {entier} hors capacité de la colonne pour {calcul.produit}/{calcul.jour} "
+            f"(maximum {TRAFIC_MAX} — TRAFIC_MAX) : {calcul.formule()}"
         )
     return entier
 

@@ -7,6 +7,10 @@
 import asyncio
 from decimal import Decimal
 
+import pytest
+
+from app.config import _entier_positif, _parse_trafic_max
+from app.traitements import trafic_pdi
 from app.traitements.rapport import ECHEC, SUCCES
 from app.traitements.trafic_pdi import calcul_trafic_pdi
 from tests.conftest import FausseBase, reponses_calcul
@@ -219,14 +223,57 @@ def test_produit_hors_mapping_fait_echouer_le_calcul():
     _verifier_echec_propre(rapport, ecriture, "absent de CLES_PAR_PRODUIT")
 
 
-def test_trafic_hors_capacite_de_la_colonne():
-    """`smallint unsigned` : au-delà de 65 535, échec plutôt que troncature."""
+def test_trafic_hors_capacite_de_la_colonne(monkeypatch):
+    """TRAFIC_MAX renseigné : au-delà, échec explicite plutôt qu'erreur MySQL."""
+    monkeypatch.setattr(trafic_pdi, "TRAFIC_MAX", 99999999)
     reponses = reponses_calcul()
-    reponses["FROM trppu_tmh"] = [{"co_produit": "CO", "tmh": Decimal("10000000")}]
+    reponses["FROM trppu_tmh"] = [{"co_produit": "CO", "tmh": Decimal("1000000000")}]
 
     rapport, ecriture = _calculer(reponses)
 
     _verifier_echec_propre(rapport, ecriture, "hors capacité de la colonne")
+    # La formule complète, pour rejouer le calcul à la main.
+    assert "PDI 1001, dense : TMH 1000000000 × coef 1.0000 × clé 0.6" in rapport.erreur
+
+
+def test_sans_trafic_max_aucun_controle(monkeypatch):
+    """TRAFIC_MAX vide : le batch écrit tel quel, c'est MySQL qui refusera le cas échéant."""
+    monkeypatch.setattr(trafic_pdi, "TRAFIC_MAX", None)
+    reponses = reponses_calcul()
+    reponses["FROM trppu_tmh"] = [{"co_produit": "CO", "tmh": Decimal("1000000000")}]
+
+    rapport, ecriture = _calculer(reponses)
+
+    assert rapport.statut == SUCCES
+    lignes = {(ligne[4], ligne[6]): ligne[7:10] for ligne in _lignes_inserees(ecriture)}
+    assert lignes[(1001, "LUNDI")][0] == 600000000
+
+
+@pytest.mark.parametrize(
+    "brut, attendu",
+    [(None, None), ("", None), ("  ", None), ("99999999", 99999999), (" 65535 ", 65535)],
+)
+def test_parse_trafic_max(brut, attendu):
+    assert _parse_trafic_max(brut) == attendu
+
+
+@pytest.mark.parametrize("brut", ["abc", "1.5", "-1"])
+def test_parse_trafic_max_refuse_une_valeur_invalide(brut):
+    with pytest.raises(ValueError, match="TRAFIC_MAX"):
+        _parse_trafic_max(brut)
+
+
+def test_trafic_au_dela_de_lancien_plafond_smallint(monkeypatch):
+    """Prod, scénario 15 : 108 716 rejeté tant que les colonnes étaient en smallint (65 535)."""
+    monkeypatch.setattr(trafic_pdi, "TRAFIC_MAX", 99999999)
+    reponses = reponses_calcul()
+    reponses["FROM trppu_tmh"] = [{"co_produit": "CO", "tmh": Decimal("200000")}]
+
+    rapport, ecriture = _calculer(reponses)
+
+    assert rapport.statut == SUCCES
+    lignes = {(ligne[4], ligne[6]): ligne[7:10] for ligne in _lignes_inserees(ecriture)}
+    assert lignes[(1001, "LUNDI")] == (120000, 60000, 30000)
 
 
 def test_aucun_tmh_exploitable():
@@ -359,3 +406,14 @@ def test_pdi_sans_agrebal_est_signale_et_ignore():
     assert rapport.statut == SUCCES
     assert len(_lignes_inserees(ecriture)) == 5  # un seul PDI × 5 jours
     assert any("sans Agrébal" in c.libelle for c in rapport.controles)
+
+
+@pytest.mark.parametrize(
+    "brut, attendu", [(None, 5000), ("", 5000), ("abc", 5000), ("2000", 2000), ("0", 1)]
+)
+def test_taille_lot_lue_dans_lenvironnement(monkeypatch, brut, attendu):
+    if brut is None:
+        monkeypatch.delenv("TAILLE_LOT", raising=False)
+    else:
+        monkeypatch.setenv("TAILLE_LOT", brut)
+    assert _entier_positif("TAILLE_LOT", 5000) == attendu

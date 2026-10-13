@@ -323,7 +323,7 @@ def _regrouper_amas(rows: list[dict]) -> list[AmasOut]:
     dict Python préservent l'ordre d'insertion, la sortie est donc déterministe.
 
     Les volumes remontent en `Decimal` (SUM sur decimal(12,4)) mais sont entiers
-    par construction — YB05 somme des `smallint unsigned` de `trppu_trafic_pdi`.
+    par construction — YB05 arrondit à l'entier les trafics de `trppu_trafic_pdi`.
     On les restitue en `int`, comme `volume_brut` de DSR-689. Une densité absente
     pour un couple (jour, produit) donne NULL : elle vaut 0 côté réponse.
     """

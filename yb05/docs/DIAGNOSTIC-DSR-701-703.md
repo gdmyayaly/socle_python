@@ -122,6 +122,12 @@ plafonnés à 65 535. Or `TMH × coefficient × clé` est un produit de décimau
 > de 65 535 comme sur une valeur négative. En mode strict MySQL refuserait la ligne, sinon il la
 > tronquerait en silence : dans les deux cas, mieux vaut que le batch dise lequel des trafics
 > déborde.
+>
+> **Mise à jour du 12/10/2026** : plafond atteint en prod (scénario 15, site 133950, OO/LUNDI =
+> 108 716). Colonnes élargies en `decimal(12,4)` par `db/fix_trafic_pdi_capacite.sql`,
+> plafond désormais lu dans la variable d'environnement `TRAFIC_MAX` (99 999 999 dans
+> `.env.example`) ; vide, aucun contrôle et l'erreur MySQL remonte. L'arrondi à l'entier est
+> conservé.
 
 ### 27. La densité n'est reliée à rien — **à confirmer**
 

@@ -14,13 +14,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Routes de santé, montées à la racine et sous le préfixe `/trppu-api` (cf. app/main.py) :
+# `/health` et `/trppu-api/health` répondent à l'identique.
+health_router = APIRouter()
+
 
 @router.get("/")
 def root():
     return {"message": "Bienvenue sur l'API trppu"}
 
 
-@router.get("/health")
+@health_router.get("/health")
 def health():
     """Vérifie que les configurations nécessaires sont présentes."""
     from app.config import (
@@ -42,7 +46,7 @@ def health():
     }
 
 
-@router.get("/health/resources")
+@health_router.get("/health/resources")
 async def health_resources():
     """Vérification de la connectivité aux ressources (MySQL, Databricks)."""
     try:

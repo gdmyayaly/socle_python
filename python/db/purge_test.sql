@@ -196,12 +196,12 @@ DROP TEMPORARY TABLE IF EXISTS `purge_scenarios`;
 --   LEFT JOIN `trppu_scenario` s ON s.`id_scenario` = v.`id_scenario`
 --   WHERE s.`id_scenario` IS NULL;
 
--- 5.2 Produits créés automatiquement par le TMH et jamais repris à la main.
---     `ensure_produits_exist` crée le produit manquant avec le libellé de
---     `g_trppu_obj_mapping`, ou son propre code en libellé quand l'objet est absent du
---     mapping (PR, PPI — cf. DSR-679). `lb_produit = co_produit` est donc la marque d'une
---     création automatique jamais corrigée : ce filtre épargne les produits saisis par le
---     métier.
+-- 5.2 Produits créés automatiquement par le TMH (mécanisme retiré le 12/10/2026) et jamais
+--     repris à la main. L'ancien `ensure_produits_exist` créait le produit manquant avec le
+--     libellé de `g_trppu_obj_mapping`, ou son propre code en libellé quand l'objet était
+--     absent du mapping (PR, PPI — cf. DSR-679). `lb_produit = co_produit` est donc la marque
+--     d'une création automatique jamais corrigée : ce filtre épargne les produits saisis par
+--     le métier.
 -- DELETE FROM `trppu_produit`
 --  WHERE `lb_produit` = `co_produit`
 --    AND `co_produit` NOT IN (SELECT `co_produit` FROM `trppu_tmh`)

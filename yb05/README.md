@@ -56,6 +56,8 @@ de vérité en cas de doute.
 | Variable | Par défaut | Description |
 |---|---|---|
 | `CLES_PAR_PRODUIT` | `CO:colis,OO:oo,IP:potentielip,OS:3s,PR:3s,PPI:3s` | Correspondance code produit → famille de clé de répartition (`colis`, `oo`, `3s`, `potentielip`). Une entrée malformée fait échouer le démarrage ; un produit absent fait échouer le calcul qui le rencontre. |
+| `TRAFIC_MAX` | vide | Plafond d'un trafic PDI. Renseigné (`99999999` = capacité des colonnes en `decimal(12,4)`), un trafic au-delà fait échouer le scénario avec un message explicite. Vide ou absent : aucun contrôle, un trafic trop grand remonte l'erreur MySQL (`1264 Out of range`). Une valeur non entière ou négative fait échouer le démarrage. |
+| `TAILLE_LOT` | `5000` | Lignes par `INSERT` à l'écriture des trafics PDI ; un log d'avancement par lot au-delà d'un lot. Tous les lots sont dans **une seule transaction** : une erreur annule tout le scénario. Vide ou non entier : `5000` ; ≤ 0 : ramené à `1`. |
 | `NB_WORKER` | `1` | Nombre de scénarios traités simultanément par le mode `all`. `1` = séquentiel. Toute valeur inexploitable est ramenée à `1` : un batch d'exploitation ne refuse pas de démarrer pour une variable mal saisie. Les pools MySQL sont dimensionnés sur cette valeur (`max(10, NB_WORKER)`). |
 
 ## Commandes console
@@ -160,6 +162,48 @@ Les traitements vivent dans `app/traitements/` et s'importent directement, sans 
 injectables (`db_lecture=`, `db_ecriture=`), ce qui rend les traitements testables sans MySQL et
 documente au passage lequel écrit : `controle_eligibilite` ne reçoit tout simplement pas
 d'instance d'écriture.
+
+### Vérifier un calcul de trafics PDI à la main
+
+**La formule** (`app/traitements/trafic_pdi.py`), pour chaque PDI, produit, jour et densité :
+
+```
+trafic = ARRONDI( TMH hebdo × coef de rétention × clé de répartition du PDI )
+```
+
+| Facteur | D'où il vient |
+|---|---|
+| TMH hebdo | `SUM(trppu_tmh.moyenne_hebdo)` du produit, lignes `bl_exclu = 0`, hors produits de `trppu_scenario_exclusions`. Un TMH nul écarte le produit. |
+| coef | `trppu_pic_coefficients` de la version PIC du scénario, pour le produit et le jour. `densite` 0 → `dense`, 1 → `faible1`, 2 → `faible2` ; un coef absent vaut 0. |
+| clé | `trppu_cles_repartition_calcule` de la version de clés du scénario (`trppu_scenario.id_version_cle`), dans la colonne de la famille du produit (`CLES_PAR_PRODUIT` : CO → `cle_colis`, OO → `cle_oo`…). |
+| arrondi | à l'entier, demi vers le haut. Au-delà de `TRAFIC_MAX`, échec du scénario. |
+
+Seuls les PDI qui ont **à la fois** une clé et un Agrébal actif sur le site sont calculés.
+
+**Ce que disent les logs** (`Avancement calcul trafics PDI`, champ `phase=`) :
+
+| `phase=` | Niveau | Contenu |
+|---|---|---|
+| `entrées` | INFO | `id_pic_version`, `id_version_cle`, `nb_jours_semaine`, `tmh_hebdo` par produit, colonne de clé par produit, `trafic_max` |
+| `détail` | INFO | une ligne par produit/jour : `coefs` des trois densités, `nb_pdi`, `somme_cles`, `totaux` écrits, et le plus gros PDI (`pdi_max`, `cle_max`, `trafics_max`) |
+| `calcul PDI` | DEBUG (`-v`) | une ligne par PDI/produit/jour : chaque facteur et chaque trafic. Volumineux : à réserver à un scénario isolé (`calcul-trafic-pdi <id> -v`). |
+
+Contrôle rapide sur une ligne `détail` : `totaux.dense ≈ tmh_hebdo × coefs.dense × somme_cles`,
+l'écart ne venant que des arrondis (au plus 0,5 par PDI).
+
+Un échec de capacité donne la **formule complète** du trafic fautif (valeurs d'exemple) :
+
+```
+Trafic 108716 hors capacité de la colonne pour OO/LUNDI (maximum 65535 — TRAFIC_MAX) :
+PDI 4711, dense : TMH 250000.00 × coef 0.5200 × clé 0.836277… = 108716.0…
+```
+
+**Rejouer en SQL** : `db/verif_trafic_pdi.sql` (lecture seule, renseigner `@id_scenario`).
+Il affiche les paramètres du scénario, le TMH et les coefficients retenus, recalcule chaque
+ligne écrite (la section 4 doit renvoyer **0 ligne**), compare les totaux par produit/jour, et
+liste les plus gros trafics calculables — utile quand le calcul a échoué et que rien n'a été
+écrit. Son `CASE` produit → colonne de clé reprend la valeur par défaut de `CLES_PAR_PRODUIT` :
+à adapter si le `.env` diffère.
 
 ### Mode `ALL` — exploitation courante
 
@@ -379,9 +423,11 @@ visibles par toutes ses instructions.
 | 1 | `db/DSR-697_chargement_cles_repartition.sql` | Charge le CSV métier dans `trppu_cles_repartition` : la photographie du référentiel, dont tout le reste découle. |
 | 2 | `db/DSR-696-699_migration.sql` | Clés uniques, index d'agrégation et colonne `date_creation` absents du schéma livré. À jouer **une fois par base**. |
 | 2 bis | `db/fix_error.sql` | Élargit les trois totaux de `trppu_trafic_site`, trop étroits pour la somme qu'ils portent — l'`ERROR 1264` rencontrée sur DSR-696. **Une fois par base**, avant l'étape 3. |
+| 2 ter | `db/fix_trafic_pdi_capacite.sql` | Élargit `dense` / `faible1` / `faible2` de `trppu_trafic_pdi` de `smallint unsigned` à `decimal(12,4)` : le batch rejetait un trafic PDI > 65 535 (prod, scénario 15). **Une fois par base**, avant de déployer le YB05 où le plafond vient de la variable `TRAFIC_MAX`. |
 | 3 | `db/DSR-696_site_trafic.sql` | Alimente `trppu_trafic_site` : somme des trafics des PDI actifs par site, pour un référentiel. |
 | 4 | `db/DSR-698_version_cle.sql` | Crée la version de clés d'un site dans `trppu_version_cle` et désactive la précédente. |
 | 5 | `db/DSR-699_cles_calculees.sql` | Calcule les clés — trafic du PDI / total de son site — et alimente `trppu_cles_repartition_calcule`. |
+| — | `db/verif_trafic_pdi.sql` | **Lecture seule.** Rejoue le calcul des trafics PDI d'un scénario (`@id_scenario`) et liste les écarts avec `trppu_trafic_pdi` — cf. « Vérifier un calcul de trafics PDI à la main ». |
 | — | `db/suivi.sql` | **Lecture seule.** À jouer dans un second terminal pour voir où en est un traitement long : instruction en cours et lignes déjà lues, transaction et lignes déjà écrites, verrous, volumétrie. |
 
 Les deux premières lignes commutent — elles ne se lisent pas l'une l'autre. L'ordre donné est

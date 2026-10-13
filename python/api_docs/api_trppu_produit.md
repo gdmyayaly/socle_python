@@ -25,27 +25,21 @@ fait via `dt_desactivation` (et `motif_desactivation`).
 
 **Contrainte SQL** : `CHECK (dt_desactivation IS NULL OR dt_desactivation >= DATE(dt_creation))`.
 
-### 1.1 Création automatique depuis le TMH
+### 1.1 Produits référencés par le TMH
 
-Le référentiel des objets traités est piloté par **Databricks** (`co_type_objet` des tables
-`g_trppu_trafics_*_3`, restitution dynamique par `get_trafics_pivot`) : un objet peut apparaître
-dans les trafics sans exister dans `trppu_produit`. Pour éviter que la FK `fk_tmh_produit` casse
-la transaction et remonte une 500 opaque, tout chemin d'écriture TMH crée le produit manquant
-avant l'insert :
+Le TMH **ne crée pas** de produit : le référentiel `trppu_produit` est alimenté par ailleurs
+(création unitaire, import Excel). Tout chemin d'écriture TMH vérifie d'abord que chaque
+`co_produit` existe, et rejette sinon la requête **sans rien écrire** :
 
-| Endpoint | Effet |
-|----------|-------|
-| `POST /trppu-api/scenarios/{id}/tmh` | crée le `co_produit` s'il est absent |
-| `PUT /trppu-api/scenarios/{id}/tmh` | idem pour chaque ligne du lot |
-| `POST` / `PUT /trppu-api/scenarios` | idem pour les lignes TMH du payload |
+| Endpoint | Effet si un `co_produit` est absent |
+|----------|-------------------------------------|
+| `POST /trppu-api/scenarios/{id}/tmh` | 422 |
+| `PUT /trppu-api/scenarios/{id}/tmh` | 422 (lot entier rejeté) |
+| `POST` / `PUT /trppu-api/scenarios` | 422 si le payload contient des lignes TMH |
 
-- Implémentation : `ensure_produits_exist` (`app/routes/trppu_produit/helpers.py`), en
-  `INSERT ... ON DUPLICATE KEY UPDATE` no-op — idempotent, et le libellé d'un produit déjà saisi
-  par le métier n'est **jamais** écrasé.
-- `lb_produit` est repris de `g_trppu_obj_mapping` (`lb_type_objet`). La colonne étant NOT NULL,
-  un objet inconnu du mapping (`PR`, `PPI` — cf. DSR-679) est créé **avec son code pour
-  libellé** ; à corriger ensuite via `PUT /trppu-api/produits/{co_produit}`.
-- Les codes créés sont tracés dans les logs (`Produits créés automatiquement : …`).
+- Implémentation : `assert_produits_exist` (`app/routes/trppu_produit/helpers.py`), dans la
+  transaction, avant l'insert — remplace la violation de la FK `fk_tmh_produit` (500 opaque).
+- Le `detail` liste les codes manquants : `Produit(s) inconnu(s) dans trppu_produit : PR, PPI.`
 
 ---
 

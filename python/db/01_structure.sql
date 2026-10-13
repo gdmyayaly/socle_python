@@ -365,9 +365,9 @@ CREATE TABLE IF NOT EXISTS `trppu_trafic_pdi` (
   `id_pdi` bigint NOT NULL,
   `co_produit` varchar(3) NOT NULL,
   `jour_semaine` enum('LUNDI','MARDI','MERCREDI','JEUDI','VENDREDI','SAMEDI') NOT NULL,
-  `dense` smallint unsigned DEFAULT NULL,
-  `faible1` smallint unsigned DEFAULT NULL,
-  `faible2` smallint unsigned DEFAULT NULL,
+  `dense` decimal(12,4) DEFAULT NULL,
+  `faible1` decimal(12,4) DEFAULT NULL,
+  `faible2` decimal(12,4) DEFAULT NULL,
   `dt_calcul` datetime NOT NULL,
   PRIMARY KEY (`id_trafic_pdi`,`id_scenario`,`id_pdi`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
