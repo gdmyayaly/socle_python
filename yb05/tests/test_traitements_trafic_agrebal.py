@@ -22,7 +22,8 @@ def reponses_agrebal(**surcharges):
                 "total_faible1": 500,
                 "total_faible2": 250,
             },
-            "FROM trppu_trafic_agrebal": {"nb_lignes": 15, "total": 1750},
+            # Une ligne par Agrébal calculé (GROUP BY id_agrebal).
+            "FROM trppu_trafic_agrebal": [{"id_agrebal": 2404, "nb_lignes": 15, "total": 1750}],
         }
     )
     reponses.update(surcharges)
@@ -161,7 +162,7 @@ def test_flag_pose_mais_table_vide():
 def test_ecart_de_totaux_signale():
     """La somme des volumes Agrébal doit égaler celle des trafics PDI."""
     reponses = reponses_agrebal()
-    reponses["FROM trppu_trafic_agrebal"] = {"nb_lignes": 15, "total": 1700}
+    reponses["FROM trppu_trafic_agrebal"] = [{"id_agrebal": 2404, "nb_lignes": 15, "total": 1700}]
 
     rapport, _ = _agreger(reponses)
 

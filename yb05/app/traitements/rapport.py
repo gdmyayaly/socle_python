@@ -1,5 +1,5 @@
 """Rapport d'exécution (format console commun à DSR-701/702/703) : contrôles `[OK]`/`[KO]`,
-verdict, motifs ; rendu texte ou JSON (`--json`).
+alertes non bloquantes `[!!]`, verdict, motifs ; rendu texte ou JSON (`--json`).
 """
 
 from __future__ import annotations
@@ -18,15 +18,19 @@ ECHEC = "ECHEC"
 
 @dataclass(frozen=True)
 class Controle:
-    """Point de contrôle : `libelle` affiché si OK, `motif` à la place en cas d'échec."""
+    """Point de contrôle : `libelle` affiché si OK, `motif` à la place en cas d'échec.
+
+    `alerte` : contrôle réussi mais à regarder (`[!!]`) — ne change pas le verdict.
+    """
 
     libelle: str
     ok: bool = True
     motif: str | None = None
+    alerte: bool = False
 
     def ligne(self) -> str:
         if self.ok:
-            return f"[OK] {self.libelle}"
+            return f"[{'!!' if self.alerte else 'OK'}] {self.libelle}"
         return f"[KO] {self.motif or self.libelle}"
 
 
@@ -52,6 +56,12 @@ class Rapport:
         self.controles.append(controle)
         return controle
 
+    def alerte(self, libelle: str) -> Controle:
+        """Ajoute une alerte non bloquante (`[!!]`) : visible, sans effet sur le verdict."""
+        controle = Controle(libelle=libelle, ok=True, alerte=True)
+        self.controles.append(controle)
+        return controle
+
     def ko(self, motif: str, libelle: str | None = None) -> Controle:
         """Ajoute un contrôle en échec ; `motif` est le message bloquant du ticket."""
         controle = Controle(libelle=libelle or motif, ok=False, motif=motif)
@@ -69,6 +79,10 @@ class Rapport:
     @property
     def motifs(self) -> list[str]:
         return [c.motif or c.libelle for c in self.controles if not c.ok]
+
+    @property
+    def alertes(self) -> list[str]:
+        return [c.libelle for c in self.controles if c.alerte]
 
     @property
     def reussi(self) -> bool:
@@ -106,11 +120,13 @@ class Rapport:
             "statut": self.statut,
             "reussi": self.reussi,
             "controles": [
-                {"libelle": c.libelle, "ok": c.ok, "motif": c.motif} for c in self.controles
+                {"libelle": c.libelle, "ok": c.ok, "motif": c.motif, "alerte": c.alerte}
+                for c in self.controles
             ],
             "etats": self.etats,
             "erreur": self.erreur,
             "motifs": self.motifs,
+            "alertes": self.alertes,
         }
 
 
@@ -122,10 +138,19 @@ class ResultatScenario:
     statut: str
     """`SUCCES`, `ECHEC` ou `NON_ELIGIBLE`."""
     motif: str | None = None
+    agrebals_a_calculer: int | None = None
+    agrebals_calcules: int | None = None
+    """Renseignés dès que le calcul Agrébal a tourné ; None sinon (non éligible, échec PDI)."""
 
     @property
     def reussi(self) -> bool:
         return self.statut == SUCCES
+
+    @property
+    def agrebals_manquants(self) -> int:
+        if self.agrebals_a_calculer is None or self.agrebals_calcules is None:
+            return 0
+        return max(self.agrebals_a_calculer - self.agrebals_calcules, 0)
 
 
 @dataclass
@@ -142,8 +167,20 @@ class Bilan:
     erreur: str | None = None
     """Erreur système ayant empêché le batch de fonctionner (base injoignable…)."""
 
-    def ajouter(self, id_scenario: int, statut: str, motif: str | None = None) -> None:
-        self.resultats.append(ResultatScenario(id_scenario, statut, motif))
+    def ajouter(
+        self,
+        id_scenario: int,
+        statut: str,
+        motif: str | None = None,
+        *,
+        agrebals_a_calculer: int | None = None,
+        agrebals_calcules: int | None = None,
+    ) -> None:
+        self.resultats.append(
+            ResultatScenario(
+                id_scenario, statut, motif, agrebals_a_calculer, agrebals_calcules
+            )
+        )
 
     # ------------------------------------------------------------------
     # Compteurs
@@ -165,6 +202,13 @@ class Bilan:
     def reussi(self) -> bool:
         """Faux dès un échec ; les non éligibles ne sont pas des échecs."""
         return not self.echecs and self.erreur is None
+
+    def somme_agrebals(self, attribut: str) -> int:
+        return sum(getattr(r, attribut) or 0 for r in self.resultats)
+
+    @property
+    def scenarios_avec_agrebals_manquants(self) -> list[ResultatScenario]:
+        return [r for r in self.resultats if r.agrebals_manquants]
 
     @property
     def duree_moyenne_s(self) -> float:
@@ -194,7 +238,14 @@ class Bilan:
                 marque = "--"
             else:
                 marque = "KO"
-            lignes.append(f"[{marque}] {resultat.id_scenario}")
+            ligne = f"[{marque}] {resultat.id_scenario}"
+            if resultat.agrebals_a_calculer is not None:
+                ligne += (
+                    f"  Agrébals : {resultat.agrebals_calcules}/{resultat.agrebals_a_calculer}"
+                )
+                if resultat.agrebals_manquants:
+                    ligne += f" ({resultat.agrebals_manquants} non calculé(s))"
+            lignes.append(ligne)
             if resultat.motif:
                 lignes.append(f"     {resultat.motif}")
 
@@ -213,6 +264,12 @@ class Bilan:
         lignes.append(f"Succès               : {len(self.succes)}")
         lignes.append(f"Échecs               : {len(self.echecs)}")
         lignes.append(f"Non éligibles        : {len(self.non_eligibles)}")
+        lignes.append(f"Agrébals à calculer  : {self.somme_agrebals('agrebals_a_calculer')}")
+        lignes.append(f"Agrébals calculés    : {self.somme_agrebals('agrebals_calcules')}")
+        lignes.append(
+            f"Agrébals manquants   : {self.somme_agrebals('agrebals_manquants')} "
+            f"({len(self.scenarios_avec_agrebals_manquants)} scénario(s))"
+        )
         lignes.append(f"Durée totale         : {duree_hms(self.duree_s)}")
         lignes.append(f"Durée moyenne        : {duree_hms(self.duree_moyenne_s)}")
 
@@ -225,9 +282,23 @@ class Bilan:
             "scenarios_trouves": self.scenarios_trouves,
             "scenarios_a_moitie_calcules": self.scenarios_a_moitie_calcules,
             "resultats": [
-                {"id_scenario": r.id_scenario, "statut": r.statut, "motif": r.motif}
+                {
+                    "id_scenario": r.id_scenario,
+                    "statut": r.statut,
+                    "motif": r.motif,
+                    "agrebals_a_calculer": r.agrebals_a_calculer,
+                    "agrebals_calcules": r.agrebals_calcules,
+                }
                 for r in self.resultats
             ],
+            "agrebals": {
+                "a_calculer": self.somme_agrebals("agrebals_a_calculer"),
+                "calcules": self.somme_agrebals("agrebals_calcules"),
+                "manquants": self.somme_agrebals("agrebals_manquants"),
+                "scenarios_concernes": [
+                    r.id_scenario for r in self.scenarios_avec_agrebals_manquants
+                ],
+            },
             "compteurs": {
                 "trouves": len(self.scenarios_trouves),
                 "eligibles": len(self.resultats) - len(self.non_eligibles),

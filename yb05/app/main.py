@@ -39,6 +39,24 @@ def _print_json(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
 
+def journaliser_rapport(commande: str, charge: dict, reussi: bool) -> None:
+    """Rapport (ou bilan) final dans les logs, en plus de stdout : champ JSON racine `rapport`.
+
+    Sous ordonnanceur, stdout n'est pas toujours conservé ; les logs, si. WARNING si le
+    traitement n'est pas concluant, pour qu'un filtre de sévérité le remonte.
+    """
+    log.log(
+        logging.INFO if reussi else logging.WARNING,
+        "Rapport final %s",
+        ctx(
+            commande=commande,
+            statut=charge.get("statut") or ("SUCCES" if reussi else "ECHEC"),
+            alertes=len(charge.get("alertes") or []) or None,
+        ),
+        extra={"rapport": charge},
+    )
+
+
 def _print_connection(libelle: str, infos: dict) -> None:
     print(f"  {libelle:<9}: {infos['user']}@{infos['host']}:{infos['port']}/{infos['database']}")
     print(f"             retries={infos['max_retries']}, delai={infos['retry_delay']}s")
@@ -110,13 +128,16 @@ async def _executer_traitement(traitement, args: argparse.Namespace) -> int:
     # Site et ROC : posés par `charger_scenario`, effacés ici.
     jeton_site = set_site(None, None)
     try:
-        rapport = await traitement(args.id_scenario)
-    except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
-        log.exception("Erreur traitement %s", ctx(commande=args.commande))
-        rapport = Rapport(titre=f"Traitement {args.commande}", id_scenario=args.id_scenario)
-        rapport.ko(f"Traitement interrompu : {erreur}")
-        rapport.erreur = str(erreur)
-        rapport.statut = ECHEC
+        try:
+            rapport = await traitement(args.id_scenario)
+        except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
+            log.exception("Erreur traitement %s", ctx(commande=args.commande))
+            rapport = Rapport(titre=f"Traitement {args.commande}", id_scenario=args.id_scenario)
+            rapport.ko(f"Traitement interrompu : {erreur}")
+            rapport.erreur = str(erreur)
+            rapport.statut = ECHEC
+        # Avant le reset : la ligne porte encore id_scenario, co_regate et co_roc.
+        journaliser_rapport(args.commande, rapport.to_dict(), rapport.reussi)
     finally:
         reset_site(jeton_site)
         reset_id_scenario(jeton)
@@ -153,6 +174,7 @@ async def cmd_all(args: argparse.Namespace) -> int:
         bilan = Bilan(nb_workers=NB_WORKER)
         bilan.erreur = str(erreur)
 
+    journaliser_rapport(args.commande, bilan.to_dict(), bilan.reussi)
     if args.json:
         _print_json(bilan.to_dict())
     else:
@@ -172,6 +194,7 @@ async def _executer_outil(traitement, args: argparse.Namespace) -> int:
         rapport.erreur = str(erreur)
         rapport.statut = ECHEC
 
+    journaliser_rapport(args.commande, rapport.to_dict(), rapport.reussi)
     if args.json:
         _print_json(rapport.to_dict())
     else:

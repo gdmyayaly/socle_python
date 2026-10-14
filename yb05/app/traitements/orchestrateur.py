@@ -113,6 +113,11 @@ async def executer_tout(
             succes=len(bilan.succes),
             echecs=len(bilan.echecs),
             non_eligibles=len(bilan.non_eligibles),
+            agrebals_a_calculer=bilan.somme_agrebals("agrebals_a_calculer"),
+            agrebals_calcules=bilan.somme_agrebals("agrebals_calcules"),
+            scenarios_agrebals_manquants=[
+                r.id_scenario for r in bilan.scenarios_avec_agrebals_manquants
+            ],
             duration_ms=bilan.duree_s * 1000,
         ),
     )
@@ -209,9 +214,13 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
     rapport_agrebal = await calcul_trafic_agrebal(
         id_scenario, db_lecture=db_ecriture, db_ecriture=db_ecriture
     )
+    agrebals = {
+        "agrebals_a_calculer": rapport_agrebal.etats.get("NB_AGREBAL_A_CALCULER"),
+        "agrebals_calcules": rapport_agrebal.etats.get("NB_AGREBAL_CALCULES"),
+    }
     if rapport_agrebal.reussi:
-        logger.info("Fin traitement scénario %s", ctx(verdict=SUCCES))
-        bilan.ajouter(id_scenario, SUCCES)
+        logger.info("Fin traitement scénario %s", ctx(verdict=SUCCES, **agrebals))
+        bilan.ajouter(id_scenario, SUCCES, **agrebals)
         return
 
     # Filet de sécurité : DSR-703 ne libère pas un verrou qu'il ne détient pas ; ici l'étape 2
@@ -226,7 +235,7 @@ async def _traiter(id_scenario: int, bilan: Bilan, db_lecture, db_ecriture) -> N
         ),
     )
     await scn.liberer_verrou(db_ecriture, id_scenario)
-    bilan.ajouter(id_scenario, ECHEC, _motif(rapport_agrebal))
+    bilan.ajouter(id_scenario, ECHEC, _motif(rapport_agrebal), **agrebals)
 
 
 def _journaliser_avancement(bilan: Bilan, debut: float) -> None:

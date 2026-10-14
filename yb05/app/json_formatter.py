@@ -49,11 +49,17 @@ class JsonFormatter(logging.Formatter):
             'filename': record.filename,
             'lineno': record.lineno
         }
+        # Rapport / bilan final d'une commande (`extra={"rapport": …}`, cf. main.journaliser_rapport) :
+        # objet JSON structuré, pas du texte, pour être filtrable dans Kibana.
+        rapport = getattr(record, 'rapport', None)
+        if rapport is not None:
+            log_record['rapport'] = rapport
         if record.exc_info:
             log_record['exc_info'] = self.formatException(record.exc_info)
         if record.stack_info:
             log_record['stack_info'] = self.formatStack(record.stack_info)
-        return json.dumps(log_record, ensure_ascii=False)
+        # `default=str` : un rapport peut porter des Decimal/dates ; format() ne doit jamais lever.
+        return json.dumps(log_record, ensure_ascii=False, default=str)
 
 
 def _get_logs_dir(logs_dir=None):

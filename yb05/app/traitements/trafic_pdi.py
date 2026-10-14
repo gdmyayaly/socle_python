@@ -153,7 +153,7 @@ async def calcul_trafic_pdi(
     logger.debug("Verrou posé %s", ctx(raison=raison))
 
     try:
-        nb_lignes = await _calculer(rapport, scenario, raison, db_lecture, db_ecriture)
+        nb_lignes, agrebals = await _calculer(rapport, scenario, raison, db_lecture, db_ecriture)
     except Exception as erreur:  # noqa: BLE001 — tout échec doit libérer le verrou
         logger.exception("Erreur calcul trafics PDI %s", ctx(raison=raison))
         await scn.liberer_verrou(db_ecriture, id_scenario)
@@ -174,6 +174,8 @@ async def calcul_trafic_pdi(
         "Fin calcul trafics PDI %s",
         ctx(
             lignes=nb_lignes,
+            agrebals_a_calculer=len(agrebals.a_calculer),
+            agrebals_calcules=len(agrebals.calcules),
             raison=raison,
             duration_ms=(time.perf_counter() - debut) * 1000,
         ),
@@ -182,12 +184,14 @@ async def calcul_trafic_pdi(
     rapport.etats["TRAFIC_PDI_CALCULE"] = 1
     # Volontairement laissé à 1 : c'est le calcul des trafics Agrébal qui libère le scénario.
     rapport.etats["CALCUL_TRAFIC_EN_COURS"] = 1
+    rapport.etats["NB_AGREBAL_A_CALCULER"] = len(agrebals.a_calculer)
+    rapport.etats["NB_AGREBAL_CALCULES"] = len(agrebals.calcules)
     return rapport
 
 
 async def _calculer(
     rapport: Rapport, scenario: dict, raison: str, db_lecture, db_ecriture
-) -> int:
+) -> tuple[int, "BilanAgrebals"]:
     """Étapes 3 à 7. Toute anomalie lève : l'appelant libère le verrou et journalise."""
     id_scenario = scenario["id_scenario"]
     co_regate = scenario["co_regate"]
@@ -229,8 +233,11 @@ async def _calculer(
     cles = await _charger_cles(db_lecture, id_version_cle, co_regate)
     rapport.ok(f"Clés de répartition chargées ({len(cles)} PDI)")
 
-    agrebal_par_pdi = await _charger_mapping_agrebal(db_lecture, co_regate)
-    rapport.ok(f"Mapping Agrébal/PDI chargé ({len(agrebal_par_pdi)} PDI)")
+    agrebal_par_pdi, agrebals_du_site = await _charger_mapping_agrebal(db_lecture, co_regate)
+    rapport.ok(
+        f"Mapping Agrébal/PDI chargé ({len(agrebal_par_pdi)} PDI, "
+        f"{len(agrebals_du_site)} Agrébal(s) actif(s) sur le site)"
+    )
 
     logger.info(
         "Avancement calcul trafics PDI %s",
@@ -276,6 +283,8 @@ async def _calculer(
         ),
     )
     debut_phase = time.perf_counter()
+    bilan_agrebals = _bilan_agrebals(agrebals_du_site, agrebal_par_pdi, cles, lignes)
+    _signaler_bilan_agrebals(rapport, bilan_agrebals)
     if not lignes:
         raise TraitementImpossible(
             "Aucun trafic PDI à écrire : vérifier les TMH, les coefficients et les clés"
@@ -313,7 +322,7 @@ async def _calculer(
         "Trafics PDI écrits %s",
         ctx(lignes=len(lignes), raison=raison, lots=nb_lots, duration_ms=_ms(debut_phase)),
     )
-    return len(lignes)
+    return len(lignes), bilan_agrebals
 
 
 def _ms(depuis: float) -> float:
@@ -376,8 +385,14 @@ async def _charger_cles(
     }
 
 
-async def _charger_mapping_agrebal(db_lecture, co_regate: str) -> dict[int, tuple[int, str]]:
-    """PDI -> (id_agrebal, agrebal_uuid), à partir des Agrébals actifs du site."""
+async def _charger_mapping_agrebal(
+    db_lecture, co_regate: str
+) -> tuple[dict[int, tuple[int, str]], list[dict[str, Any]]]:
+    """PDI -> (id_agrebal, agrebal_uuid), et les Agrébals actifs du site (bilan Agrébal).
+
+    Un PDI cité par plusieurs Agrébals est rattaché au **dernier** lu (ordre `agrebal_id`) :
+    les autres le perdent. Comportement inchangé, rendu visible par `_bilan_agrebals`.
+    """
     agrebals = await scn.agrebals_du_site(db_lecture, co_regate)
     mapping: dict[int, tuple[int, str]] = {}
     for agrebal in agrebals:
@@ -385,7 +400,7 @@ async def _charger_mapping_agrebal(db_lecture, co_regate: str) -> dict[int, tupl
             mapping[id_pdi] = (int(agrebal["agrebal_id"]), agrebal["agrebal_uuid"])
     if not mapping:
         raise TraitementImpossible(f"Aucun PDI rattaché aux Agrébals du site {co_regate}")
-    return mapping
+    return mapping, agrebals
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +423,122 @@ def _signaler_ecarts_de_perimetre(
         rapport.ok(
             f"{len(sans_cle)} PDI rattachés à un Agrébal mais sans clé, ignorés "
             f"(ex. {sans_cle[:5]})"
+        )
+
+
+# Agrébals non calculés détaillés dans le rapport et les logs ; le total reste exact.
+MAX_AGREBALS_DETAILLES = 20
+
+
+class BilanAgrebals(NamedTuple):
+    """Agrébals du site attendus au calcul, ceux qui ont produit du trafic, et pourquoi pas les
+    autres. `trppu_trafic_agrebal` n'étant qu'un `GROUP BY` de `trppu_trafic_pdi`, un Agrébal
+    absent ici le sera aussi au calcul Agrébal : c'est à cette étape que se lit la cause."""
+
+    a_calculer: list[int]
+    calcules: list[int]
+    non_calcules: dict[int, str]
+    """id_agrebal -> motif."""
+    pdi_partages: dict[int, list[int]]
+    """id_pdi cité par plusieurs Agrébals -> ces Agrébals (seul le dernier le garde)."""
+
+
+def _bilan_agrebals(
+    agrebals: list[dict[str, Any]],
+    agrebal_par_pdi: dict[int, tuple[int, str]],
+    cles: dict[int, Any],
+    lignes: list[tuple],
+) -> BilanAgrebals:
+    """Compare les Agrébals actifs du site à ceux présents dans les lignes PDI construites."""
+    a_calculer = list(dict.fromkeys(int(a["agrebal_id"]) for a in agrebals))
+    # Position 2 des lignes : id_agrebal (cf. INSERT_TRAFIC_PDI_SQL).
+    presents = {int(ligne[2]) for ligne in lignes}
+    calcules = [id_agrebal for id_agrebal in a_calculer if id_agrebal in presents]
+
+    citations: dict[int, list[int]] = {}
+    for agrebal in agrebals:
+        for id_pdi in agrebal["pdi_ids"]:
+            citations.setdefault(id_pdi, []).append(int(agrebal["agrebal_id"]))
+    pdi_partages = {
+        id_pdi: list(dict.fromkeys(ids))
+        for id_pdi, ids in citations.items()
+        if len(set(ids)) > 1
+    }
+
+    non_calcules: dict[int, str] = {}
+    for agrebal in agrebals:
+        id_agrebal = int(agrebal["agrebal_id"])
+        if id_agrebal in presents or id_agrebal in non_calcules:
+            continue
+        non_calcules[id_agrebal] = _motif_agrebal_non_calcule(
+            id_agrebal, agrebal["pdi_ids"], agrebal_par_pdi, cles
+        )
+    return BilanAgrebals(a_calculer, calcules, non_calcules, pdi_partages)
+
+
+def _motif_agrebal_non_calcule(
+    id_agrebal: int,
+    pdi_ids: list[int],
+    agrebal_par_pdi: dict[int, tuple[int, str]],
+    cles: dict[int, Any],
+) -> str:
+    if not pdi_ids:
+        return "aucun PDI dans agrebal_pdiList (vide ou illisible)"
+    propres = [p for p in pdi_ids if agrebal_par_pdi.get(p, (None,))[0] == id_agrebal]
+    if not propres:
+        return f"ses {len(pdi_ids)} PDI sont tous rattachés à un autre Agrébal"
+    if not any(p in cles for p in propres):
+        return (
+            f"aucun de ses {len(propres)} PDI n'a de clé de répartition "
+            f"(ex. {sorted(propres)[:5]})"
+        )
+    return "aucune ligne de trafic produite"
+
+
+def _signaler_bilan_agrebals(rapport: Rapport, bilan: BilanAgrebals) -> None:
+    """Rapport (non bloquant) et logs : Agrébals à calculer, calculés, et pourquoi pas les autres."""
+    rapport.ok(
+        f"Agrébals : {len(bilan.calcules)} calculé(s) sur {len(bilan.a_calculer)} à calculer"
+    )
+    if bilan.non_calcules:
+        detail = "; ".join(
+            f"{id_agrebal} : {motif}"
+            for id_agrebal, motif in list(bilan.non_calcules.items())[:MAX_AGREBALS_DETAILLES]
+        )
+        rapport.alerte(f"{len(bilan.non_calcules)} Agrébal(s) non calculé(s) — {detail}")
+    if bilan.pdi_partages:
+        exemples = dict(list(bilan.pdi_partages.items())[:5])
+        rapport.alerte(
+            f"{len(bilan.pdi_partages)} PDI cité(s) par plusieurs Agrébals, rattaché(s) au "
+            f"dernier seulement (ex. PDI -> Agrébals : {exemples})"
+        )
+
+    logger.info(
+        "Avancement calcul trafics PDI %s",
+        ctx(
+            phase="agrébals",
+            agrebals_a_calculer=len(bilan.a_calculer),
+            agrebals_calcules=len(bilan.calcules),
+            agrebals_non_calcules=len(bilan.non_calcules),
+            pdi_partages=len(bilan.pdi_partages),
+        ),
+    )
+    if bilan.non_calcules:
+        logger.warning(
+            "Agrébals non calculés %s",
+            ctx(
+                nb=len(bilan.non_calcules),
+                agrebals=dict(list(bilan.non_calcules.items())[:MAX_AGREBALS_DETAILLES]),
+            ),
+        )
+    if bilan.pdi_partages:
+        logger.warning(
+            "PDI partagés entre Agrébals %s",
+            ctx(
+                nb=len(bilan.pdi_partages),
+                consequence="PDI rattaché au dernier Agrébal lu",
+                pdi=dict(list(bilan.pdi_partages.items())[:MAX_AGREBALS_DETAILLES]),
+            ),
         )
 
 

@@ -83,6 +83,37 @@ laisse **aucune trace** — le verdict ne vivrait que dans le `Bilan`, en mémoi
 C'est pourquoi `orchestrateur._traiter` journalise chaque issue : `SUCCES` en INFO,
 `NON_ELIGIBLE` et `ECHEC` en WARNING avec leurs motifs.
 
+## Rapport final dans les logs
+
+Le rapport (commandes mono-scénario, outils) ou le bilan (`all`) part toujours sur **stdout**,
+et il est **aussi** journalisé par `main.journaliser_rapport` : une ligne `Rapport final
+(commande=…, statut=…, alertes=…)`, en INFO si le traitement est concluant, en WARNING sinon,
+qui porte le rapport complet (`Rapport.to_dict()` / `Bilan.to_dict()`) dans le champ JSON racine
+**`rapport`** — un objet, pas du texte, donc filtrable dans Kibana
+(`rapport.etats.NB_AGREBAL_CALCULES`, `rapport.agrebals.manquants`…). Le champ n'existe que sur
+cette ligne. Pour les commandes mono-scénario, elle est émise avant le reset du contexte : elle
+porte `id_scenario`, `co_regate` et `co_roc`.
+
+## Agrébals à calculer / calculés
+
+Un Agrébal peut ne produire aucun trafic sans que rien n'échoue. Chaque calcul en rend compte :
+
+- **calcul PDI** — phase `agrébals` (`agrebals_a_calculer`, `agrebals_calcules`,
+  `agrebals_non_calcules`, `pdi_partages`), reprise dans `Fin calcul trafics PDI` ; WARNING
+  `Agrébals non calculés (nb=…, agrebals={id: motif})` avec la cause : `agrebal_pdiList` vide ou
+  illisible, PDI tous captés par un autre Agrébal, aucun PDI avec clé de répartition ; WARNING
+  `PDI partagés entre Agrébals` (un PDI cité par plusieurs Agrébals ne va qu'au dernier lu) ;
+- **calcul Agrébal** — Agrébals actifs du site contre Agrébals présents dans
+  `trppu_trafic_agrebal`, dans `Fin calcul trafics Agrébal` ; WARNING `Agrébals non calculés`
+  (la cause se lit au calcul PDI : l'agrégation n'est qu'un `GROUP BY`) et `Agrébals calculés
+  hors site` ;
+- **mode ALL** — `Fin traitement scénario` et `Fin mode ALL` portent les compteurs ; le bilan
+  donne `Agrébals : calculés/à calculer` par scénario et les totaux.
+
+Dans les rapports, ces écarts sont des **alertes `[!!]`** (`Rapport.alerte`) : visibles, mais
+sans effet sur le verdict — un Agrébal sans clé de répartition peut être un cas métier normal.
+Les états `NB_AGREBAL_A_CALCULER` / `NB_AGREBAL_CALCULES` sont ajoutés aux deux rapports.
+
 ## Ce qui ne se logue pas
 
 - Le SQL complet d'un script : `statement_preview` le borne à 120 caractères, les
