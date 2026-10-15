@@ -107,7 +107,7 @@ Trois traitements, à jouer dans cet ordre pour un scénario donné (DSR-701, DS
 
 ```bash
 python -m app.main eligibilite 12345            # contrôle, sans aucune écriture
-python -m app.main calcul-trafic-pdi 12345      # TMH × coefficient × clé, par PDI
+python -m app.main calcul-trafic-pdi 12345      # TMH × coefficient/100 × clé, par PDI
 python -m app.main calcul-trafic-agrebal 12345  # agrégation des trafics PDI
 ```
 
@@ -168,13 +168,13 @@ d'instance d'écriture.
 **La formule** (`app/traitements/trafic_pdi.py`), pour chaque PDI, produit, jour et densité :
 
 ```
-trafic = ARRONDI( TMH hebdo × coef de rétention × clé de répartition du PDI )
+trafic = ARRONDI( TMH hebdo × coef de rétention / 100 × clé de répartition du PDI )
 ```
 
 | Facteur | D'où il vient |
 |---|---|
 | TMH hebdo | `SUM(trppu_tmh.moyenne_hebdo)` du produit, lignes `bl_exclu = 0`, hors produits de `trppu_scenario_exclusions`. Un TMH nul écarte le produit. |
-| coef | `trppu_pic_coefficients` de la version PIC du scénario, pour le produit et le jour. `densite` 0 → `dense`, 1 → `faible1`, 2 → `faible2` ; un coef absent vaut 0. |
+| coef | `trppu_pic_coefficients` de la version PIC du scénario, pour le produit et le jour. `densite` 0 → `dense`, 1 → `faible1`, 2 → `faible2` ; un coef absent vaut 0. Stocké **en pourcentage** (52 = 52 %) : divisé par 100 à la lecture, les logs (`coefs=`) et la formule d'échec montrent donc la fraction (0.52). |
 | clé | `trppu_cles_repartition_calcule` de la version de clés du scénario (`trppu_scenario.id_version_cle`), dans la colonne de la famille du produit (`CLES_PAR_PRODUIT` : CO → `cle_colis`, OO → `cle_oo`…). |
 | arrondi | à l'entier, demi vers le haut. Au-delà de `TRAFIC_MAX`, échec du scénario. |
 
@@ -257,30 +257,6 @@ clés (colis, oo, 3s, potentielip) alors que les produits sont des codes aliment
 depuis Databricks. Rien en base ne dit à quelle famille appartient un code : la correspondance
 est portée par `CLES_PAR_PRODUIT` (cf. `.env.example`). Un produit absent de cette liste **fait
 échouer le calcul**, avec le message qui le nomme — plutôt que de produire un trafic faux.
-
-### Scénarios de test — `generer-scenarios` et `supprimer-scenarios-test`
-
-```bash
-python -m app.main generer-scenarios 10                       # 10 scénarios complets
-python -m app.main generer-scenarios 3 --pdi 50 --agrebals 5 --jours 6
-python -m app.main all                                        # les calcule
-python -m app.main supprimer-scenarios-test                   # efface tout ce qui a été généré
-```
-
-Crée N scénarios **complets, avec de fausses données**, prêts pour `all` : chacun passe les
-douze règles de DSR-701 et se calcule (DSR-702/703). Pour chaque scénario, sur un site de
-test dédié (`ZT0001`, `ZT0002`…) : la version PIC et ses coefficients (produit × jour × densité),
-une version de clés active (référentiel 900000), `--pdi` PDI avec leurs clés (chaque famille somme
-à 1), `--agrebals` Agrébals qui se partagent ces PDI, le scénario (`VALIDE`, figé, non calculé)
-et ses TMH — un par produit de `CLES_PAR_PRODUIT`, créés dans `trppu_produit` s'ils manquent.
-
-- **Marquage** : libellés `TEST YB05`, sites `ZT…`, PDI au-delà de 9·10¹² et Agrébals au-delà
-  de 9·10⁸ — hors de toute plage réelle. `supprimer-scenarios-test` efface exactement ces
-  données (et les trafics calculés dessus), rien d'autre ; les produits, partagés, restent.
-- **Une transaction** : une génération interrompue ne laisse rien.
-- **Refusé en production** (`APP_ENV=prod`).
-- `trppu_referentiel` n'est jamais touchée : comme pour les vrais sites, le référentiel est
-  porté par la version de clés (règle 10).
 
 ### Référentiel actif (règle 10)
 

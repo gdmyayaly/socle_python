@@ -55,6 +55,23 @@ def test_la_formule_est_tmh_fois_coefficient_fois_cle():
     assert lignes[(1002, "LUNDI")] == (400, 200, 100)
 
 
+def test_le_coefficient_en_base_est_un_pourcentage():
+    """coef = 52 en base vaut 52 % : TMH 1000 × 0,52 × clé 0,6 = 312, pas 31 200."""
+    reponses = reponses_calcul()
+    reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
+        {"co_produit": "CO", "jour_semaine": jour, "densite": densite, "coef": coef}
+        for jour in ("LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI")
+        for densite, coef in ((0, Decimal("52.0000")), (1, Decimal("12.5000")), (2, Decimal("0")))
+    ]
+
+    rapport, ecriture = _calculer(reponses)
+
+    assert rapport.statut == SUCCES
+    lignes = {(ligne[4], ligne[6]): ligne[7:10] for ligne in _lignes_inserees(ecriture)}
+    assert lignes[(1001, "LUNDI")] == (312, 75, 0)
+    assert lignes[(1002, "LUNDI")] == (208, 50, 0)
+
+
 def test_chaque_ligne_porte_son_agrebal():
     """Le PDI est rattaché à son Agrébal via `trppu_agrebal_pdi` (id + uuid)."""
     _, ecriture = _calculer(reponses_calcul())
@@ -71,7 +88,7 @@ def test_les_jours_suivent_la_semaine_du_scenario():
     """5 jours ouvrés : SAMEDI ne doit pas être calculé même s'il est coefficienté."""
     reponses = reponses_calcul()
     reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
-        {"co_produit": "CO", "jour_semaine": jour, "densite": densite, "coef": Decimal("1")}
+        {"co_produit": "CO", "jour_semaine": jour, "densite": densite, "coef": Decimal("100")}
         for jour in ("LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI")
         for densite in (0, 1, 2)
     ]
@@ -87,7 +104,7 @@ def test_samedi_est_calcule_pour_une_semaine_de_six_jours():
     reponses = reponses_calcul()
     reponses["FROM trppu_scenario WHERE id_scenario"]["nb_jours_semaine"] = 6
     reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
-        {"co_produit": "CO", "jour_semaine": jour, "densite": densite, "coef": Decimal("1")}
+        {"co_produit": "CO", "jour_semaine": jour, "densite": densite, "coef": Decimal("100")}
         for jour in ("LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI")
         for densite in (0, 1, 2)
     ]
@@ -214,7 +231,7 @@ def test_produit_hors_mapping_fait_echouer_le_calcul():
     reponses = reponses_calcul()
     reponses["FROM trppu_tmh"] = [{"co_produit": "ZZ", "tmh": Decimal("1000")}]
     reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
-        {"co_produit": "ZZ", "jour_semaine": "LUNDI", "densite": d, "coef": Decimal("1")}
+        {"co_produit": "ZZ", "jour_semaine": "LUNDI", "densite": d, "coef": Decimal("100")}
         for d in (0, 1, 2)
     ]
 
@@ -302,12 +319,12 @@ def test_un_produit_sans_coefficient_sur_un_jour_coefficiente_echoue():
         {"co_produit": "OO", "tmh": Decimal("500")},
     ]
     reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
-        {"co_produit": "CO", "jour_semaine": jour, "densite": d, "coef": Decimal("1")}
+        {"co_produit": "CO", "jour_semaine": jour, "densite": d, "coef": Decimal("100")}
         for jour in ("LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI")
         for d in (0, 1, 2)
     ] + [
         # OO ne couvre pas VENDREDI, que CO couvre pourtant.
-        {"co_produit": "OO", "jour_semaine": jour, "densite": d, "coef": Decimal("1")}
+        {"co_produit": "OO", "jour_semaine": jour, "densite": d, "coef": Decimal("100")}
         for jour in ("LUNDI", "MARDI", "MERCREDI", "JEUDI")
         for d in (0, 1, 2)
     ]
@@ -322,7 +339,7 @@ def test_jour_non_coefficiente_par_la_version_est_simplement_ignore():
     """Jour qu'aucun produit ne coefficiente : un jour en moins, pas un échec."""
     reponses = reponses_calcul()
     reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
-        {"co_produit": "CO", "jour_semaine": jour, "densite": d, "coef": Decimal("1")}
+        {"co_produit": "CO", "jour_semaine": jour, "densite": d, "coef": Decimal("100")}
         for jour in ("LUNDI", "MARDI")
         for d in (0, 1, 2)
     ]
@@ -337,7 +354,7 @@ def test_aucun_jour_calculable():
     """La version ne coefficiente que le samedi, le scénario est en semaine de 5 jours."""
     reponses = reponses_calcul()
     reponses["SELECT co_produit, jour_semaine, densite, coef"] = [
-        {"co_produit": "CO", "jour_semaine": "SAMEDI", "densite": d, "coef": Decimal("1")}
+        {"co_produit": "CO", "jour_semaine": "SAMEDI", "densite": d, "coef": Decimal("100")}
         for d in (0, 1, 2)
     ]
 

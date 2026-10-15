@@ -1,6 +1,10 @@
 """DSR-702 — calcul des trafics PDI d'un scénario (et DSR-700, par son étape 3).
 
-    trafic = TMH × coefficient de rétention × clé de répartition du PDI
+    trafic = TMH × coefficient de rétention / 100 × clé de répartition du PDI
+
+Le coefficient est stocké en pourcentage dans `trppu_pic_coefficients.coef` (52 = 52 %) ;
+il est ramené en fraction (0.52) dès sa lecture, dans `_charger_coefficients`. Tout ce qui
+suit (calcul, logs `coefs=`, formule des échecs) manipule donc la fraction.
 
 par PDI × produit × jour × densité, écrit dans `trppu_trafic_pdi`. DSR-700 = étape 3
 (référentiel et version de clés mémorisés dans le scénario avant le calcul, CA-03).
@@ -354,13 +358,16 @@ async def _charger_tmh(db_lecture, id_scenario: int) -> dict[str, Decimal]:
 async def _charger_coefficients(
     db_lecture, id_pic_version: int
 ) -> dict[tuple[str, str], dict[int, Decimal]]:
-    """Coefficients par (produit, jour) puis densité ; dates non filtrées (clé unique)."""
+    """Coefficients par (produit, jour) puis densité ; dates non filtrées (clé unique).
+
+    `coef` est un pourcentage en base : divisé par 100 ici, une seule fois.
+    """
     lignes = await db_lecture.fetch_all(SELECT_COEFFICIENTS_SQL, (id_pic_version,))
     coefficients: dict[tuple[str, str], dict[int, Decimal]] = {}
     for ligne in lignes:
         cle = (ligne["co_produit"], ligne["jour_semaine"])
         densite = int(ligne["densite"])
-        coefficients.setdefault(cle, {})[densite] = Decimal(str(ligne["coef"]))
+        coefficients.setdefault(cle, {})[densite] = Decimal(str(ligne["coef"])) / 100
     if not coefficients:
         raise TraitementImpossible(
             f"Aucun coefficient de rétention trouvé pour la version PIC {id_pic_version}"

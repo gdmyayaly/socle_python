@@ -200,9 +200,10 @@ def reponses_calcul(**surcharges: Any) -> dict[str, Any]:
                 }
                 for jour in ("LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI")
                 for densite, coef in (
-                    (0, Decimal("1.0000")),
-                    (1, Decimal("0.5000")),
-                    (2, Decimal("0.2500")),
+                    # En pourcentage, comme en base : 100 % / 50 % / 25 %.
+                    (0, Decimal("100.0000")),
+                    (1, Decimal("50.0000")),
+                    (2, Decimal("25.0000")),
                 )
             ],
             "FROM trppu_cles_repartition_calcule": [

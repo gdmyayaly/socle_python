@@ -5,7 +5,8 @@
 --
 --   trafic(PDI, produit, jour, densité) =
 --       ARRONDI( TMH hebdo du produit
---              × coef de rétention (version PIC du scénario, produit, jour, densité)
+--              × coef de rétention / 100 (version PIC du scénario, produit, jour, densité ;
+--                stocké en pourcentage : 52 = 52 %)
 --              × clé de répartition du PDI (version de clés du scénario, famille du produit) )
 --
 --   * TMH hebdo   = SUM(trppu_tmh.moyenne_hebdo) du produit, lignes bl_exclu = 0, hors
@@ -74,13 +75,14 @@ SELECT * FROM verif_tmh ORDER BY co_produit;
 
 -- -------------------------------------------------------------------------------------
 -- 3. Coefficients de rétention par produit/jour (= coefs du log phase=détail)
+--    Ramenés en fraction (coef / 100) : toutes les formules ci-dessous les utilisent tels quels.
 -- -------------------------------------------------------------------------------------
 DROP TEMPORARY TABLE IF EXISTS verif_coef;
 CREATE TEMPORARY TABLE verif_coef AS
 SELECT co_produit, jour_semaine,
-       COALESCE(MAX(CASE WHEN densite = 0 THEN coef END), 0) AS coef_dense,
-       COALESCE(MAX(CASE WHEN densite = 1 THEN coef END), 0) AS coef_faible1,
-       COALESCE(MAX(CASE WHEN densite = 2 THEN coef END), 0) AS coef_faible2
+       COALESCE(MAX(CASE WHEN densite = 0 THEN coef END), 0) / 100 AS coef_dense,
+       COALESCE(MAX(CASE WHEN densite = 1 THEN coef END), 0) / 100 AS coef_faible1,
+       COALESCE(MAX(CASE WHEN densite = 2 THEN coef END), 0) / 100 AS coef_faible2
   FROM trppu_pic_coefficients
  WHERE id_pic_version = @id_pic_version
  GROUP BY co_produit, jour_semaine;

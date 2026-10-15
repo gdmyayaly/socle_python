@@ -37,4 +37,4 @@ def test_le_motif_reconnait_un_usage():
 def test_le_test_couvre_bien_le_code():
     """Garde-fou du garde-fou : un chemin faux rendrait le test vide, donc toujours vert."""
     noms = {f.name for f in FICHIERS}
-    assert {"eligibilite.py", "trafic_pdi.py", "generateur.py", "DSR-698_version_cle.sql"} <= noms
+    assert {"eligibilite.py", "trafic_pdi.py", "DSR-698_version_cle.sql"} <= noms

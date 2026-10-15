@@ -5,7 +5,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +24,7 @@ from app.config import (
     CORS_ALLOW_ORIGINS,
 )
 from app.json_formatter import setup_logging
+from app.security.basic_auth import auth_desactivee, verifier_basic_auth
 from app.log_utils import (
     CHAMPS_SENSIBLES,
     ctx,
@@ -58,6 +59,8 @@ log = logging.getLogger("trppu")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Démarrage de l'application trppu")
+    if auth_desactivee():
+        log.warning("Authentification Basic désactivée (TRPPU_USER et TRPPU_SECRET vides)")
     yield
     log.info("Arrêt de l'application trppu")
  
@@ -213,21 +216,25 @@ def _params_requete(request: Request) -> dict[str, str]:
 app.include_router(health_routes.router)
 app.include_router(health_routes.health_router)
 app.include_router(health_routes.health_router, prefix="/trppu-api")
-app.include_router(databricks_routes.router)
-app.include_router(trppu_trafics_router)
-app.include_router(calcl_nbr_jours_routes.router)
-app.include_router(trppu_site_router)
-app.include_router(trppu_produit_router)
-app.include_router(trppu_pic_version_router)
-app.include_router(trppu_pic_coefficients_router)
-app.include_router(trppu_scenario_router)
-app.include_router(trppu_tmh_router)
-app.include_router(trppu_comptages_router)
-app.include_router(trppu_variations_router)
-app.include_router(trppu_neutralisations_router)
-app.include_router(trppu_scenario_pic_router)
-app.include_router(trppu_audit_router)
-app.include_router(trppu_optipacc_router)
+# Routes métier protégées par Basic Auth (TRPPU_USER / TRPPU_SECRET) ;
+# `/`, `/health*` et la doc restent ouverts (sondes d'exploitation).
+_auth = [Depends(verifier_basic_auth)]
+
+app.include_router(databricks_routes.router, dependencies=_auth)
+app.include_router(trppu_trafics_router, dependencies=_auth)
+app.include_router(calcl_nbr_jours_routes.router, dependencies=_auth)
+app.include_router(trppu_site_router, dependencies=_auth)
+app.include_router(trppu_produit_router, dependencies=_auth)
+app.include_router(trppu_pic_version_router, dependencies=_auth)
+app.include_router(trppu_pic_coefficients_router, dependencies=_auth)
+app.include_router(trppu_scenario_router, dependencies=_auth)
+app.include_router(trppu_tmh_router, dependencies=_auth)
+app.include_router(trppu_comptages_router, dependencies=_auth)
+app.include_router(trppu_variations_router, dependencies=_auth)
+app.include_router(trppu_neutralisations_router, dependencies=_auth)
+app.include_router(trppu_scenario_pic_router, dependencies=_auth)
+app.include_router(trppu_audit_router, dependencies=_auth)
+app.include_router(trppu_optipacc_router, dependencies=_auth)
 
 if __name__ == "__main__":
     import uvicorn
