@@ -58,11 +58,6 @@ LOGS_DIR = os.getenv("LOGS_DIR", "")
 # Si vide (valeur par défaut) : cryptage DÉSACTIVÉ, l'id_rh n'est PAS enregistré (NULL).
 ID_RH_CRYPTO_KEY = os.getenv("ID_RH_CRYPTO_KEY", "")
 
-# Sécurité : identifiants HTTP Basic exigés sur les routes métier (app/security/basic_auth.py).
-# Les deux vides (valeur par défaut) : authentification DÉSACTIVÉE.
-TRPPU_USER = os.getenv("TRPPU_USER", "")
-TRPPU_SECRET = os.getenv("TRPPU_SECRET", "")
-
 # Validation
 MAX_DATE_RANGE_DAYS = 730 # SOIT 365 * 2
 

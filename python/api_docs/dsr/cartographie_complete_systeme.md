@@ -42,9 +42,7 @@
 - **API externe** : `JOURS_FERMES_API_BASE_URL` (jours fériés/fermés, basic auth, cache 24h) — utilisée pour
   tous les calculs de jours ouvrés/ouvrables. Indisponibilité → HTTP 503.
 - **Middlewares** : CORS (paramétrable env), logging HTTP JSON (méthode, path, statut, durée).
-- **Authentification** : HTTP Basic sur les routes métier (`/trppu-api/*`, `/databricks/*`), identifiants
-  `TRPPU_USER` / `TRPPU_SECRET` (`app/security/basic_auth.py`) ; tous deux vides → désactivée. `/`, `/health*`
-  et la doc Swagger restent ouverts. `id_session_ihm` (query optionnel) sert uniquement de tag
+- **Authentification** : aucune sur les routes. `id_session_ihm` (query optionnel) sert uniquement de tag
   de traçabilité Kibana.
 - **Cryptage** : `id_rh` chiffré Fernet avant écriture (`ID_RH_CRYPTO_KEY` ; si vide → id_rh non enregistré, colonne à NULL).
 
@@ -696,7 +694,7 @@ Références extraites des docstrings du code (`app/routes/**`) et des fiches `j
 1. **Unicité comptages non garantie en base** : pas de contrainte UNIQUE sur `(id_scenario, co_produit)` — seulement un SELECT-puis-INSERT applicatif → doublon possible en cas d'appels concurrents. Ajouter la contrainte UNIQUE (comme variations/neutralisations l'ont déjà).
 2. **Écarts de longueurs base/API** : `trppu_scenario.lb_scenario` varchar(20) vs 50 accepté par l'API ; `trppu_site.lb_regate` varchar(40) vs 120 → un libellé valide côté Pydantic casse en SQL strict mode. Aligner (élargir les colonnes ou resserrer les schémas).
 3. **`/logs` sans authentification**, avec écriture destructive (`DELETE /logs` supprime les fichiers de log). À désactiver/protéger hors dev. *(Les routes de debug `/mysql/*`, dont `POST /mysql/import`, ont été retirées le 24/09/2026.)*
-4. **Authentification Basic** (`TRPPU_USER`/`TRPPU_SECRET`) : un identifiant partagé, pas d'identité utilisateur ; désactivée si les deux variables sont vides ; `id_rh` transite en clair dans les payloads (chiffré uniquement au repos).
+4. **Aucune authentification** sur l'API ; `id_rh` transite en clair dans les payloads (chiffré uniquement au repos).
 5. **DELETE scénario** : cascade applicative manuelle sur 9 tables enfants — toute nouvelle table enfant devra y être ajoutée à la main (risque d'oubli ; envisager des FK `ON DELETE CASCADE`).
 6. **`trppu_pic_version`** : l'API référentiel ignore le niveau `SCENARIO` et la colonne `id_scenario` (gérés uniquement par les routes scénario §7) — les listes référentiel peuvent donc remonter des versions scénario sans contexte.
 7. **Dépendance dure à l'API jours fermés** : `POST`/`PUT /scenarios` et `POST /neutralisations` tombent en 503 si l'API externe est indisponible (pas de fallback ni retry différé).
