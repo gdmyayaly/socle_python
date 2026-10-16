@@ -1,6 +1,7 @@
 """Point d'entrée console du batch yb05 (`python -m app.main <commande>`, voir README).
 
-Code de retour : 0 si concluant, 1 sinon (ordonnanceur, probe).
+Code de retour : 0 si concluant, 1 sinon (ordonnanceur, probe), 2 si le démarrage est refusé
+parce qu'une autre instance YB05 est déjà en cours (DSR-729, `app/suivi_batch.py`).
 """
 
 import argparse
@@ -18,6 +19,7 @@ from app.health import (
     describe_connection,
     fetch_server_info,
 )
+from app import suivi_batch
 from app.json_formatter import setup_logging
 from app.log_utils import ctx, reset_id_scenario, reset_site, set_id_scenario, set_site
 from app.traitements import (
@@ -32,6 +34,9 @@ log = logging.getLogger("yb05")
 
 EXIT_OK = 0
 EXIT_KO = 1
+# Refus de démarrage (DSR-729) : distinct d'un échec, pour que la supervision ne lève pas
+# d'alerte sur un lancement en doublon qui s'est correctement effacé.
+EXIT_DEJA_EN_COURS = 2
 
 
 def _print_json(payload: dict) -> None:
@@ -137,6 +142,8 @@ async def _executer_traitement(traitement, args: argparse.Namespace) -> int:
             rapport.statut = ECHEC
         # Avant le reset : la ligne porte encore id_scenario, co_regate et co_roc.
         journaliser_rapport(args.commande, rapport.to_dict(), rapport.reussi)
+        if not rapport.reussi:
+            args.commentaire_suivi = rapport.erreur or "; ".join(rapport.motifs) or None
     finally:
         reset_site(jeton_site)
         reset_id_scenario(jeton)
@@ -174,12 +181,32 @@ async def cmd_all(args: argparse.Namespace) -> int:
         bilan.erreur = str(erreur)
 
     journaliser_rapport(args.commande, bilan.to_dict(), bilan.reussi)
+    args.statut_suivi, args.commentaire_suivi = _suivi_du_bilan(bilan)
     if args.json:
         _print_json(bilan.to_dict())
     else:
         print(bilan.texte())
 
     return EXIT_OK if bilan.reussi else EXIT_KO
+
+
+def _suivi_du_bilan(bilan: Bilan) -> tuple[str, str]:
+    """Statut et commentaire `trppu_suivi_batch` du mode ALL.
+
+    PARTIEL : des scénarios réussis et d'autres en échec. Les non éligibles ne sont pas des
+    échecs (comme pour le code retour).
+    """
+    commentaire = (
+        f"{len(bilan.succes)} succès, {len(bilan.echecs)} échec(s), "
+        f"{len(bilan.non_eligibles)} non éligible(s)"
+    )
+    if bilan.erreur is not None:
+        return suivi_batch.ECHEC, f"Mode ALL interrompu : {bilan.erreur}"
+    if not bilan.echecs:
+        return suivi_batch.SUCCES, commentaire
+    if bilan.succes:
+        return suivi_batch.PARTIEL, commentaire
+    return suivi_batch.ECHEC, commentaire
 
 
 # Nom de commande officiel -> orthographe des tickets, acceptée comme alias.
@@ -296,8 +323,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Commandes qui écrivent en base : suivies dans `trppu_suivi_batch` et exclusives (DSR-729).
+# `eligibilite` (lecture seule), `db-info` et `db-check` restent libres à tout moment.
+COMMANDES_SUIVIES = frozenset({"cmd_calcul_trafic_pdi", "cmd_calcul_trafic_agrebal", "cmd_all"})
+
+
+def _commande_lancee(argv: list[str]) -> str:
+    return " ".join(["python -m app.main", *argv])
+
+
+async def _executer_suivi(args: argparse.Namespace) -> int:
+    """Réserve l'exécution YB05, joue la commande, puis clôt la ligne de suivi."""
+    try:
+        demarrage = await suivi_batch.demarrer(_commande_lancee(getattr(args, "argv", None) or [args.commande]))
+    except Exception as erreur:  # noqa: BLE001 — la CLI ne doit jamais rendre de stacktrace
+        log.exception("Erreur démarrage batch %s", ctx(commande=args.commande))
+        print(f"Démarrage impossible : suivi d'exécution indisponible ({erreur}).")
+        return EXIT_KO
+    if isinstance(demarrage, suivi_batch.Refus):
+        print(demarrage.message)
+        return EXIT_DEJA_EN_COURS
+
+    try:
+        code = await args.handler(args)
+    except BaseException as erreur:
+        # Annulation, Ctrl-C, erreur imprévue : la ligne ne doit pas rester EN_COURS.
+        await suivi_batch.terminer(
+            demarrage, suivi_batch.ECHEC, f"Exécution interrompue : {erreur!r}"
+        )
+        raise
+    statut = getattr(args, "statut_suivi", None) or (
+        suivi_batch.SUCCES if code == EXIT_OK else suivi_batch.ECHEC
+    )
+    await suivi_batch.terminer(demarrage, statut, getattr(args, "commentaire_suivi", None))
+    return code
+
+
 async def _run(args: argparse.Namespace) -> int:
     try:
+        if args.handler.__name__ in COMMANDES_SUIVIES:
+            return await _executer_suivi(args)
         return await args.handler(args)
     finally:
         await db_read.disconnect()
@@ -307,6 +372,7 @@ async def _run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = normaliser_argv(list(sys.argv[1:] if argv is None else argv))
     args = build_parser().parse_args(argv)
+    args.argv = argv
     # INFO par défaut : seule trace sous ordonnanceur (rapport sur stdout, logs sur stderr).
     setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
 

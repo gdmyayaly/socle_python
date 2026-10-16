@@ -31,6 +31,38 @@ def _aucune_connexion_reelle(monkeypatch):
     monkeypatch.setattr(aiomysql, "connect", interdit)
 
 
+class SuiviFactice:
+    """Remplace `demarrer` / `terminer` de `app.suivi_batch` : la CLI se teste sans table."""
+
+    def __init__(self, refus=None, erreur=None):
+        self.refus = refus
+        self.erreur = erreur
+        self.demarrages: list[str] = []
+        self.fins: list[tuple[int, str, str | None]] = []
+
+    async def demarrer(self, commande, **_):
+        from app import suivi_batch
+
+        self.demarrages.append(commande)
+        if self.erreur:
+            raise self.erreur
+        return self.refus or suivi_batch.Execution(42)
+
+    async def terminer(self, execution, statut, commentaire=None, **_):
+        self.fins.append((execution.id_calcul_batch, statut, commentaire))
+
+
+@pytest.fixture
+def suivi(monkeypatch):
+    """Suivi d'exécution factice, sans refus ; `suivi.refus = Refus(...)` pour simuler."""
+    from app import suivi_batch
+
+    factice = SuiviFactice()
+    monkeypatch.setattr(suivi_batch, "demarrer", factice.demarrer)
+    monkeypatch.setattr(suivi_batch, "terminer", factice.terminer)
+    return factice
+
+
 class EcritureInterdite(AssertionError):
     """Lève quand un traitement censé être en lecture seule tente d'écrire."""
 

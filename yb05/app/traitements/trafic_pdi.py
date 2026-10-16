@@ -10,7 +10,16 @@ par PDI × produit × jour × densité, écrit dans `trppu_trafic_pdi`. DSR-700 
 (référentiel et version de clés mémorisés dans le scénario avant le calcul, CA-03).
 
 Ordre des écritures : verrou commité seul (sinon invisible des autres processus),
-traçabilité commitée seule, puis purge + insertion en une seule transaction.
+traçabilité commitée seule, flags remis à 0, purge puis insertion **par lots commités un à
+un** (`TAILLE_LOT` lignes), enfin trace + `trafic_pdi_calcule = 1` ensemble.
+
+Pourquoi des lots : sous réplication de groupe MySQL, une transaction unique sur un gros
+scénario dépasse `group_replication_transaction_size_limit` et le COMMIT est refusé
+(erreur 3100 « Error on observer while running replication hook 'before_commit' »).
+Contrepartie : un échec en cours d'écriture laisse un état partiel. Il reste sans effet
+parce que `trafic_pdi_calcule = 0` jusqu'au dernier commit (rien ne le prend pour un
+calcul fini), que les lignes partielles sont purgées sur l'échec quand c'est possible, et
+que tout nouveau calcul repurge le scénario avant d'écrire.
 """
 
 from __future__ import annotations
@@ -90,8 +99,9 @@ UPDATE_TRACABILITE_SQL = """
      WHERE id_scenario = %s
 """
 
-DELETE_TRAFIC_AGREBAL_SQL = "DELETE FROM trppu_trafic_agrebal WHERE id_scenario = %s"
-DELETE_TRAFIC_PDI_SQL = "DELETE FROM trppu_trafic_pdi WHERE id_scenario = %s"
+# Purge par lots (`LIMIT`) : chaque DELETE est commité seul, comme l'insertion.
+DELETE_TRAFIC_AGREBAL_SQL = "DELETE FROM trppu_trafic_agrebal WHERE id_scenario = %s LIMIT %s"
+DELETE_TRAFIC_PDI_SQL = "DELETE FROM trppu_trafic_pdi WHERE id_scenario = %s LIMIT %s"
 
 RESET_FLAGS_SQL = """
     UPDATE trppu_scenario
@@ -294,18 +304,33 @@ async def _calculer(
             "Aucun trafic PDI à écrire : vérifier les TMH, les coefficients et les clés"
         )
 
-    # Étapes 4 et 7 — purge puis insertion, dans une seule transaction.
-    async with db_ecriture.transaction() as tx:
-        await tx.execute(DELETE_TRAFIC_AGREBAL_SQL, (id_scenario,))
-        await tx.execute(DELETE_TRAFIC_PDI_SQL, (id_scenario,))
-        await tx.execute(RESET_FLAGS_SQL, (id_scenario,))
-        nb_lots = 0
+    # Étape 4 — invalidation d'abord : dès ce commit, plus rien ne prend les trafics du
+    # scénario pour un calcul fini (`trafic_pdi_calcule = 0` jusqu'au marquage final).
+    await db_ecriture.execute(RESET_FLAGS_SQL, (id_scenario,))
+    purges_agrebal = await _purger(db_ecriture, DELETE_TRAFIC_AGREBAL_SQL, id_scenario)
+    purges_pdi = await _purger(db_ecriture, DELETE_TRAFIC_PDI_SQL, id_scenario)
+    logger.info(
+        "Avancement calcul trafics PDI %s",
+        ctx(
+            phase="purge",
+            trafics_agrebal=purges_agrebal,
+            trafics_pdi=purges_pdi,
+            duration_ms=_ms(debut_phase),
+        ),
+    )
+    debut_phase = time.perf_counter()
+
+    # Étape 7 — insertion, un lot = une transaction. Pas de rejeu automatique d'un lot en
+    # échec : aucune clé unique n'empêcherait de le doubler si son COMMIT était passé.
+    nb_lots = 0
+    try:
         for depart in range(0, len(lignes), TAILLE_LOT):
             lot = lignes[depart : depart + TAILLE_LOT]
-            await tx.execute_many(INSERT_TRAFIC_PDI_SQL, lot)
+            async with db_ecriture.transaction() as tx:
+                await tx.execute_many(INSERT_TRAFIC_PDI_SQL, lot)
             nb_lots += 1
             if len(lignes) > TAILLE_LOT:
-                # Plusieurs lots : la transaction peut durer, on montre qu'elle avance.
+                # Plusieurs lots : l'écriture peut durer, on montre qu'elle avance.
                 logger.info(
                     "Avancement calcul trafics PDI %s",
                     ctx(
@@ -316,17 +341,54 @@ async def _calculer(
                         duration_ms=_ms(debut_phase),
                     ),
                 )
-        await tx.execute(
-            scn.INSERT_RECALCUL_LOG_SQL,
-            (id_scenario, raison, _commentaire(raison, len(lignes))),
-        )
-        await tx.execute(MARQUER_PDI_CALCULE_SQL, (id_scenario,))
+        async with db_ecriture.transaction() as tx:
+            await tx.execute(
+                scn.INSERT_RECALCUL_LOG_SQL,
+                (id_scenario, raison, _commentaire(raison, len(lignes))),
+            )
+            await tx.execute(MARQUER_PDI_CALCULE_SQL, (id_scenario,))
+    except Exception:
+        await _purger_lignes_partielles(db_ecriture, id_scenario, nb_lots)
+        raise
 
     logger.info(
         "Trafics PDI écrits %s",
         ctx(lignes=len(lignes), raison=raison, lots=nb_lots, duration_ms=_ms(debut_phase)),
     )
     return len(lignes), bilan_agrebals
+
+
+async def _purger(db_ecriture, requete: str, id_scenario: int) -> int:
+    """`DELETE … LIMIT TAILLE_LOT` répété jusqu'à épuisement ; chaque lot commité seul.
+
+    Rejouable sans risque (un DELETE déjà passé ne trouve simplement plus rien).
+    """
+    total = 0
+    while True:
+        lignes = await db_ecriture.execute(requete, (id_scenario, TAILLE_LOT))
+        total += lignes
+        if lignes < TAILLE_LOT:
+            return total
+
+
+async def _purger_lignes_partielles(db_ecriture, id_scenario: int, lots_commites: int) -> None:
+    """Après un échec d'écriture : retire les lots déjà commités. Best-effort.
+
+    Si la purge échoue aussi (base indisponible), les lignes restent, mais
+    `trafic_pdi_calcule = 0` les signale comme inexploitables et le prochain calcul les purge.
+    """
+    try:
+        supprimees = await _purger(db_ecriture, DELETE_TRAFIC_PDI_SQL, id_scenario)
+    except Exception as erreur:  # noqa: BLE001 — ne pas masquer l'erreur d'origine
+        logger.warning(
+            "Purge des trafics PDI partiels impossible %s",
+            ctx(lots_commites=lots_commites, erreur=str(erreur)),
+        )
+        return
+    logger.warning(
+        "Trafics PDI partiels purgés %s",
+        ctx(lots_commites=lots_commites, rows_affected=supprimees),
+    )
 
 
 def _ms(depuis: float) -> float:

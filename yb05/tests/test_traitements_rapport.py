@@ -194,7 +194,7 @@ def test_normalisation_de_all_sans_scenario():
     assert cli.normaliser_argv(["--traitement=ALL", "--scenario=12345"]) == ["ALL", "12345"]
 
 
-def test_la_cli_rend_1_si_un_scenario_a_echoue(monkeypatch, capsys):
+def test_la_cli_rend_1_si_un_scenario_a_echoue(monkeypatch, capsys, suivi):
     """Le batch va au bout, mais l'ordonnanceur voit l'incident."""
 
     async def mode_all(id_scenario):
@@ -210,7 +210,7 @@ def test_la_cli_rend_1_si_un_scenario_a_echoue(monkeypatch, capsys):
     assert "[KO] 12346" in sortie
 
 
-def test_la_cli_rend_0_quand_tout_a_abouti(monkeypatch, capsys):
+def test_la_cli_rend_0_quand_tout_a_abouti(monkeypatch, capsys, suivi):
     async def mode_all(id_scenario):
         return _bilan()
 
@@ -223,7 +223,7 @@ def test_la_cli_rend_0_quand_tout_a_abouti(monkeypatch, capsys):
     assert charge["compteurs"]["succes"] == 2
 
 
-def test_la_cli_reste_lisible_si_le_mode_all_explose(monkeypatch, capsys):
+def test_la_cli_reste_lisible_si_le_mode_all_explose(monkeypatch, capsys, suivi):
     async def mode_all(id_scenario):
         raise RuntimeError("MySQL injoignable")
 

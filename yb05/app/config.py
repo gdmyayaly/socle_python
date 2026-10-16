@@ -109,10 +109,16 @@ def _parse_trafic_max(brut: str | None) -> int | None:
 
 TRAFIC_MAX = _parse_trafic_max(os.getenv("TRAFIC_MAX"))
 
-# Lignes par INSERT (`executemany`) à l'écriture des trafics PDI. Tous les lots restent dans
-# une seule transaction : la valeur ne joue que sur la taille de chaque requête et la cadence
-# des logs d'avancement. Vide ou inexploitable -> 5000.
+# Lignes par lot à l'écriture (et à la purge) des trafics PDI, chaque lot commité seul :
+# une transaction unique dépasse la limite de la réplication de groupe (erreur 3100).
+# Vide ou inexploitable -> 5000.
 TAILLE_LOT = _entier_positif("TAILLE_LOT", 5000)
+
+# DSR-729 — au-delà de ce délai (minutes), une exécution restée EN_COURS dans
+# `trppu_suivi_batch` est réputée abandonnée (pod tombé) et ne bloque plus le démarrage.
+# Doit rester >= au timeout du pod OpenShift YB05 : plus court, il déclarerait abandonnée
+# une exécution encore vivante et laisserait démarrer un second calcul en parallèle.
+SUIVI_BATCH_TIMEOUT_MINUTES = _entier_positif("SUIVI_BATCH_TIMEOUT_MINUTES", 60)
 
 # Requêtes utilitaires pour les checks
 HEALTH_CHECK_QUERY = "SELECT 1 AS ok"

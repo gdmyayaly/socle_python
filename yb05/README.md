@@ -57,7 +57,8 @@ de vérité en cas de doute.
 |---|---|---|
 | `CLES_PAR_PRODUIT` | `CO:colis,OO:oo,IP:potentielip,OS:3s,PR:3s,PPI:3s` | Correspondance code produit → famille de clé de répartition (`colis`, `oo`, `3s`, `potentielip`). Une entrée malformée fait échouer le démarrage ; un produit absent fait échouer le calcul qui le rencontre. |
 | `TRAFIC_MAX` | vide | Plafond d'un trafic PDI. Renseigné (`99999999` = capacité des colonnes en `decimal(12,4)`), un trafic au-delà fait échouer le scénario avec un message explicite. Vide ou absent : aucun contrôle, un trafic trop grand remonte l'erreur MySQL (`1264 Out of range`). Une valeur non entière ou négative fait échouer le démarrage. |
-| `TAILLE_LOT` | `5000` | Lignes par `INSERT` à l'écriture des trafics PDI ; un log d'avancement par lot au-delà d'un lot. Tous les lots sont dans **une seule transaction** : une erreur annule tout le scénario. Vide ou non entier : `5000` ; ≤ 0 : ramené à `1`. |
+| `TAILLE_LOT` | `5000` | Lignes par lot à l'écriture des trafics PDI, **chaque lot commité seul** (purge `DELETE … LIMIT` comprise) : une transaction unique dépassait `group_replication_transaction_size_limit` (erreur 3100, `before_commit`). Un log d'avancement par lot au-delà d'un lot. Sur échec en cours d'écriture, les lots déjà commités sont purgés et `TRAFIC_PDI_CALCULE` reste à 0. Vide ou non entier : `5000` ; ≤ 0 : ramené à `1`. |
+| `SUIVI_BATCH_TIMEOUT_MINUTES` | `60` | DSR-729 : au-delà, une exécution restée `EN_COURS` dans `trppu_suivi_batch` est réputée abandonnée (pod tombé), passée en `ECHEC` et ne bloque plus le démarrage. **Doit rester ≥ au timeout du pod YB05** : plus court, un calcul encore vivant serait déclaré abandonné et un second démarrerait en parallèle. |
 | `NB_WORKER` | `1` | Nombre de scénarios traités simultanément par le mode `all`. `1` = séquentiel. Toute valeur inexploitable est ramenée à `1` : un batch d'exploitation ne refuse pas de démarrer pour une variable mal saisie. Les pools MySQL sont dimensionnés sur cette valeur (`max(10, NB_WORKER)`). |
 
 ## Commandes console
@@ -114,7 +115,7 @@ python -m app.main calcul-trafic-agrebal 12345  # agrégation des trafics PDI
 | Commande | Description |
 |---|---|
 | `eligibilite` | Les douze règles d'éligibilité du scénario. **Aucune écriture** : ni insertion, ni mise à jour, ni changement de statut. Toutes les règles sont évaluées, pour rendre d'un coup la liste complète des motifs bloquants. |
-| `calcul-trafic-pdi` | Vérifie l'éligibilité, verrouille le scénario, y mémorise le référentiel et la version de clés utilisés (**DSR-700**), purge les trafics existants puis calcule et écrit `trppu_trafic_pdi`. Laisse volontairement `CALCUL_TRAFIC_EN_COURS = 1`. |
+| `calcul-trafic-pdi` | Vérifie l'éligibilité, verrouille le scénario, y mémorise le référentiel et la version de clés utilisés (**DSR-700**), remet `TRAFIC_PDI_CALCULE` à 0, purge les trafics existants puis calcule et écrit `trppu_trafic_pdi` par lots commités un à un (`TAILLE_LOT`) ; `TRAFIC_PDI_CALCULE = 1` n'est posé qu'après le dernier lot. Laisse volontairement `CALCUL_TRAFIC_EN_COURS = 1`. |
 | `calcul-trafic-agrebal` | Agrège les trafics PDI par Agrébal dans `trppu_trafic_agrebal`, puis clôt le calcul complet : `TRAFIC_AGREBAL_CALCULE = 1` et `CALCUL_TRAFIC_EN_COURS = 0`. Aucune clé ni coefficient n'est relu à cette étape. |
 | `all` | **Mode nominal d'exploitation.** Enchaîne les trois traitements ci-dessus, pour un scénario ou pour tous les scénarios éligibles, sur `NB_WORKER` workers. Ne porte aucune règle métier : il orchestre. |
 
@@ -125,7 +126,7 @@ python -m app.main ELIGIBILITE 12345
 python -m app.main --traitement=CALCUL_TRAFIC_PDI --scenario=12345
 ```
 
-**Code de retour** : `0` si le scénario est éligible ou le calcul réussi, `1` sinon. `--json` et
+**Code de retour** : `0` si le scénario est éligible ou le calcul réussi, `1` sinon, `2` si une autre instance YB05 est déjà en cours (voir *Suivi des exécutions*). `--json` et
 `-v` fonctionnent sur les trois commandes, avant ou après la sous-commande.
 
 **Deux flux distincts** : le rapport part sur la sortie standard — c'est lui qui est destiné à
@@ -257,6 +258,41 @@ clés (colis, oo, 3s, potentielip) alors que les produits sont des codes aliment
 depuis Databricks. Rien en base ne dit à quelle famille appartient un code : la correspondance
 est portée par `CLES_PAR_PRODUIT` (cf. `.env.example`). Un produit absent de cette liste **fait
 échouer le calcul**, avec le message qui le nomme — plutôt que de produire un trafic faux.
+
+### Suivi des exécutions et instance unique (DSR-729)
+
+`calcul-trafic-pdi`, `calcul-trafic-agrebal` et `all` sont tracés dans `trppu_suivi_batch`
+(`lb_batch = 'YB05'`, code `app/suivi_batch.py`) et **exclusifs** : une seule instance YB05 à
+la fois, tous traitements confondus. `eligibilite` (lecture seule), `db-info` et `db-check`
+restent libres.
+
+| Situation au démarrage | Effet |
+|---|---|
+| Aucune exécution `EN_COURS` | Ligne `EN_COURS` créée (`commande` = ligne lancée), le traitement démarre. |
+| Une exécution `EN_COURS` depuis moins de `SUIVI_BATCH_TIMEOUT_MINUTES` | Arrêt immédiat, aucun calcul : « Une instance du batch YB05 est déjà en cours d'exécution (…). Le démarrage est refusé. » — **code retour `2`**, log `Rejet démarrage batch`. Aucune ligne laissée en base. |
+| Une exécution `EN_COURS` plus ancienne | Pod tombé : passée en `ECHEC` (`dt_fin`, `duree`, commentaire « Exécution considérée abandonnée suite dépassement du timeout d'exécution. »), log `Exécution batch abandonnée clôturée`, puis démarrage normal. |
+
+En fin d'exécution : `SUCCES`, `ECHEC`, ou `PARTIEL` pour `all` quand des scénarios ont réussi
+et d'autres échoué (les non éligibles ne comptent pas comme échecs). `commentaire` porte le
+compte (`all`) ou la cause d'échec (commande mono-scénario). Le statut `ABANDONNE` du ticket
+n'existe pas dans l'enum de la table : l'abandon est un `ECHEC` reconnaissable à son commentaire.
+
+Deux pods lancés à la même seconde ne calculent jamais en parallèle : chacun commit sa ligne
+`EN_COURS` *avant* de chercher les autres, donc le second voit le premier. Dans le cas limite
+où les deux se voient mutuellement, les deux s'arrêtent (code `2`) et le lancement suivant
+passe.
+
+Limite : un pod arrêté brutalement (SIGKILL, OOM, `activeDeadlineSeconds`) ne clôt pas sa
+ligne ; les relances sont refusées jusqu'à `SUIVI_BATCH_TIMEOUT_MINUTES`. Pour débloquer à la
+main :
+
+```sql
+UPDATE trppu_suivi_batch
+   SET statut = 'ECHEC', dt_fin = NOW(),
+       duree = SEC_TO_TIME(TIMESTAMPDIFF(SECOND, dt_debut, NOW())),
+       commentaire = 'Clôture manuelle après arrêt du pod'
+ WHERE lb_batch = 'YB05' AND statut = 'EN_COURS';
+```
 
 ### Référentiel actif (règle 10)
 

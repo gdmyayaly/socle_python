@@ -5,6 +5,8 @@
 """
 
 import asyncio
+import logging
+from contextlib import asynccontextmanager
 from decimal import Decimal
 
 import pytest
@@ -42,7 +44,8 @@ def test_calcul_nominal():
     # Laissé à 1 volontairement : c'est le calcul Agrébal qui libère le scénario (CA-05).
     assert rapport.etats["CALCUL_TRAFIC_EN_COURS"] == 1
     assert len(_lignes_inserees(ecriture)) == 10
-    assert ecriture.transactions_commitees == 1
+    # Un lot (10 lignes < TAILLE_LOT) puis la transaction finale trace + flag.
+    assert ecriture.transactions_commitees == 2
 
 
 def test_la_formule_est_tmh_fois_coefficient_fois_cle():
@@ -180,6 +183,135 @@ def test_les_flags_sont_remis_a_zero_avant_le_rechargement():
 
     assert ecriture.a_ecrit("SET trafic_pdi_calcule = 0, trafic_agrebal_calcule = 0")
     assert ecriture.a_ecrit("SET trafic_pdi_calcule = 1")
+
+
+# ---------------------------------------------------------------------------
+# Écriture par lots commités un à un (réplication de groupe, erreur 3100)
+# ---------------------------------------------------------------------------
+
+
+class BaseLots(FausseBase):
+    """FausseBase dont les DELETE rendent une suite de rowcounts, et dont un lot
+    d'insertion (numéroté à partir de 1) peut échouer au COMMIT."""
+
+    def __init__(self, reponses, *, purges=None, lot_en_echec=None, purge_en_echec=False):
+        super().__init__(reponses)
+        self.purges = {k: list(v) for k, v in (purges or {}).items()}
+        self.lot_en_echec = lot_en_echec
+        self.purge_en_echec = purge_en_echec
+        self.lots_tentes = 0
+
+    async def execute(self, query, params=None, retries=None):
+        for fragment, suite in self.purges.items():
+            if fragment in query and suite:
+                self._enregistrer("execute", query, params)
+                return suite.pop(0)
+        if self.purge_en_echec and self.lots_tentes and "DELETE FROM trppu_trafic_pdi" in query:
+            raise RuntimeError("base indisponible")
+        return await super().execute(query, params, retries)
+
+    @asynccontextmanager
+    async def transaction(self):
+        async with super().transaction() as curseur:
+            yield curseur
+            if any("INSERT INTO trppu_trafic_pdi" in sql for _, sql, _ in self.journal[-1:]):
+                self.lots_tentes += 1
+                if self.lots_tentes == self.lot_en_echec:
+                    raise RuntimeError(
+                        "(3100, \"Error on observer while running replication hook "
+                        "'before_commit'.\")"
+                    )
+
+
+def _calculer_par_lots(monkeypatch, taille_lot=3, **options):
+    monkeypatch.setattr(trafic_pdi, "TAILLE_LOT", taille_lot)
+    reponses = reponses_calcul()
+    lecture = FausseBase(reponses, lecture_seule=True)
+    ecriture = BaseLots(reponses, **options)
+    rapport = asyncio.run(calcul_trafic_pdi(12345, db_lecture=lecture, db_ecriture=ecriture))
+    return rapport, ecriture
+
+
+def _lots_inseres(ecriture):
+    return [p for g, sql, p in ecriture.journal if g != "fetch" and "INSERT INTO trppu_trafic_pdi" in sql]
+
+
+def test_chaque_lot_est_commite_seul(monkeypatch):
+    """10 lignes, lots de 3 : 4 transactions d'insertion + 1 finale (trace + flag)."""
+    rapport, ecriture = _calculer_par_lots(monkeypatch)
+
+    assert rapport.statut == SUCCES
+    assert [len(lot) for lot in _lots_inseres(ecriture)] == [3, 3, 3, 1]
+    assert ecriture.transactions_commitees == 5
+
+
+def test_le_flag_calcule_n_est_pose_qu_apres_le_dernier_lot(monkeypatch):
+    _, ecriture = _calculer_par_lots(monkeypatch)
+
+    ecritures = ecriture.ecritures()
+    dernier_lot = max(i for i, sql in enumerate(ecritures) if "INSERT INTO trppu_trafic_pdi" in sql)
+    marquage = ecritures.index(next(sql for sql in ecritures if "SET trafic_pdi_calcule = 1" in sql))
+    assert marquage > dernier_lot
+
+
+def test_les_flags_sont_remis_a_zero_avant_la_purge(monkeypatch):
+    """Dès la purge, plus rien ne doit prendre les trafics du scénario pour un calcul fini."""
+    _, ecriture = _calculer_par_lots(monkeypatch)
+
+    ecritures = ecriture.ecritures()
+    remise_a_zero = next(i for i, sql in enumerate(ecritures) if "trafic_pdi_calcule = 0" in sql)
+    purge = next(i for i, sql in enumerate(ecritures) if sql.startswith("DELETE FROM"))
+    assert remise_a_zero < purge
+
+
+def test_la_purge_boucle_par_lots_jusqu_a_epuisement(monkeypatch):
+    """Recalcul d'un gros scénario : DELETE … LIMIT répété tant qu'un lot plein revient."""
+    _, ecriture = _calculer_par_lots(
+        monkeypatch, purges={"DELETE FROM trppu_trafic_pdi": [3, 3, 1]}
+    )
+
+    purges = [
+        p for g, sql, p in ecriture.journal
+        if g != "fetch" and "DELETE FROM trppu_trafic_pdi" in sql
+    ]
+    assert purges == [(12345, 3)] * 3
+    assert all("LIMIT %s" in sql for sql in ecriture.ecritures() if sql.startswith("DELETE"))
+
+
+def test_echec_d_un_lot_purge_les_lots_deja_commites(monkeypatch):
+    """Erreur 3100 au 2e lot : le 1er, déjà commité, est retiré ; flag jamais posé."""
+    rapport, ecriture = _calculer_par_lots(monkeypatch, lot_en_echec=2)
+
+    assert rapport.statut == ECHEC
+    assert "before_commit" in rapport.erreur
+    assert rapport.etats["TRAFIC_PDI_CALCULE"] == 0
+    assert not ecriture.a_ecrit("SET trafic_pdi_calcule = 1")
+    ecritures = ecriture.ecritures()
+    dernier_insert = max(i for i, sql in enumerate(ecritures) if "INSERT INTO trppu_trafic_pdi" in sql)
+    assert any("DELETE FROM trppu_trafic_pdi" in sql for sql in ecritures[dernier_insert:])
+    # Le verrou est quand même libéré et l'incident tracé.
+    assert ecriture.a_ecrit("SET calcul_trafic_en_cours = 0")
+    assert ecriture.a_ecrit("INSERT INTO trppu_recalcul_log")
+
+
+def test_un_lot_en_echec_n_est_pas_rejoue(monkeypatch):
+    """Sans clé unique, rejouer un lot dont le COMMIT est peut-être passé le doublerait."""
+    _, ecriture = _calculer_par_lots(monkeypatch, lot_en_echec=2)
+
+    assert ecriture.lots_tentes == 2
+    assert len(_lots_inseres(ecriture)) == 2
+
+
+def test_purge_impossible_apres_echec_garde_l_erreur_d_origine(monkeypatch, caplog):
+    with caplog.at_level(logging.WARNING, logger="app.traitements.trafic_pdi"):
+        rapport, _ = _calculer_par_lots(monkeypatch, lot_en_echec=2, purge_en_echec=True)
+
+    assert rapport.statut == ECHEC
+    assert "before_commit" in rapport.erreur
+    assert any(
+        r.getMessage().startswith("Purge des trafics PDI partiels impossible")
+        for r in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------
